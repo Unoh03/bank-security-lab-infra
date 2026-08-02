@@ -1,0 +1,17 @@
+# Purpose: 로그인 경로의 Rate-based Rule BLOCK과 Source별 빈도를 확인한다.
+# Log group: aws-waf-logs-aws-topology-edge (us-east-1)
+# Normal: BLOCK 0건; 정상 로그인은 이 결과에 나타나지 않음
+# Attack/abuse: 같은 clientIp의 /login.php BLOCK 증가
+# False positive: NAT 공유 사용자, 비정상 Client retry, 너무 낮은 Rate limit
+# Runtime verification: 2026-08-02 재실행은 90초 전파 대기 뒤 약 57초 동안
+# 20회를 보냈지만 BLOCK Match·HTTP 403은 0건. 차단 성공으로 판정하지 않는다.
+fields @timestamp, httpRequest.clientIp, httpRequest.httpMethod,
+       httpRequest.uri, action, terminatingRuleId
+| filter action = "BLOCK"
+    and httpRequest.uri = "/login.php"
+    and terminatingRuleId = "bank-login-rate"
+| stats count(*) as blocked_requests,
+        min(@timestamp) as first_seen,
+        max(@timestamp) as last_seen
+  by httpRequest.clientIp, terminatingRuleId
+| sort blocked_requests desc

@@ -1,0 +1,5 @@
+name: web
+serviceName: web-service
+servicePort: 80
+targetGroupARN: ""
+vpcID: ""

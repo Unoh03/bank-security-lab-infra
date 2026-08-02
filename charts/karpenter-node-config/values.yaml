@@ -1,0 +1,5 @@
+clusterName: ""
+nodeRole: ""
+capacityType:
+  - on-demand
+cpuLimit: "100"

@@ -1,0 +1,21 @@
+# Purpose: EKS Pod Identity Role 제공과 Canary S3 객체 작업을 한 시간축에서 찾는다.
+# Log group: /aws/cloudtrail/aws-topology-security
+# Experiment object prefix: web/experiment-
+# Normal: 승인된 실험 시간 밖에서는 해당 Event와 Prefix 접근 0건
+# Attack/abuse: 예상하지 않은 Role Session 또는 Canary 범위 밖 객체 작업
+# False positive: Terraform·EKS Pod Identity Agent의 정상 자격 증명 갱신, 승인된 실험 재시도
+# Runtime verification: 2026-08-02; Query completed with 0 rows. S3 Data Event는 기본 비활성이므로 object-access 증거는 미검증.
+fields @timestamp, eventTime, eventSource, eventName, userIdentity.arn,
+       userIdentity.sessionContext.sessionIssuer.arn,
+       requestParameters.clusterName, requestParameters.bucketName,
+       requestParameters.key, errorCode, requestID, @message
+| filter eventName in [
+    "AssumeRoleForPodIdentity",
+    "GetObject",
+    "PutObject",
+    "DeleteObject"
+  ]
+| filter eventName = "AssumeRoleForPodIdentity"
+    or requestParameters.key like /web\/experiment-/
+| sort @timestamp asc
+| limit 500

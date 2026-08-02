@@ -1,0 +1,5 @@
+apiVersion: v2
+name: target-group-binding
+description: Bind an existing Terraform-managed ALB target group to a Kubernetes Service
+type: application
+version: 0.1.0

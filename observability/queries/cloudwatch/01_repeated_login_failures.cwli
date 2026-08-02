@@ -1,0 +1,14 @@
+# Purpose: 동일 Source IP에서 반복된 BANK 로그인 실패를 찾는다.
+# Log group: /aws/eks/aws-topology-primary/dvwa
+# Normal: 소수 또는 0건
+# Attack: 같은 source_ip의 failures 증가
+# False positive: 사용자의 비밀번호 오입력, NAT를 공유하는 다수 사용자
+# Runtime verification: 2026-08-02; preserved 10-minute window completed with 0 rows. Attack threshold validation pending.
+fields @timestamp, data.event_type, data.source_ip, data.request_id, data.route
+| filter data.event_type = "auth.login.failed"
+| stats count(*) as failures,
+        min(@timestamp) as first_seen,
+        max(@timestamp) as last_seen
+  by data.source_ip
+| filter failures >= 5
+| sort failures desc

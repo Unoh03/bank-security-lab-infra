@@ -1,0 +1,10 @@
+# Purpose: ALB trace ID와 같은 request_id의 BANK Event를 연결한다.
+# Log group: /aws/eks/aws-topology-primary/dvwa
+# Replace: REQUEST_ID
+# Normal/Attack: 한 요청의 Event와 결과가 시간 순서로 나타남
+# False positive: 없음. 단, App가 생성한 app-* ID는 ALB Log와 직접 Join 불가
+# Runtime verification: pending
+fields @timestamp, data.event_type, data.result, data.user_id,
+       data.source_ip, data.route, data.request_id, data.context
+| filter data.request_id = "REQUEST_ID"
+| sort @timestamp asc

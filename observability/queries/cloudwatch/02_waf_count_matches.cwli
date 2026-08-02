@@ -1,0 +1,17 @@
+# Purpose: WEB-01 로그인 Rate Rule의 COUNT Match를 Source별로 집계한다.
+# Log group: aws-waf-logs-aws-topology-edge (us-east-1)
+# Normal: 전용 Rule이 disabled이거나 Threshold 이하이면 0건
+# Attack: 같은 Source IP의 /login.php POST가 Threshold를 넘은 뒤 COUNT 증가
+# False positive: NAT 공유 사용자, Client retry, 너무 낮은 Rate limit
+# Runtime verification: 2026-08-02 재실행은 90초 전파 대기 뒤 약 57초 동안
+# 20회를 보냈고 마지막 2건만 COUNT Match. 관측은 확인했지만 안정적 제한은 미검증이다.
+fields @timestamp, httpRequest.clientIp, httpRequest.httpMethod,
+       httpRequest.uri, action, @message
+| filter httpRequest.uri = "/login.php"
+    and httpRequest.httpMethod = "POST"
+    and @message like /bank-login-rate/
+| stats count(*) as counted_requests,
+        min(@timestamp) as first_seen,
+        max(@timestamp) as last_seen
+  by httpRequest.clientIp
+| sort counted_requests desc

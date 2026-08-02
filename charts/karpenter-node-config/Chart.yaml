@@ -1,0 +1,5 @@
+apiVersion: v2
+name: karpenter-node-config
+description: EC2NodeClass and NodePool for application workloads
+type: application
+version: 0.1.0
