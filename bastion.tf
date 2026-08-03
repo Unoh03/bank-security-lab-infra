@@ -4,6 +4,7 @@ data "aws_ssm_parameter" "primary_al2023_ami" {
 }
 
 data "aws_ssm_parameter" "dr_al2023_ami" {
+  count    = local.enable_dr_runtime ? 1 : 0
   provider = aws.dr
   name     = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 }
@@ -14,7 +15,7 @@ data "aws_key_pair" "primary_bastion" {
 }
 
 data "aws_key_pair" "dr_bastion" {
-  count    = var.enable_dr_compute ? 1 : 0
+  count    = local.enable_dr_runtime ? 1 : 0
   provider = aws.dr
   key_name = var.dr_bastion_key_pair_name
 }
@@ -121,21 +122,21 @@ resource "aws_instance" "primary_bastion" {
 }
 
 resource "aws_iam_role" "dr_bastion" {
-  count              = var.enable_dr_compute ? 1 : 0
+  count              = local.enable_dr_runtime ? 1 : 0
   provider           = aws.dr
   name               = "${local.name}-dr-bastion"
   assume_role_policy = data.aws_iam_policy_document.bastion_assume_role.json
 }
 
 resource "aws_iam_role_policy_attachment" "dr_bastion_ssm" {
-  count      = var.enable_dr_compute ? 1 : 0
+  count      = local.enable_dr_runtime ? 1 : 0
   provider   = aws.dr
   role       = aws_iam_role.dr_bastion[0].name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 resource "aws_iam_role_policy" "dr_bastion_eks_describe" {
-  count    = var.enable_dr_compute ? 1 : 0
+  count    = local.enable_dr_runtime ? 1 : 0
   provider = aws.dr
   role     = aws_iam_role.dr_bastion[0].id
   policy = jsonencode({
@@ -149,18 +150,18 @@ resource "aws_iam_role_policy" "dr_bastion_eks_describe" {
 }
 
 resource "aws_iam_instance_profile" "dr_bastion" {
-  count    = var.enable_dr_compute ? 1 : 0
+  count    = local.enable_dr_runtime ? 1 : 0
   provider = aws.dr
   name     = "${local.name}-dr-bastion"
   role     = aws_iam_role.dr_bastion[0].name
 }
 
 resource "aws_security_group" "dr_bastion" {
-  count       = var.enable_dr_compute ? 1 : 0
+  count       = local.enable_dr_runtime ? 1 : 0
   provider    = aws.dr
   name_prefix = "${local.name}-dr-bastion-"
   description = "SSM-only DR bastion; no inbound access"
-  vpc_id      = module.dr_vpc.vpc_id
+  vpc_id      = module.dr_vpc[0].vpc_id
 
   dynamic "ingress" {
     for_each = length(var.bastion_ssh_cidrs) == 0 ? [] : [1]
@@ -184,11 +185,11 @@ resource "aws_security_group" "dr_bastion" {
 }
 
 resource "aws_instance" "dr_bastion" {
-  count                       = var.enable_dr_compute ? 1 : 0
+  count                       = local.enable_dr_runtime ? 1 : 0
   provider                    = aws.dr
-  ami                         = data.aws_ssm_parameter.dr_al2023_ami.value
+  ami                         = data.aws_ssm_parameter.dr_al2023_ami[0].value
   instance_type               = var.bastion_instance_type
-  subnet_id                   = module.dr_vpc.public_subnets[0]
+  subnet_id                   = module.dr_vpc[0].public_subnets[0]
   associate_public_ip_address = true
   vpc_security_group_ids      = [aws_security_group.dr_bastion[0].id]
   iam_instance_profile        = aws_iam_instance_profile.dr_bastion[0].name

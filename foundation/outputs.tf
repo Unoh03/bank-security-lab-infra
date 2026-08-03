@@ -2,6 +2,11 @@ output "aws_account_id" {
   value = data.aws_caller_identity.current.account_id
 }
 
+output "foundation_contract_version" {
+  description = "Version of the outputs required by Daily Runtime wrappers and remote-state consumers."
+  value       = 2
+}
+
 output "aws_region" {
   value = var.primary_region
 }
@@ -81,4 +86,16 @@ output "dvwa_login_failure_alarm_name" {
 
 output "security_alert_email_subscription_enabled" {
   value = var.enable_security_alert_email_subscription
+}
+
+output "domain_name" {
+  value = var.domain_name
+}
+
+output "route53_zone_id" {
+  value = var.domain_name == "" ? "" : data.aws_route53_zone.existing[0].zone_id
+}
+
+output "cloudfront_acm_certificate_arn" {
+  value = var.domain_name == "" ? "" : aws_acm_certificate_validation.cloudfront[0].certificate_arn
 }

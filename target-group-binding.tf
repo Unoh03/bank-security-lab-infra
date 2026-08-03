@@ -21,7 +21,7 @@ resource "helm_release" "primary_web_target_group_binding" {
 }
 
 resource "helm_release" "dr_web_target_group_binding" {
-  count    = var.enable_dr_compute && var.manage_addons_via_local_helm ? 1 : 0
+  count    = local.enable_dr_runtime && var.manage_addons_via_local_helm ? 1 : 0
   provider = helm.dr
 
   name             = "web-target-group-binding"
@@ -36,7 +36,7 @@ resource "helm_release" "dr_web_target_group_binding" {
     serviceName    = var.web_service_name
     servicePort    = var.web_service_port
     targetGroupARN = aws_lb_target_group.dr[0].arn
-    vpcID          = module.dr_vpc.vpc_id
+    vpcID          = module.dr_vpc[0].vpc_id
   })]
 
   depends_on = [

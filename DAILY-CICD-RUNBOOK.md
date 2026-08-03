@@ -5,7 +5,8 @@
 ## 수명주기
 
 - `foundation/`: ECR, GitHub OIDC Provider, GitHub Actions IAM Role,
-  30일 보안 로그 S3·CloudWatch 목적지
+  30일 보안 로그 S3·CloudWatch 목적지, 기존 Route 53 Hosted Zone 조회와
+  CloudFront ACM 인증서
   - 최초 한 번만 생성한다.
   - 평소 `daily-down.ps1`에서 삭제하지 않는다.
 - 현재 Terraform Root: EKS, RDS, VPC, NAT, ALB, CloudFront 등 Daily Runtime
@@ -26,14 +27,19 @@ gh auth login
 먼저 변경 없는 Preview를 확인한다.
 
 ```powershell
-.\setup-foundation.ps1
+.\setup-foundation.ps1 -DomainName '<EXISTING_PUBLIC_DOMAIN>'
 ```
 
 Plan과 AWS Account를 확인한 뒤에만 실행한다.
 
 ```powershell
-.\setup-foundation.ps1 -ConfirmSetup 'SETUP FOUNDATION'
+.\setup-foundation.ps1 `
+  -DomainName '<EXISTING_PUBLIC_DOMAIN>' `
+  -ConfirmSetup 'SETUP FOUNDATION'
 ```
+
+`-DomainName`은 기존 인증서의 의도치 않은 제거 Plan을 막기 위한 필수 입력이다.
+도메인을 사용하지 않는 Foundation이라면 빈 문자열을 명시한다.
 
 이 Script는 다음을 수행한다.
 
@@ -71,16 +77,24 @@ module.primary_eks.aws_cloudwatch_log_group.this[0]
 Group 삭제가 Plan에 나타나면 중단한다. State 파일은 Git·Vault·Evidence에
 넣지 않는다.
 
+### Runtime Profile 전환의 State 전제
+
+이번 Profile 전환은 DR·Valkey·EFS Resource에 `count` 주소를 도입하므로
+**Daily State가 비어 있는 상태에서만 최초 적용**한다. 기존 Daily State가 남은
+환경에 Source만 교체하지 않는다. 먼저 기존 Source의 `daily-down.ps1`로 Daily
+State를 0으로 만든 뒤 새 Source의 Plan을 확인한다. 다른 Account나 비어 있지
+않은 State에 이 변경을 이식할 때는 별도의 State migration 검토가 필요하다.
+
 ## 아침
 
 ```powershell
-.\daily-up.ps1
+.\daily-up.ps1 -RuntimeProfile minimal
 ```
 
 Plan을 확인한 뒤:
 
 ```powershell
-.\daily-up.ps1 -ConfirmApply 'APPLY DAILY'
+.\daily-up.ps1 -RuntimeProfile minimal -ConfirmApply 'APPLY DAILY'
 ```
 
 성공 기준:
@@ -96,11 +110,29 @@ Plan을 확인한 뒤:
 - DVWA Pod가 선언된 Image로 Ready
 - CloudFront URL의 HTTP 응답 성공
 
+### Runtime Profile
+
+| Profile | 평상시 용도 | Primary Node | Primary RDS | DR Runtime |
+|---|---|---:|---|---|
+| `minimal` | 기본 수업·개발·웹 보안 실험 | 1대부터 검증 | Single-AZ | 없음 |
+| `dr-test` | 장애·복구 증거 수집 | 1대부터 검증 | Single-AZ | 있음 |
+| `full` | 기존 고가용성 구성 재현 | 2대 | Multi-AZ | 있음 |
+
+Valkey와 EFS는 어느 Profile에서도 자동 활성화되지 않는다. 실제 Application 또는
+실험 의존성이 증명된 경우에만 `-EnableValkey`, `-EnableEfs`로 켠다. HTTP 허용
+실험은 안전 기본값인 HTTPS Redirect를 `-AllowHttp`로 명시적으로 해제한다. 활성
+Daily State가 있는 동안 Profile이나 이 세 Toggle을 바꾸지 않으며, 먼저
+`daily-down.ps1`로 State를 비운다.
+
 ## Daily Session 시간 제한
 
-`-ConfirmApply 'APPLY DAILY'`를 통과한 뒤 실제 Apply를 시작하기 전에 현재
-사용자용 Windows Scheduled Task가 등록된다. 시간은 `daily-up.ps1` 명령을
-시작한 시각부터 계산한다.
+`-ConfirmApply 'APPLY DAILY'`를 통과한 뒤 실제 Apply를 시작하기 전에 기본값
+`-WatchdogMode On`으로 현재 사용자용 Windows Scheduled Task가 등록된다.
+시간은 `daily-up.ps1` 명령을 시작한 시각부터 계산한다.
+
+평일처럼 자동 Down이 필요 없으면 `-WatchdogMode Off`를 명시할 수 있다. 이 경우
+Deadline과 Sanitized Session Log는 남지만 자동 Down Scheduled Task는 생성되지
+않는다. 실행 중인 Session에서 On/Off를 바꾸지 말고 먼저 Daily Down한다.
 
 - 5시간: Soft Deadline. 새 변경·공격·Apply를 시작하지 않고 Evidence와
   Down을 준비한다.
@@ -268,6 +300,7 @@ Credential, Deploy Private Key, Bastion Private Key는 복사하지 않는다.
 .\setup-foundation.ps1 `
   -AwsProfile 'TEAM_PROFILE' `
   -ExpectedAccountId 'TEAM_ACCOUNT_ID' `
+  -DomainName 'TEAM_EXISTING_PUBLIC_DOMAIN' `
   -RotateDeployKey `
   -ConfirmSetup 'SETUP FOUNDATION'
 

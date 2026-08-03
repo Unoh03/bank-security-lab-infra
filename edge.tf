@@ -49,23 +49,23 @@ resource "aws_lb_listener" "primary" {
 
 # AWS Shield Standard automatically protects internet-facing ALBs at no additional charge.
 resource "aws_lb" "dr" {
-  count              = var.enable_dr_compute ? 1 : 0
+  count              = local.enable_dr_runtime ? 1 : 0
   provider           = aws.dr
   name               = substr("${local.name}-dr", 0, 32)
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.dr_alb[0].id]
-  subnets            = module.dr_vpc.public_subnets
+  subnets            = module.dr_vpc[0].public_subnets
 }
 
 resource "aws_lb_target_group" "dr" {
-  count       = var.enable_dr_compute ? 1 : 0
+  count       = local.enable_dr_runtime ? 1 : 0
   provider    = aws.dr
   name_prefix = "app-"
   port        = var.web_service_port
   protocol    = "HTTP"
   target_type = "ip"
-  vpc_id      = module.dr_vpc.vpc_id
+  vpc_id      = module.dr_vpc[0].vpc_id
 
   health_check {
     path    = var.web_health_check_path
@@ -80,7 +80,7 @@ resource "aws_lb_target_group" "dr" {
 }
 
 resource "aws_lb_listener" "dr" {
-  count             = var.enable_dr_compute ? 1 : 0
+  count             = local.enable_dr_runtime ? 1 : 0
   provider          = aws.dr
   load_balancer_arn = aws_lb.dr[0].arn
   port              = 80
@@ -92,66 +92,34 @@ resource "aws_lb_listener" "dr" {
   }
 }
 
-# AWS Shield Standard automatically protects Route 53 hosted zones at no additional charge.
-resource "aws_route53_zone" "this" {
-  count    = var.domain_name != "" && var.create_route53_zone ? 1 : 0
-  provider = aws.primary
-  name     = var.domain_name
-}
-
-# Existing Route 53 hosted zones also receive automatic AWS Shield Standard protection.
-data "aws_route53_zone" "existing" {
-  count        = var.domain_name != "" && !var.create_route53_zone ? 1 : 0
-  provider     = aws.primary
-  name         = var.domain_name
-  private_zone = false
-}
-
 locals {
-  route53_zone_id = var.domain_name == "" ? null : (
-    var.create_route53_zone ? aws_route53_zone.this[0].zone_id : data.aws_route53_zone.existing[0].zone_id
-  )
+  foundation_contract_version    = try(data.terraform_remote_state.foundation.outputs.foundation_contract_version, 0)
+  domain_name                    = try(data.terraform_remote_state.foundation.outputs.domain_name, "")
+  route53_zone_id                = try(data.terraform_remote_state.foundation.outputs.route53_zone_id, null)
+  cloudfront_acm_certificate_arn = try(data.terraform_remote_state.foundation.outputs.cloudfront_acm_certificate_arn, null)
 }
 
-resource "aws_acm_certificate" "cloudfront" {
-  count             = var.domain_name == "" ? 0 : 1
-  provider          = aws.global
-  domain_name       = var.domain_name
-  validation_method = "DNS"
-  lifecycle { create_before_destroy = true }
-}
-
-resource "aws_route53_record" "certificate" {
-  for_each = var.domain_name == "" ? {} : {
-    for option in aws_acm_certificate.cloudfront[0].domain_validation_options : option.domain_name => {
-      name   = option.resource_record_name
-      record = option.resource_record_value
-      type   = option.resource_record_type
-    }
+check "foundation_domain_contract" {
+  assert {
+    condition = (
+      local.foundation_contract_version >= 2 &&
+      (
+        local.domain_name == "" ||
+        (
+          try(trimspace(local.route53_zone_id), "") != "" &&
+          try(trimspace(local.cloudfront_acm_certificate_arn), "") != ""
+        )
+      )
+    )
+    error_message = "Apply Foundation contract v2 before Daily Runtime; a configured domain must include Route 53 zone ID and CloudFront ACM certificate ARN."
   }
-  provider = aws.primary
-  zone_id  = local.route53_zone_id
-  name     = each.value.name
-  type     = each.value.type
-  records  = [each.value.record]
-  ttl      = 60
-
-  # Reuse/replace an ACM validation CNAME left by an earlier certificate.
-  allow_overwrite = true
-}
-
-resource "aws_acm_certificate_validation" "cloudfront" {
-  count                   = var.domain_name == "" ? 0 : 1
-  provider                = aws.global
-  certificate_arn         = aws_acm_certificate.cloudfront[0].arn
-  validation_record_fqdns = [for record in aws_route53_record.certificate : record.fqdn]
 }
 
 # AWS Shield Standard automatically protects CloudFront distributions at no additional charge.
 resource "aws_cloudfront_distribution" "this" {
   provider   = aws.global
   enabled    = true
-  aliases    = var.domain_name == "" ? [] : [var.domain_name]
+  aliases    = local.domain_name == "" ? [] : [local.domain_name]
   web_acl_id = var.enable_waf_observation ? aws_wafv2_web_acl.edge[0].arn : null
 
   origin {
@@ -167,7 +135,7 @@ resource "aws_cloudfront_distribution" "this" {
 
   default_cache_behavior {
     target_origin_id       = "primary-alb"
-    viewer_protocol_policy = "redirect-to-https"
+    viewer_protocol_policy = var.enable_https_redirect ? "redirect-to-https" : "allow-all"
     allowed_methods        = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
     cached_methods         = ["GET", "HEAD", "OPTIONS"]
     compress               = true
@@ -183,18 +151,18 @@ resource "aws_cloudfront_distribution" "this" {
     }
   }
   viewer_certificate {
-    cloudfront_default_certificate = var.domain_name == ""
-    acm_certificate_arn            = var.domain_name == "" ? null : aws_acm_certificate_validation.cloudfront[0].certificate_arn
-    ssl_support_method             = var.domain_name == "" ? null : "sni-only"
-    minimum_protocol_version       = var.domain_name == "" ? "TLSv1" : "TLSv1.2_2021"
+    cloudfront_default_certificate = local.domain_name == ""
+    acm_certificate_arn            = local.domain_name == "" ? null : local.cloudfront_acm_certificate_arn
+    ssl_support_method             = local.domain_name == "" ? null : "sni-only"
+    minimum_protocol_version       = local.domain_name == "" ? "TLSv1" : "TLSv1.2_2021"
   }
 }
 
 resource "aws_route53_record" "app" {
-  count    = var.domain_name == "" ? 0 : 1
+  count    = local.domain_name == "" ? 0 : 1
   provider = aws.primary
   zone_id  = local.route53_zone_id
-  name     = var.domain_name
+  name     = local.domain_name
   type     = "A"
 
   # Adopt/replace an existing apex A record with the CloudFront alias.

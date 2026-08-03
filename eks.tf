@@ -43,41 +43,42 @@ module "primary_eks" {
     "karpenter.sh/discovery" = "${local.name}-primary"
   }
 
-  addons = {
+  addons = merge({
     coredns                = {}
     kube-proxy             = {}
     vpc-cni                = { before_compute = true }
     eks-pod-identity-agent = { before_compute = true }
+    }, var.enable_efs ? {
     aws-efs-csi-driver = {
       most_recent = true
       pod_identity_association = [{
-        role_arn        = aws_iam_role.primary_efs_csi.arn
+        role_arn        = aws_iam_role.primary_efs_csi[0].arn
         service_account = "efs-csi-controller-sa"
       }]
     }
-  }
+  } : {})
 
   eks_managed_node_groups = {
     system = {
       instance_types = var.node_instance_types
-      min_size       = 2
-      max_size       = 4
-      desired_size   = 2
+      min_size       = local.primary_node_count
+      max_size       = local.primary_node_max
+      desired_size   = local.primary_node_count
       labels         = { workload = "system" }
     }
   }
 }
 
 module "dr_eks" {
-  count     = var.enable_dr_compute ? 1 : 0
+  count     = local.enable_dr_runtime ? 1 : 0
   providers = { aws = aws.dr }
   source    = "terraform-aws-modules/eks/aws"
   version   = "~> 21.0"
 
   name               = "${local.name}-dr"
   kubernetes_version = var.kubernetes_version
-  vpc_id             = module.dr_vpc.vpc_id
-  subnet_ids         = module.dr_vpc.private_subnets
+  vpc_id             = module.dr_vpc[0].vpc_id
+  subnet_ids         = module.dr_vpc[0].private_subnets
 
   endpoint_private_access                  = true
   endpoint_public_access                   = false
@@ -113,19 +114,20 @@ module "dr_eks" {
     "karpenter.sh/discovery" = "${local.name}-dr"
   }
 
-  addons = {
+  addons = merge({
     coredns                = {}
     kube-proxy             = {}
     vpc-cni                = { before_compute = true }
     eks-pod-identity-agent = { before_compute = true }
+    }, var.enable_efs ? {
     aws-efs-csi-driver = {
       most_recent = true
       pod_identity_association = [{
-        role_arn        = aws_iam_role.dr_efs_csi.arn
+        role_arn        = aws_iam_role.dr_efs_csi[0].arn
         service_account = "efs-csi-controller-sa"
       }]
     }
-  }
+  } : {})
 
   eks_managed_node_groups = {
     system = {
@@ -152,7 +154,7 @@ module "primary_karpenter" {
 }
 
 module "dr_karpenter" {
-  count     = var.enable_dr_compute ? 1 : 0
+  count     = local.enable_dr_runtime ? 1 : 0
   providers = { aws = aws.dr }
   source    = "terraform-aws-modules/eks/aws//modules/karpenter"
   version   = "~> 21.0"
@@ -191,7 +193,7 @@ resource "helm_release" "primary_karpenter" {
 }
 
 resource "helm_release" "dr_karpenter" {
-  count    = var.enable_dr_compute && var.manage_addons_via_local_helm ? 1 : 0
+  count    = local.enable_dr_runtime && var.manage_addons_via_local_helm ? 1 : 0
   provider = helm.dr
 
   name       = "karpenter"
@@ -235,7 +237,7 @@ resource "helm_release" "primary_karpenter_node_config" {
 }
 
 resource "helm_release" "dr_karpenter_node_config" {
-  count    = var.enable_dr_compute && var.manage_addons_via_local_helm ? 1 : 0
+  count    = local.enable_dr_runtime && var.manage_addons_via_local_helm ? 1 : 0
   provider = helm.dr
 
   name      = "karpenter-node-config"

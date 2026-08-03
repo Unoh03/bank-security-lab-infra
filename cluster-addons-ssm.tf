@@ -9,8 +9,8 @@ locals {
     interruption_queue       = module.primary_karpenter.queue_name
     capacity_types           = jsonencode(var.karpenter_capacity_types)
     cpu_limit                = var.karpenter_cpu_limit
-    enable_external_dns      = var.domain_name != "" ? "true" : "false"
-    domain_name              = var.domain_name
+    enable_external_dns      = local.domain_name != "" ? "true" : "false"
+    domain_name              = local.domain_name
     web_namespace            = var.web_namespace
     web_service_name         = var.web_service_name
     web_service_port         = var.web_service_port
@@ -22,18 +22,18 @@ locals {
     fluent_bit_log_group     = local.security_log_group_names.dvwa
   })
 
-  dr_cluster_addons_script = var.enable_dr_compute ? templatefile("${path.module}/templates/install-cluster-addons.sh.tpl", {
+  dr_cluster_addons_script = local.enable_dr_runtime ? templatefile("${path.module}/templates/install-cluster-addons.sh.tpl", {
     region                   = var.dr_region
     cluster_name             = module.dr_eks[0].cluster_name
     cluster_endpoint         = module.dr_eks[0].cluster_endpoint
-    vpc_id                   = module.dr_vpc.vpc_id
+    vpc_id                   = module.dr_vpc[0].vpc_id
     karpenter_chart_version  = var.karpenter_chart_version
     karpenter_node_role      = module.dr_karpenter[0].node_iam_role_name
     interruption_queue       = module.dr_karpenter[0].queue_name
     capacity_types           = jsonencode(var.karpenter_capacity_types)
     cpu_limit                = var.karpenter_cpu_limit
-    enable_external_dns      = var.enable_dr_external_dns && var.domain_name != "" ? "true" : "false"
-    domain_name              = var.domain_name
+    enable_external_dns      = var.enable_dr_external_dns && local.domain_name != "" ? "true" : "false"
+    domain_name              = local.domain_name
     web_namespace            = var.web_namespace
     web_service_name         = var.web_service_name
     web_service_port         = var.web_service_port
@@ -89,7 +89,7 @@ resource "aws_ssm_association" "primary_cluster_addons" {
 }
 
 resource "aws_ssm_document" "dr_cluster_addons" {
-  count           = var.enable_dr_compute ? 1 : 0
+  count           = local.enable_dr_runtime ? 1 : 0
   provider        = aws.dr
   name            = "custom-${local.name}-dr-cluster-addons"
   document_type   = "Command"
@@ -110,7 +110,7 @@ resource "aws_ssm_document" "dr_cluster_addons" {
 }
 
 resource "aws_ssm_association" "dr_cluster_addons" {
-  count                            = var.enable_dr_compute ? 1 : 0
+  count                            = local.enable_dr_runtime ? 1 : 0
   provider                         = aws.dr
   name                             = aws_ssm_document.dr_cluster_addons[0].name
   document_version                 = aws_ssm_document.dr_cluster_addons[0].document_version

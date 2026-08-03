@@ -5,8 +5,12 @@ param(
     [string]$TerraformRoot = '',
     [string]$AwsProfile = 'terra-user',
     [string]$Region = 'ap-northeast-2',
+    [string]$DrRegion = 'ap-northeast-1',
     [string]$ExpectedAccountId = '433048100798',
     [string]$ProjectName = 'aws-topology',
+    [Parameter(Mandatory)]
+    [AllowEmptyString()]
+    [string]$DomainName,
     [string]$GitHubRepository = 'Unoh03/Uns-DVWA',
     [string]$ArgoDeployKeyPath = "$HOME\.ssh\argocd-uns-dvwa",
     [switch]$RotateDeployKey
@@ -191,7 +195,9 @@ try {
         '-input=false',
         "-var=aws_profile=$AwsProfile",
         "-var=primary_region=$Region",
+        "-var=dr_region=$DrRegion",
         "-var=project_name=$ProjectName",
+        "-var=domain_name=$DomainName",
         "-var=expected_account_id=$ExpectedAccountId",
         "-out=$planPath"
     ) -FailureMessage 'Foundation Terraform plan failed.'
@@ -215,6 +221,7 @@ try {
         -FoundationRoot $foundationRoot `
         -Profile $AwsProfile `
         -Region $Region `
+        -DrRegion $DrRegion `
         -ExpectedAccountId $ExpectedAccountId
 
     Ensure-ReadOnlyDeployKey

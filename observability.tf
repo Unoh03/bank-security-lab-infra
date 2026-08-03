@@ -272,14 +272,14 @@ resource "aws_eks_pod_identity_association" "primary_dvwa_log_forwarder" {
 }
 
 resource "aws_iam_role" "dr_dvwa_log_forwarder" {
-  count              = var.enable_dr_compute && var.enable_dvwa_log_collection ? 1 : 0
+  count              = local.enable_dr_runtime && var.enable_dvwa_log_collection ? 1 : 0
   provider           = aws.dr
   name               = "${local.name}-dr-dvwa-logs"
   assume_role_policy = data.aws_iam_policy_document.pod_identity_assume_role.json
 }
 
 resource "aws_iam_role_policy" "dr_dvwa_log_forwarder" {
-  count    = var.enable_dr_compute && var.enable_dvwa_log_collection ? 1 : 0
+  count    = local.enable_dr_runtime && var.enable_dvwa_log_collection ? 1 : 0
   provider = aws.dr
   role     = aws_iam_role.dr_dvwa_log_forwarder[0].id
 
@@ -299,7 +299,7 @@ resource "aws_iam_role_policy" "dr_dvwa_log_forwarder" {
 }
 
 resource "aws_eks_pod_identity_association" "dr_dvwa_log_forwarder" {
-  count           = var.enable_dr_compute && var.enable_dvwa_log_collection ? 1 : 0
+  count           = local.enable_dr_runtime && var.enable_dvwa_log_collection ? 1 : 0
   provider        = aws.dr
   cluster_name    = module.dr_eks[0].cluster_name
   namespace       = "amazon-cloudwatch"

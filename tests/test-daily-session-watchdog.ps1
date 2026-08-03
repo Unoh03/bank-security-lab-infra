@@ -76,6 +76,7 @@ $testSafety = @{
     TaskNamePrefix = $taskPrefix
 }
 $taskName = ''
+$offTaskName = ''
 
 New-Item -ItemType Directory -Path $terraformTestRoot -Force | Out-Null
 try {
@@ -215,10 +216,57 @@ try {
         $logContent -notmatch 'SessionCompleted') {
         throw 'Watchdog lifecycle log does not include the pre-deadline no-op and completion events.'
     }
+
+    $offStateRoot = Join-Path $testRoot 'session-state-watchdog-off'
+    $offSession = Start-DailySessionGuard `
+        -SessionSafety $testSafety `
+        -StartedAt (Get-Date) `
+        -TerraformRoot $root `
+        -AccountId '000000000000' `
+        -PrimaryRegion 'ap-northeast-2' `
+        -DrRegion 'ap-northeast-1' `
+        -AwsProfile 'watchdog-test-profile' `
+        -ProjectName 'aws-topology' `
+        -AutomationConfigPath $configPath `
+        -PrimaryBastionKeyPairName 'watchdog-primary-test' `
+        -DrBastionKeyPairName 'watchdog-dr-test' `
+        -WatchdogScriptPath $watchdogPath `
+        -WatchdogMode Off `
+        -ExperimentId 'watchdog-disabled-test' `
+        -StateRoot $offStateRoot
+    $offTaskName = Get-DailySessionTaskName `
+        -SessionSafety $testSafety `
+        -SessionId ([string]$offSession.SessionId)
+    if (Get-ScheduledTask -TaskName $offTaskName -ErrorAction SilentlyContinue) {
+        throw 'WatchdogMode Off unexpectedly registered a Scheduled Task.'
+    }
+    if ([string]$offSession.WatchdogMode -cne 'Off' -or
+        [string]$offSession.LastResult -cne 'GuardDisabled') {
+        throw 'WatchdogMode Off was not retained in the bounded Daily Session state.'
+    }
+    $offLogPath = Get-DailySessionLogPath `
+        -SessionId ([string]$offSession.SessionId) `
+        -StateRoot $offStateRoot
+    if ((Get-Content -LiteralPath $offLogPath -Raw) -notmatch 'GuardDisabled') {
+        throw 'WatchdogMode Off did not write the expected sanitized lifecycle event.'
+    }
+    $offCompletion = Complete-DailySessionGuard `
+        -SessionSafety $testSafety `
+        -TerraformRoot $root `
+        -StateRoot $offStateRoot
+    if (-not $offCompletion.Removed) {
+        throw 'WatchdogMode Off session was not cleaned up by Daily Down completion.'
+    }
 } finally {
     if ($taskName) {
         Unregister-ScheduledTask `
             -TaskName $taskName `
+            -Confirm:$false `
+            -ErrorAction SilentlyContinue
+    }
+    if ($offTaskName) {
+        Unregister-ScheduledTask `
+            -TaskName $offTaskName `
             -Confirm:$false `
             -ErrorAction SilentlyContinue
     }

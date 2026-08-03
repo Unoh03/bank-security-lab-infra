@@ -5,6 +5,7 @@ resource "aws_s3_bucket" "primary" {
 }
 
 resource "aws_s3_bucket" "dr" {
+  count         = local.enable_dr_runtime ? 1 : 0
   provider      = aws.dr
   bucket_prefix = "${local.name}-dr-"
   force_destroy = true
@@ -17,8 +18,9 @@ resource "aws_s3_bucket_versioning" "primary" {
 }
 
 resource "aws_s3_bucket_versioning" "dr" {
+  count    = local.enable_dr_runtime ? 1 : 0
   provider = aws.dr
-  bucket   = aws_s3_bucket.dr.id
+  bucket   = aws_s3_bucket.dr[0].id
   versioning_configuration { status = "Enabled" }
 }
 
@@ -33,8 +35,9 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "primary" {
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "dr" {
+  count    = local.enable_dr_runtime ? 1 : 0
   provider = aws.dr
-  bucket   = aws_s3_bucket.dr.id
+  bucket   = aws_s3_bucket.dr[0].id
   rule {
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
@@ -52,8 +55,9 @@ resource "aws_s3_bucket_public_access_block" "primary" {
 }
 
 resource "aws_s3_bucket_public_access_block" "dr" {
+  count                   = local.enable_dr_runtime ? 1 : 0
   provider                = aws.dr
-  bucket                  = aws_s3_bucket.dr.id
+  bucket                  = aws_s3_bucket.dr[0].id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true
@@ -61,6 +65,7 @@ resource "aws_s3_bucket_public_access_block" "dr" {
 }
 
 resource "aws_iam_role" "s3_replication" {
+  count    = local.enable_dr_runtime ? 1 : 0
   provider = aws.primary
   name     = "${local.name}-s3-replication"
   assume_role_policy = jsonencode({
@@ -70,22 +75,24 @@ resource "aws_iam_role" "s3_replication" {
 }
 
 resource "aws_iam_role_policy" "s3_replication" {
+  count    = local.enable_dr_runtime ? 1 : 0
   provider = aws.primary
-  role     = aws_iam_role.s3_replication.id
+  role     = aws_iam_role.s3_replication[0].id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       { Effect = "Allow", Action = ["s3:GetReplicationConfiguration", "s3:ListBucket"], Resource = aws_s3_bucket.primary.arn },
       { Effect = "Allow", Action = ["s3:GetObjectVersionForReplication", "s3:GetObjectVersionAcl", "s3:GetObjectVersionTagging"], Resource = "${aws_s3_bucket.primary.arn}/*" },
-      { Effect = "Allow", Action = ["s3:ReplicateObject", "s3:ReplicateDelete", "s3:ReplicateTags"], Resource = "${aws_s3_bucket.dr.arn}/*" }
+      { Effect = "Allow", Action = ["s3:ReplicateObject", "s3:ReplicateDelete", "s3:ReplicateTags"], Resource = "${aws_s3_bucket.dr[0].arn}/*" }
     ]
   })
 }
 
 resource "aws_s3_bucket_replication_configuration" "primary_to_dr" {
+  count      = local.enable_dr_runtime ? 1 : 0
   provider   = aws.primary
   depends_on = [aws_s3_bucket_versioning.primary, aws_s3_bucket_versioning.dr]
-  role       = aws_iam_role.s3_replication.arn
+  role       = aws_iam_role.s3_replication[0].arn
   bucket     = aws_s3_bucket.primary.id
 
   rule {
@@ -93,7 +100,7 @@ resource "aws_s3_bucket_replication_configuration" "primary_to_dr" {
     status = "Enabled"
     filter {}
     destination {
-      bucket        = aws_s3_bucket.dr.arn
+      bucket        = aws_s3_bucket.dr[0].arn
       storage_class = "STANDARD"
     }
     delete_marker_replication { status = "Disabled" }

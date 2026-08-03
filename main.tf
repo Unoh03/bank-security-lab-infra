@@ -105,6 +105,31 @@ locals {
     Project   = var.project_name
     ManagedBy = "Terraform"
   })
+  runtime_profiles = {
+    minimal = {
+      enable_dr_runtime    = false
+      primary_node_count   = 1
+      primary_node_max     = 2
+      primary_rds_multi_az = false
+    }
+    dr-test = {
+      enable_dr_runtime    = true
+      primary_node_count   = 1
+      primary_node_max     = 2
+      primary_rds_multi_az = false
+    }
+    full = {
+      enable_dr_runtime    = true
+      primary_node_count   = 2
+      primary_node_max     = 4
+      primary_rds_multi_az = true
+    }
+  }
+  selected_runtime_profile = local.runtime_profiles[var.runtime_profile]
+  enable_dr_runtime        = local.selected_runtime_profile.enable_dr_runtime
+  primary_node_count       = local.selected_runtime_profile.primary_node_count
+  primary_node_max         = local.selected_runtime_profile.primary_node_max
+  primary_rds_multi_az     = local.selected_runtime_profile.primary_rds_multi_az
 }
 
 module "primary_vpc" {
@@ -138,6 +163,7 @@ module "primary_vpc" {
 }
 
 module "dr_vpc" {
+  count     = local.enable_dr_runtime ? 1 : 0
   providers = { aws = aws.dr }
   source    = "terraform-aws-modules/vpc/aws"
   version   = "~> 6.0"

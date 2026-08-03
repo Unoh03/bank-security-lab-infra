@@ -75,6 +75,12 @@ function Read-DailySessionState {
     if ([int]$state.SchemaVersion -ne 1) {
         throw "Unsupported Daily Session state schema: $($state.SchemaVersion)"
     }
+    if ($null -eq $state.PSObject.Properties['WatchdogMode']) {
+        $state | Add-Member -NotePropertyName WatchdogMode -NotePropertyValue 'On'
+    }
+    if ([string]$state.WatchdogMode -notin @('On', 'Off')) {
+        throw "Unsupported Daily Session WatchdogMode: $($state.WatchdogMode)"
+    }
     if ([string]$state.SessionId -notmatch '^[A-Za-z0-9][A-Za-z0-9-]{7,63}$') {
         throw 'Daily Session ID is unsafe.'
     }
@@ -404,6 +410,7 @@ function Start-DailySessionGuard {
         [Parameter(Mandatory)][string]$PrimaryBastionKeyPairName,
         [Parameter(Mandatory)][string]$DrBastionKeyPairName,
         [Parameter(Mandatory)][string]$WatchdogScriptPath,
+        [ValidateSet('On', 'Off')][string]$WatchdogMode = 'On',
         [string]$ExperimentId = '',
         [string]$StateRoot = ''
     )
@@ -432,10 +439,14 @@ function Start-DailySessionGuard {
         if ([datetimeoffset]::UtcNow -gt $retryUntil) {
             throw 'The existing Daily Session exceeded its retry window. Inspect and clear it only after Runtime reconciliation.'
         }
+        if ([string]$existing.WatchdogMode -cne $WatchdogMode) {
+            throw "The existing Daily Session uses WatchdogMode '$($existing.WatchdogMode)'. Run Daily Down before changing it to '$WatchdogMode'."
+        }
         $taskName = Get-DailySessionTaskName `
             -SessionSafety $SessionSafety `
             -SessionId ([string]$existing.SessionId)
-        if (-not (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) {
+        if ($WatchdogMode -ceq 'On' -and
+            -not (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) {
             [void](Register-DailySessionScheduledTask `
                 -State $existing `
                 -SessionSafety $SessionSafety `
@@ -446,6 +457,9 @@ function Start-DailySessionGuard {
                 -AutomationConfigPath $AutomationConfigPath `
                 -PrimaryBastionKeyPairName $PrimaryBastionKeyPairName `
                 -DrBastionKeyPairName $DrBastionKeyPairName)
+        } elseif ($WatchdogMode -ceq 'Off' -and
+            (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) {
+            throw 'WatchdogMode is Off, but a Scheduled Task still exists. Run Daily Down before reusing this session.'
         }
         Write-DailySessionLog `
             -SessionId ([string]$existing.SessionId) `
@@ -486,10 +500,20 @@ function Start-DailySessionGuard {
         HardDeadlineAtUtc = $hardDeadline.ToString('o')
         RetryUntilUtc    = $retryUntil.ToString('o')
         ExperimentId     = $ExperimentId
+        WatchdogMode     = $WatchdogMode
         LastAttemptAtUtc = ''
-        LastResult       = 'GuardRegistrationPending'
+        LastResult       = if ($WatchdogMode -ceq 'On') { 'GuardRegistrationPending' } else { 'GuardDisabled' }
     }
     Write-DailySessionJson -Path $statePath -Value $state
+    if ($WatchdogMode -ceq 'Off') {
+        Write-DailySessionLog `
+            -SessionId $sessionId `
+            -Event 'GuardDisabled' `
+            -Detail "hard=$($hardDeadline.ToString('o')); no Scheduled Task will run" `
+            -StateRoot $root
+        Write-Warning 'WatchdogMode=Off: deadlines are recorded, but no automatic Daily Down Scheduled Task will run.'
+        return Read-DailySessionState -Path $statePath
+    }
     try {
         [void](Register-DailySessionScheduledTask `
             -State ([pscustomobject]$state) `

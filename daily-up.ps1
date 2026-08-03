@@ -17,7 +17,14 @@ param(
     [string]$SshKeyPath = "$HOME\.ssh\seoul-public-ec2-key.pem",
     [string]$SshConfigPath = "$HOME\.ssh\config",
     [string]$ArgoDeployKeyPath = "$HOME\.ssh\argocd-uns-dvwa",
-    [string]$ExperimentId = ''
+    [string]$ExperimentId = '',
+    [ValidateSet('minimal', 'dr-test', 'full')]
+    [string]$RuntimeProfile = 'minimal',
+    [ValidateSet('On', 'Off')]
+    [string]$WatchdogMode = 'On',
+    [switch]$EnableValkey,
+    [switch]$EnableEfs,
+    [switch]$AllowHttp
 )
 
 Set-StrictMode -Version Latest
@@ -36,6 +43,12 @@ if (-not $AutomationConfigPath) {
 $automationModule = Join-Path $PSScriptRoot 'automation\Daily.Automation.psm1'
 Import-Module $automationModule -Force
 $automationConfig = Import-DailyAutomationConfig -Path $AutomationConfigPath
+$enableValkeyValue = if ($EnableValkey.IsPresent) { 'true' } else { 'false' }
+$enableEfsValue = if ($EnableEfs.IsPresent) { 'true' } else { 'false' }
+$enableHttpsRedirectValue = if ($AllowHttp.IsPresent) { 'false' } else { 'true' }
+if ($AllowHttp.IsPresent) {
+    Write-Warning 'AllowHttp is enabled: CloudFront will accept HTTP instead of redirecting every request to HTTPS.'
+}
 $application = Get-DailyApplication `
     -Config $automationConfig `
     -Name $ApplicationName
@@ -320,6 +333,22 @@ try {
             $details = Format-TaggedProjectRuntimeResources -Resources $untrackedRuntime
             throw "Daily state is empty, but tagged project runtime still exists in AWS. Reconcile ownership before apply:`n$($details -join "`n")"
         }
+    } else {
+        $appliedProfile = Invoke-NativeCapture -FilePath 'terraform' -ArgumentList @(
+            "-chdir=$TerraformRoot", 'output', '-raw', 'runtime_profile'
+        ) -FailureMessage 'The current Daily Runtime profile could not be read.'
+        if ($appliedProfile.Trim() -cne $RuntimeProfile) {
+            throw "Daily Runtime is already using profile '$($appliedProfile.Trim())'. Run Daily Down before changing to '$RuntimeProfile'."
+        }
+        $appliedFeaturesJson = Invoke-NativeCapture -FilePath 'terraform' -ArgumentList @(
+            "-chdir=$TerraformRoot", 'output', '-json', 'runtime_features'
+        ) -FailureMessage 'The current Daily Runtime feature selection could not be read.'
+        $appliedFeatures = $appliedFeaturesJson | ConvertFrom-Json
+        if ([bool]$appliedFeatures.valkey -ne $EnableValkey.IsPresent -or
+            [bool]$appliedFeatures.efs -ne $EnableEfs.IsPresent -or
+            [bool]$appliedFeatures.https_redirect -eq $AllowHttp.IsPresent) {
+            throw 'Daily Runtime feature toggles differ from the active state. Run Daily Down before changing Valkey, EFS, or HTTP behavior.'
+        }
     }
 
     Invoke-NativePassthrough -FilePath 'terraform' -ArgumentList @(
@@ -333,6 +362,10 @@ try {
         "-var=project_name=$ProjectName",
         "-var=primary_region=$Region",
         "-var=dr_region=$DrRegion",
+        "-var=runtime_profile=$RuntimeProfile",
+        "-var=enable_valkey=$enableValkeyValue",
+        "-var=enable_efs=$enableEfsValue",
+        "-var=enable_https_redirect=$enableHttpsRedirectValue",
         "-var=primary_bastion_key_pair_name=$PrimaryBastionKeyPairName",
         "-var=dr_bastion_key_pair_name=$DrBastionKeyPairName",
         "-out=$planPath"
@@ -360,8 +393,12 @@ try {
         -PrimaryBastionKeyPairName $PrimaryBastionKeyPairName `
         -DrBastionKeyPairName $DrBastionKeyPairName `
         -WatchdogScriptPath $watchdogScript `
+        -WatchdogMode $WatchdogMode `
         -ExperimentId $ExperimentId
     Write-Host "Daily Session: $($session.SessionId)"
+    Write-Host "Runtime profile: $RuntimeProfile"
+    Write-Host "Watchdog mode: $WatchdogMode"
+    Write-Host "Optional features: valkey=$enableValkeyValue, efs=$enableEfsValue, https_redirect=$enableHttpsRedirectValue"
     Write-Host "Soft deadline: $(([datetimeoffset]$session.SoftDeadlineAtUtc).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss zzz'))"
     Write-Host "Hard deadline: $(([datetimeoffset]$session.HardDeadlineAtUtc).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss zzz'))"
 
