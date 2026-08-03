@@ -1,5 +1,6 @@
 locals {
   primary_cluster_addons_script = templatefile("${path.module}/templates/install-cluster-addons.sh.tpl", {
+    project_name             = var.project_name
     region                   = var.primary_region
     cluster_name             = module.primary_eks.cluster_name
     cluster_endpoint         = module.primary_eks.cluster_endpoint
@@ -23,6 +24,7 @@ locals {
   })
 
   dr_cluster_addons_script = local.enable_dr_runtime ? templatefile("${path.module}/templates/install-cluster-addons.sh.tpl", {
+    project_name             = var.project_name
     region                   = var.dr_region
     cluster_name             = module.dr_eks[0].cluster_name
     cluster_endpoint         = module.dr_eks[0].cluster_endpoint

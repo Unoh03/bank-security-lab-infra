@@ -140,21 +140,29 @@ Deadline과 Sanitized Session Log는 남지만 자동 Down Scheduled Task는 생
 - Hard Deadline에 Terraform Process나 State Lock이 있으면 Kill·강제 해제하지
   않고 15분 간격으로 최대 2시간만 재확인한다.
 - Watchdog은 Fresh Destroy Plan, Foundation 보호 검사, Evidence 수집,
-  잔존 Runtime 검사까지 기존 `daily-down.ps1`에 위임한다.
+  Karpenter NodePool·NodeClaim 선행 정리, 잔존 Runtime 검사까지 기존
+  `daily-down.ps1`에 위임한다.
 - 정상적인 조기 Down과 Watchdog Down이 성공하면 예약 작업과 활성 Session
-  상태가 제거된다. Sanitized Lifecycle Log만 로컬에 남는다.
+  상태가 제거된다. Sanitized Lifecycle Log와 Down 시도별 진단 Log는 로컬에
+  남는다.
 
 활성 상태와 Log 위치:
 
 ```text
 %LOCALAPPDATA%\aws-topology\daily-session\active-session.json
 %LOCALAPPDATA%\aws-topology\daily-session\logs\<session-id>.log
+%LOCALAPPDATA%\aws-topology\daily-session\logs\<session-id>.daily-down.<attempt-id>.log
 ```
 
 상태와 Scheduled Task 인수에는 AWS Credential, Private Key, Password,
 Token을 기록하지 않는다. 노트북 전원이 꺼졌거나 AWS Profile을 사용할 수
 없으면 자동 Down을 보장할 수 없으므로, 다음 접속 때 실패 상태와 실제 과금
 Runtime을 먼저 확인한다.
+
+Down 진단 Log에는 Sanitized stdout/stderr, 남은 Terraform State 주소와 Project
+Tag 기반 AWS Runtime이 기록된다. 한 번의 Down이 Retry 종료 시각을 넘겨 실패하면
+자동 재시도는 종료되고 `RetryWindowExpired` 상태로 남으므로, 진단 Log와 실제
+Runtime을 확인한 뒤 수동으로 복구한다.
 
 ## 하원 전
 
@@ -172,6 +180,7 @@ Runtime을 먼저 확인한다.
 
 - Daily Terraform State가 비어 있음
 - Destroy 전 추적한 과금 Runtime의 AWS 잔존이 없음
+- Terraform Destroy 전에 Karpenter NodePool·NodeClaim과 해당 EC2가 제거됨
 - Foundation ECR·Image·OIDC·CI IAM Role은 남아 있음
 - Destroy 전·후 Evidence Bundle과 SHA-256 Manifest가 로컬에 남아 있음
 - Daily Session Scheduled Task와 활성 상태가 제거됨

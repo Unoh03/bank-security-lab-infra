@@ -28,6 +28,18 @@ if ($dailyDownSource -notmatch 'Enter-DailySessionDownMutex' -or
     @([regex]::Matches($dailyDownSource, 'Complete-DailySessionGuard')).Count -lt 2) {
     throw 'daily-down does not retain mutex, Terraform-idle, and successful guard cleanup contracts.'
 }
+$watchdogSource = Get-Content -LiteralPath $watchdogPath -Raw
+foreach ($expectedContract in @(
+    '-RedirectStandardOutput',
+    '-RedirectStandardError',
+    'Write-DailySessionProcessDiagnostics',
+    'DownFailedRetryExpired',
+    'Get-TaggedProjectRuntimeResources'
+)) {
+    if ($watchdogSource -notmatch [regex]::Escape($expectedContract)) {
+        throw "Watchdog diagnostics contract is missing: $expectedContract"
+    }
+}
 
 if (-not [bool]$safety.Enabled -or
     [int]$safety.SoftDeadlineHours -ne 5 -or
@@ -80,6 +92,49 @@ $offTaskName = ''
 
 New-Item -ItemType Directory -Path $terraformTestRoot -Force | Out-Null
 try {
+    $diagnosticStdout = Join-Path $testRoot 'diagnostic.stdout'
+    $diagnosticStderr = Join-Path $testRoot 'diagnostic.stderr'
+    $fakeAccessKey = 'AKIA' + ('A' * 16)
+    $fakeGitHubToken = 'ghp_' + ('b' * 32)
+    $fakeFineGrainedToken = 'github_pat_' + ('c' * 32)
+    $fakePassword = 'do-not-retain-password'
+    [System.IO.File]::WriteAllText(
+        $diagnosticStdout,
+        "access_key=$fakeAccessKey`r`npassword=$fakePassword`r`n$fakeGitHubToken`r`n$fakeFineGrainedToken`r`n{`"cookie`":`"session-value`"}",
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+    [System.IO.File]::WriteAllText(
+        $diagnosticStderr,
+        "Authorization: Bearer abc.def.ghi`r`n-----BEGIN PRIVATE KEY-----`r`nprivate-material`r`n-----END PRIVATE KEY-----",
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+    $diagnosticPath = Write-DailySessionProcessDiagnostics `
+        -SessionId 'watchdog-redaction-test' `
+        -ExitCode 1 `
+        -AttemptId 'unit-redaction' `
+        -StandardOutputPath $diagnosticStdout `
+        -StandardErrorPath $diagnosticStderr `
+        -Context 'remaining_state_count=2' `
+        -StateRoot $stateRoot
+    $diagnosticContent = Get-Content -LiteralPath $diagnosticPath -Raw
+    foreach ($forbidden in @(
+        $fakeAccessKey,
+        $fakeGitHubToken,
+        $fakeFineGrainedToken,
+        $fakePassword,
+        'session-value',
+        'private-material',
+        'abc.def.ghi'
+    )) {
+        if ($diagnosticContent.Contains($forbidden)) {
+            throw 'Daily Session diagnostic log retained secret-like test material.'
+        }
+    }
+    if ($diagnosticContent -notmatch '\[REDACTED' -or
+        $diagnosticContent -notmatch 'remaining_state_count=2') {
+        throw 'Daily Session diagnostic log did not retain sanitized output and recovery context.'
+    }
+
     $lockPath = Join-Path $terraformTestRoot '.terraform.tfstate.lock.info'
     [System.IO.File]::WriteAllText(
         $lockPath,

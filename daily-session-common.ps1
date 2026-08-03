@@ -157,6 +157,131 @@ function Write-DailySessionLog {
     Add-Content -LiteralPath $path -Value $line -Encoding UTF8
 }
 
+function Get-DailySessionDiagnosticLogPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SessionId,
+        [string]$AttemptId = '',
+        [string]$StateRoot = ''
+    )
+
+    if ($SessionId -notmatch '^[A-Za-z0-9][A-Za-z0-9-]{7,63}$') {
+        throw 'Daily Session ID is unsafe for a diagnostic log.'
+    }
+    if (-not $AttemptId) {
+        $AttemptId = [datetimeoffset]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
+    }
+    if ($AttemptId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{5,63}$') {
+        throw 'Daily Session diagnostic attempt ID is unsafe.'
+    }
+    $root = Get-DailySessionStateRoot -StateRoot $StateRoot
+    return Join-Path (Join-Path $root 'logs') "$SessionId.daily-down.$AttemptId.log"
+}
+
+function Protect-DailySessionDiagnosticText {
+    [CmdletBinding()]
+    param([AllowNull()][AllowEmptyString()][string]$Text)
+
+    if (-not $Text) {
+        return ''
+    }
+    $safe = [regex]::Replace(
+        $Text,
+        '(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----',
+        '[REDACTED PRIVATE KEY]'
+    )
+    $safe = [regex]::Replace(
+        $safe,
+        '\b(?:AKIA|ASIA)[A-Z0-9]{16}\b',
+        '[REDACTED AWS ACCESS KEY]'
+    )
+    $safe = [regex]::Replace(
+        $safe,
+        '\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b',
+        '[REDACTED GITHUB TOKEN]'
+    )
+    $safe = [regex]::Replace(
+        $safe,
+        '(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+',
+        'Bearer [REDACTED]'
+    )
+    $safe = [regex]::Replace(
+        $safe,
+        '(?im)"?\b(password|passwd|secret|token|authorization|cookie|credential|private[_ -]?key|access[_ -]?key)\b"?\s*[:=]\s*(?:"[^"]*"|\S+)',
+        '$1=[REDACTED]'
+    )
+    return $safe
+}
+
+function Get-DailySessionDiagnosticSlice {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][AllowEmptyString()][string]$Text,
+        [ValidateRange(4096, 2097152)][int]$MaxCharacters = 1048576
+    )
+
+    if (-not $Text -or $Text.Length -le $MaxCharacters) {
+        return [string]$Text
+    }
+    return "[TRUNCATED TO LAST $MaxCharacters CHARACTERS]`r`n" +
+        $Text.Substring($Text.Length - $MaxCharacters)
+}
+
+function Write-DailySessionProcessDiagnostics {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SessionId,
+        [Parameter(Mandatory)][int]$ExitCode,
+        [string]$AttemptId = '',
+        [string]$StandardOutputPath = '',
+        [string]$StandardErrorPath = '',
+        [string]$Context = '',
+        [string]$StateRoot = ''
+    )
+
+    $stdout = if ($StandardOutputPath -and
+        (Test-Path -LiteralPath $StandardOutputPath -PathType Leaf)) {
+        Get-Content -LiteralPath $StandardOutputPath -Raw
+    } else {
+        ''
+    }
+    $stderr = if ($StandardErrorPath -and
+        (Test-Path -LiteralPath $StandardErrorPath -PathType Leaf)) {
+        Get-Content -LiteralPath $StandardErrorPath -Raw
+    } else {
+        ''
+    }
+    $stdout = Get-DailySessionDiagnosticSlice `
+        -Text (Protect-DailySessionDiagnosticText -Text $stdout)
+    $stderr = Get-DailySessionDiagnosticSlice `
+        -Text (Protect-DailySessionDiagnosticText -Text $stderr)
+    $safeContext = Get-DailySessionDiagnosticSlice `
+        -Text (Protect-DailySessionDiagnosticText -Text $Context) `
+        -MaxCharacters 131072
+    $path = Get-DailySessionDiagnosticLogPath `
+        -SessionId $SessionId `
+        -AttemptId $AttemptId `
+        -StateRoot $StateRoot
+    $directory = Split-Path -Parent $path
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    $content = @(
+        "timestamp_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
+        "exit_code=$ExitCode"
+        '[context]'
+        $safeContext
+        '[stdout]'
+        $stdout
+        '[stderr]'
+        $stderr
+    ) -join "`r`n"
+    [System.IO.File]::WriteAllText(
+        $path,
+        $content,
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+    return $path
+}
+
 function Set-DailySessionStateStatus {
     [CmdletBinding()]
     param(
