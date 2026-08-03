@@ -1,0 +1,15 @@
+# Purpose: 지정 시간창의 WAF 요청·Rule Action을 관제 Timeline용 공통 Field로 반환한다.
+# Source pattern: AWS WAF log fields and CloudWatch Logs Insights query examples.
+# Official reference: https://docs.aws.amazon.com/athena/latest/ug/waf-logs.html
+# Normal: 허용된 요청과 COUNT Rule Match가 예상 범위에 나타남.
+# Attack/abuse: 한 Source IP·Route에 COUNT/BLOCK이 집중됨.
+# False positive: NAT 공유, Browser retry, 교육 실습, 낮은 Rate threshold.
+# Runtime verification: pending
+fields @timestamp as event_time,
+       httpRequest.clientIp as source_ip,
+       httpRequest.httpMethod as method,
+       httpRequest.uri as route,
+       action as result,
+       terminatingRuleId as event_name
+| sort @timestamp asc
+| limit 1000

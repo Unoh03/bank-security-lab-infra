@@ -4,8 +4,13 @@
 # Attack/abuse: 예상하지 않은 Principal·시간·Source IP의 변경
 # False positive: Daily Up/Down과 Terraform reconciliation
 # Runtime verification: 2026-08-02 Daily Up window completed with 76 rows: ingress authorize 36, policy attach 23, inline policy put 9, EKS access associate 6, ingress revoke 2. Actors were terra-user 72 and EKS service roles 4; treat as provisioning baseline, not an attack.
-fields @timestamp, eventSource, eventName, userIdentity.arn,
-       sourceIPAddress, errorCode, requestID
+fields @timestamp as event_time,
+       eventSource as detail,
+       eventName as event_name,
+       userIdentity.arn as user_id,
+       sourceIPAddress as source_ip,
+       errorCode as result,
+       requestID as request_id
 | filter eventName in [
     "AuthorizeSecurityGroupIngress",
     "RevokeSecurityGroupIngress",

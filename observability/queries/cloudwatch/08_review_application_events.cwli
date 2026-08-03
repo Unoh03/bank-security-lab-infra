@@ -1,0 +1,18 @@
+# Purpose: 지정 시간창의 BANK 보안 의미 Event를 관제 Timeline용 공통 Field로 반환한다.
+# Source pattern: AWS CloudWatch Logs Insights JSON field discovery examples.
+# Official reference: https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CWL_QuerySyntax-examples.html
+# Normal: 로그인·로그아웃·인가·설정 변경 같은 예상 Event가 시간 순서로 나타남.
+# Attack/abuse: 반복 인증 실패, 접근 거부, 예상하지 않은 설정 변경이 집중됨.
+# False positive: 교육 실습, 운영자 점검, 동일 NAT를 사용하는 여러 사용자.
+# Runtime verification: pending
+fields @timestamp as event_time,
+       data.event_type as event_name,
+       data.result as result,
+       data.user_id as user_id,
+       data.source_ip as source_ip,
+       data.route as route,
+       data.request_id as request_id,
+       data.context as detail
+| filter ispresent(data.event_type)
+| sort @timestamp asc
+| limit 1000

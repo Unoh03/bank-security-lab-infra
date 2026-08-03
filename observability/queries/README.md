@@ -54,6 +54,7 @@ $account = aws sts get-caller-identity --query Account --output text
 - `vpc-reject`
 - `cloudfront-trace`
 - `alb-trace`
+- `alb-window`
 
 시간 기반 Query는 최대 6시간으로 제한한다. `-CreateSchema`는 검토된 Database와
 External Table 3개를 `IF NOT EXISTS`로 등록하고, 모든 실행은 Foundation Bucket의
@@ -116,3 +117,19 @@ BANK `authorization.access.denied` 2건의 `request_id`와 ALB `trace_id`가
 각 Query의 `Runtime verification: pending`은 실제 Log에서 실행해 Field와
 결과를 확인하기 전까지 제거하지 않는다. 0행도 실행 성공과 Field 호환을
 증명할 수 있지만 공격·탐지 Threshold 검증을 의미하지는 않는다.
+
+## 범용 관제 Review
+
+`SOC-REVIEW`는 팀이 확정한 공격 시나리오명이 아니다. 조원이 알려준 정확한
+공격 시간과 선택적 Source IP를 입력해 다음을 한 번에 만드는 범용 분석
+경로다.
+
+- `08_review_application_events.cwli`: BANK 보안 의미 Event
+- `09_review_waf_requests.cwli`: WAF 요청과 Rule Action
+- 기존 Kubernetes·CloudTrail 보안 Query 재사용
+- `03_cloudfront_request_trace.sql`: Edge 요청
+- `05_alb_security_window.sql`: ALB 요청·Status·Trace ID
+
+`Review-SecurityWindow.ps1`이 결과를 공통 Timeline으로 정규화하고, 자동 판정을
+`NeedsAnalystReview` 상태로 남긴다. Query 성공과 사건 정탐 판정을 혼동하지
+않는다.

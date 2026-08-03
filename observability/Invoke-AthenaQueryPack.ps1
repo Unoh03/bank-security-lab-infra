@@ -1,7 +1,7 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [ValidateSet('alb-errors', 'vpc-reject', 'cloudfront-trace', 'alb-trace')]
+    [ValidateSet('alb-errors', 'vpc-reject', 'cloudfront-trace', 'alb-trace', 'alb-window')]
     [string]$QueryName = 'alb-errors',
 
     [string]$StartUtc = '',
@@ -197,6 +197,11 @@ $queryMetadata = @{
         File = '04_alb_trace_id_correlation.sql'
         RequiresTime = $false
         RequiresTraceId = $true
+    }
+    'alb-window' = @{
+        File = '05_alb_security_window.sql'
+        RequiresTime = $true
+        RequiresTraceId = $false
     }
 }
 $selected = $queryMetadata[$QueryName]

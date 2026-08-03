@@ -50,6 +50,52 @@
         # team selects the project scenarios; the query files remain reusable.
         Queries = @(
             @{
+                Name               = 'review-application-events'
+                Type               = 'CloudWatchLogsInsights'
+                ScenarioIds        = @('SOC-REVIEW')
+                QueryFile          = 'cloudwatch\08_review_application_events.cwli'
+                LogGroup           = '/aws/eks/{ProjectName}-primary/dvwa'
+                Region             = 'Primary'
+                Required           = $true
+                MaxPollAttempts    = 30
+                PollDelaySeconds   = 2
+            }
+            @{
+                Name               = 'review-waf-requests'
+                Type               = 'CloudWatchLogsInsights'
+                ScenarioIds        = @('SOC-REVIEW')
+                QueryFile          = 'cloudwatch\09_review_waf_requests.cwli'
+                LogGroup           = 'aws-waf-logs-{ProjectName}-edge'
+                Region             = 'Global'
+                Required           = $true
+                MaxPollAttempts    = 30
+                PollDelaySeconds   = 2
+            }
+            @{
+                Name               = 'review-kubernetes-sensitive-actions'
+                Type               = 'CloudWatchLogsInsights'
+                ScenarioIds        = @('SOC-REVIEW')
+                QueryFile          = 'cloudwatch\03_kubectl_exec_and_secret_access.cwli'
+                LogGroup           = '/aws/eks/{ProjectName}-primary/cluster'
+                Region             = 'Primary'
+                Required           = $false
+                MaxPollAttempts    = 30
+                PollDelaySeconds   = 2
+            }
+            @{
+                Name               = 'review-cloudtrail-security-changes'
+                Type               = 'CloudWatchLogsInsights'
+                ScenarioIds        = @('SOC-REVIEW')
+                QueryFile          = 'cloudwatch\04_cloudtrail_security_changes.cwli'
+                LogGroup           = '/aws/cloudtrail/{ProjectName}-security'
+                Region             = 'Primary'
+                Required           = $false
+                DeliveryGraceMinutes = 5
+                EventTimeField     = 'event_time'
+                MaxPollAttempts    = 30
+                PollDelaySeconds   = 2
+            }
+            @{
                 Name               = 'web-login-failures'
                 Type               = 'CloudWatchLogsInsights'
                 ScenarioIds        = @('WEB-01')
@@ -107,6 +153,41 @@
                 PollDelaySeconds   = 2
             }
         )
+
+        Review = @{
+            ScenarioId    = 'SOC-REVIEW'
+            MaxWindowHours = 6
+
+            CloudWatchSources = @(
+                @{
+                    Name       = 'Application'
+                    QueryName  = 'review-application-events'
+                    Normalizer = 'Application'
+                }
+                @{
+                    Name       = 'WAF'
+                    QueryName  = 'review-waf-requests'
+                    Normalizer = 'WAF'
+                }
+                @{
+                    Name       = 'Kubernetes'
+                    QueryName  = 'review-kubernetes-sensitive-actions'
+                    Normalizer = 'Kubernetes'
+                }
+                @{
+                    Name       = 'CloudTrail'
+                    QueryName  = 'review-cloudtrail-security-changes'
+                    Normalizer = 'CloudTrail'
+                }
+            )
+
+            AthenaQueries = @(
+                'cloudfront-trace'
+                'alb-window'
+                'alb-errors'
+                'vpc-reject'
+            )
+        }
 
         Collectors = @(
             @{

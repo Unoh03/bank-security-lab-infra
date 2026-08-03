@@ -34,8 +34,10 @@ function Assert-Contains {
     }
 }
 
-Assert-Contains '\[ValidateSet\(''alb-errors'',\s*''vpc-reject'',\s*''cloudfront-trace'',\s*''alb-trace''\)\]' `
+Assert-Contains '\[ValidateSet\(''alb-errors'',\s*''vpc-reject'',\s*''cloudfront-trace'',\s*''alb-trace'',\s*''alb-window''\)\]' `
     'Athena execution is not restricted to the approved Query Pack.'
+Assert-Contains "'alb-window'\s*=\s*@\{[\s\S]*?05_alb_security_window\.sql" `
+    'The generic ALB security-window query is not registered.'
 if ($script -match '(?m)^\s*\[string\]\$QueryFile') {
     throw 'Athena execution permits an arbitrary query file.'
 }
