@@ -29,8 +29,12 @@ function Import-DailyAutomationConfig {
         throw "Daily automation configuration is unavailable: $Path"
     }
 
-    $config = Microsoft.PowerShell.Utility\Import-PowerShellDataFile `
-        -LiteralPath $Path
+    # Resolve the exported command after the explicit module import above.
+    # Fresh non-interactive Windows PowerShell processes have occasionally
+    # failed to resolve the module-qualified command name even though the
+    # built-in module itself loaded successfully.
+    $psd1Importer = Get-Command -Name Import-PowerShellDataFile -ErrorAction Stop
+    $config = & $psd1Importer -LiteralPath $Path
     if ([int]$config.SchemaVersion -ne 1) {
         throw "Unsupported daily automation schema: $($config.SchemaVersion)"
     }
