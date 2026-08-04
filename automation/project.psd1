@@ -174,6 +174,17 @@
                 MaxPollAttempts    = 30
                 PollDelaySeconds   = 2
             }
+            @{
+                Name               = 'f2-guardduty-findings'
+                Type               = 'CloudWatchLogsInsights'
+                ScenarioIds        = @('F2')
+                QueryFile          = 'cloudwatch\12_guardduty_findings.cwli'
+                LogGroup           = '/aws/events/{ProjectName}-guardduty-findings'
+                Region             = 'Primary'
+                Required           = $true
+                MaxPollAttempts    = 60
+                PollDelaySeconds   = 5
+            }
         )
 
         Review = @{

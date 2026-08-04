@@ -54,21 +54,23 @@ output "security_cloudwatch_log_group_name" {
 
 output "security_log_group_names" {
   value = {
-    cloudtrail  = aws_cloudwatch_log_group.cloudtrail.name
-    eks_primary = aws_cloudwatch_log_group.eks_primary.name
-    dvwa        = aws_cloudwatch_log_group.dvwa_primary.name
-    dvwa_dr     = aws_cloudwatch_log_group.dvwa_dr.name
-    waf         = aws_cloudwatch_log_group.waf_edge.name
+    cloudtrail         = aws_cloudwatch_log_group.cloudtrail.name
+    eks_primary        = aws_cloudwatch_log_group.eks_primary.name
+    dvwa               = aws_cloudwatch_log_group.dvwa_primary.name
+    dvwa_dr            = aws_cloudwatch_log_group.dvwa_dr.name
+    waf                = aws_cloudwatch_log_group.waf_edge.name
+    guardduty_findings = aws_cloudwatch_log_group.guardduty_findings.name
   }
 }
 
 output "security_log_group_arns" {
   value = {
-    cloudtrail  = aws_cloudwatch_log_group.cloudtrail.arn
-    eks_primary = aws_cloudwatch_log_group.eks_primary.arn
-    dvwa        = aws_cloudwatch_log_group.dvwa_primary.arn
-    dvwa_dr     = aws_cloudwatch_log_group.dvwa_dr.arn
-    waf         = aws_cloudwatch_log_group.waf_edge.arn
+    cloudtrail         = aws_cloudwatch_log_group.cloudtrail.arn
+    eks_primary        = aws_cloudwatch_log_group.eks_primary.arn
+    dvwa               = aws_cloudwatch_log_group.dvwa_primary.arn
+    dvwa_dr            = aws_cloudwatch_log_group.dvwa_dr.arn
+    waf                = aws_cloudwatch_log_group.waf_edge.arn
+    guardduty_findings = aws_cloudwatch_log_group.guardduty_findings.arn
   }
 }
 
@@ -86,6 +88,25 @@ output "dvwa_login_failure_alarm_name" {
 
 output "security_alert_email_subscription_enabled" {
   value = var.enable_security_alert_email_subscription
+}
+
+output "guardduty_detector_id" {
+  value = aws_guardduty_detector.primary.id
+}
+
+output "guardduty_optional_features" {
+  value = {
+    for name, feature in aws_guardduty_detector_feature.disabled_optional :
+    name => feature.status
+  }
+}
+
+output "guardduty_finding_event_rule_name" {
+  value = aws_cloudwatch_event_rule.guardduty_findings.name
+}
+
+output "guardduty_finding_log_group_name" {
+  value = aws_cloudwatch_log_group.guardduty_findings.name
 }
 
 output "domain_name" {

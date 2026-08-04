@@ -253,6 +253,12 @@ $scenarioQueries = @{
         'Runtime verification:',
         't1-observability'
     )
+    'cloudwatch\12_guardduty_findings.cwli' = @(
+        'Purpose:',
+        'Runtime verification:',
+        'GuardDuty Finding',
+        'finding_id'
+    )
     'athena\03_cloudfront_request_trace.sql' = @(
         'Purpose:',
         'Runtime verification:',
