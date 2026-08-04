@@ -1,5 +1,7 @@
 # Purpose: T1 고정 경로의 WAF 도달과 COUNT/BLOCK 결과를 시간 순서로 확인한다.
 # Normal: baseline·allow·restore 요청이 /t1-observability/ 아래에 나타남.
+# Attack/abuse: 승인되지 않은 HTTP 허용 상태나 예상 밖 Source의 Probe 경로 접근이 나타남.
+# False positive: 동일 NAT를 공유하는 승인된 Client 또는 CloudFront 재시도.
 # Security signal: User-Agent 없는 Probe가 관리형 Rule의 COUNT 기록을 만들 수 있음.
 # Privacy: Header·Cookie·Request Body는 반환하지 않음.
 # Runtime verification: pending

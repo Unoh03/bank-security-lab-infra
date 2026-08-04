@@ -197,7 +197,7 @@ if ($t1Script -match '(?i)--no-verify-ssl|AKIA[A-Z0-9]{16}|Authorization|Cookie'
 }
 Assert-Contains $t1WafQuery 't1-observability' `
     'T1 WAF query is not scoped to the fixed probe route.'
-if ($t1WafQuery -match '(?i)headers|cookie|requestbody') {
+if (($t1WafQuery -replace '(?m)^\s*#.*$', '') -match '(?i)headers|cookie|requestbody') {
     throw 'T1 WAF query exposes headers, cookies, or request bodies.'
 }
 Assert-Contains $t1ApplicationQuery 't1-observability' `

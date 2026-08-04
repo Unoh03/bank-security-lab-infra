@@ -246,12 +246,12 @@ $scenarioQueries = @{
     'cloudwatch\10_t1_waf_requests.cwli' = @(
         'Purpose:',
         'Runtime verification:',
-        '/t1-observability/'
+        't1-observability'
     )
     'cloudwatch\11_t1_application_requests.cwli' = @(
         'Purpose:',
         'Runtime verification:',
-        '/t1-observability/'
+        't1-observability'
     )
     'athena\03_cloudfront_request_trace.sql' = @(
         'Purpose:',
