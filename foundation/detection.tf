@@ -268,12 +268,9 @@ resource "aws_cloudwatch_event_target" "guardduty_alert" {
       severity     = "$.detail.severity"
       time         = "$.time"
     }
-    input_template = jsonencode(join("\n", [
-      "[GuardDuty][S<severity>] <finding_type>",
-      "<region> <resource>",
-      "ID <finding_id>",
-      "<time>",
-    ]))
+    # Keep EventBridge placeholders literal. jsonencode() escapes '<' as
+    # '\u003c', which prevents InputTransformer from substituting them.
+    input_template = "\"[GuardDuty][S<severity>] <finding_type>\\n<region> <resource>\\nID <finding_id>\\n<time>\""
   }
 
   retry_policy {

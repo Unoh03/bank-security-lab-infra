@@ -34,6 +34,62 @@ helm repo add external-dns https://kubernetes-sigs.github.io/external-dns/ --for
 helm repo add argo https://argoproj.github.io/argo-helm --force-update
 helm repo update
 
+kubectl apply -f - <<'KARPENTER'
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  amiSelectorTerms:
+    - alias: al2023@latest
+  role: "${karpenter_node_role}"
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "${cluster_name}"
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "${cluster_name}"
+  tags:
+    Project: "${project_name}"
+    ManagedBy: "Karpenter"
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    metadata:
+      labels:
+        workload: application
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: kubernetes.io/os
+          operator: In
+          values: ["linux"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ${capacity_types}
+        - key: karpenter.k8s.aws/instance-category
+          operator: In
+          values: ["c", "m", "r", "t"]
+        - key: karpenter.k8s.aws/instance-generation
+          operator: Gt
+          values: ["2"]
+  limits:
+    cpu: "${cpu_limit}"
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 1m
+KARPENTER
+
 if [ "${enable_fluent_bit}" = "true" ]; then
   cat >/tmp/aws-for-fluent-bit-values.yaml <<'FLUENTBIT'
 serviceAccount:
@@ -100,68 +156,11 @@ if [ "${enable_argocd}" = "true" ]; then
     --namespace argocd --create-namespace \
     --version "${argocd_chart_version}" \
     --set 'global.nodeSelector.workload=system' \
+    --set 'redisSecretInit.nodeSelector.workload=application' \
     --set 'server.service.type=ClusterIP' \
     --set 'configs.params.server\.insecure=false' \
     --wait --timeout 10m
 fi
-
-kubectl apply -f - <<'KARPENTER'
-apiVersion: karpenter.k8s.aws/v1
-kind: EC2NodeClass
-metadata:
-  name: default
-spec:
-  amiSelectorTerms:
-    - alias: al2023@latest
-  role: "${karpenter_node_role}"
-  subnetSelectorTerms:
-    - tags:
-        karpenter.sh/discovery: "${cluster_name}"
-  securityGroupSelectorTerms:
-    - tags:
-        karpenter.sh/discovery: "${cluster_name}"
-  tags:
-    karpenter.sh/discovery: "${cluster_name}"
-    kubernetes.io/cluster/${cluster_name}: "owned"
-    Project: "${project_name}"
-    ManagedBy: "Karpenter"
----
-apiVersion: karpenter.sh/v1
-kind: NodePool
-metadata:
-  name: default
-spec:
-  template:
-    metadata:
-      labels:
-        workload: application
-    spec:
-      nodeClassRef:
-        group: karpenter.k8s.aws
-        kind: EC2NodeClass
-        name: default
-      requirements:
-        - key: kubernetes.io/arch
-          operator: In
-          values: ["amd64"]
-        - key: kubernetes.io/os
-          operator: In
-          values: ["linux"]
-        - key: karpenter.sh/capacity-type
-          operator: In
-          values: ${capacity_types}
-        - key: karpenter.k8s.aws/instance-category
-          operator: In
-          values: ["c", "m", "r", "t"]
-        - key: karpenter.k8s.aws/instance-generation
-          operator: Gt
-          values: ["2"]
-  limits:
-    cpu: "${cpu_limit}"
-  disruption:
-    consolidationPolicy: WhenEmptyOrUnderutilized
-    consolidateAfter: 1m
-KARPENTER
 
 kubectl create namespace "${web_namespace}" --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f - <<'TGB'

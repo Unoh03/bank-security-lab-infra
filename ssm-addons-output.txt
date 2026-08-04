@@ -1,0 +1,84 @@
+Added new context aws-topology-primary to /root/.kube/config
+Kubernetes control plane is running at https://7A1C92ED5ACE6910951C347A5EBBF654.gr7.ap-northeast-2.eks.amazonaws.com
+
+To further debug and diagnose cluster problems, use 'kubectl cluster-info dump'.
+No resources found
+Release "karpenter" does not exist. Installing it now.
+Pulled: public.ecr.aws/karpenter/karpenter:1.6.0
+Digest: sha256:c12af9fb6f282c3f01a236304e37b900359610155c82667329d8b9b5d5f56093
+NAME: karpenter
+LAST DEPLOYED: Tue Aug  4 00:44:49 2026
+NAMESPACE: kube-system
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+"eks" has been added to your repositories
+"external-dns" has been added to your repositories
+"argo" has been added to your repositories
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "external-dns" chart repository
+...Successfully got an update from the "eks" chart repository
+...Successfully got an update from the "argo" chart repository
+Update Complete. ⎈Happy Helming!⎈
+Release "aws-for-fluent-bit" does not exist. Installing it now.
+NAME: aws-for-fluent-bit
+LAST DEPLOYED: Tue Aug  4 00:47:02 2026
+NAMESPACE: amazon-cloudwatch
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+aws-for-fluent-bit has been installed or updated. To check the status of pods, run:
+
+kubectl get pods -n amazon-cloudwatch
+Release "aws-load-balancer-controller" does not exist. Installing it now.
+NAME: aws-load-balancer-controller
+LAST DEPLOYED: Tue Aug  4 00:47:06 2026
+NAMESPACE: kube-system
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+AWS Load Balancer controller installed!
+Release "external-dns" does not exist. Installing it now.
+NAME: external-dns
+LAST DEPLOYED: Tue Aug  4 00:47:27 2026
+NAMESPACE: external-dns
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+***********************************************************************
+* External DNS                                                        *
+***********************************************************************
+  Chart version: 1.21.1
+  App version:   0.21.0
+  Image tag:     registry.k8s.io/external-dns/external-dns:v0.21.0
+***********************************************************************
+Release "argocd" does not exist. Installing it now.
+NAME: argocd
+LAST DEPLOYED: Tue Aug  4 00:47:45 2026
+NAMESPACE: argocd
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+In order to access the server UI you have the following options:
+
+1. kubectl port-forward service/argocd-server -n argocd 8080:443
+
+    and then open the browser on http://localhost:8080 and accept the certificate
+
+2. enable ingress in the values file `server.ingress.enabled` and either
+      - Add the annotation for ssl passthrough: https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/#option-1-ssl-passthrough
+      - Set the `configs.params."server.insecure"` in the values file and terminate SSL at your ingress: https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/#option-2-multiple-ingress-objects-and-hosts
+
+
+After reaching the UI the first time you can login with username: admin and the random password generated during the installation. You can find the password by running:
+
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+
+(You should delete the initial secret afterwards as suggested by the Getting Started Guide: https://argo-cd.readthedocs.io/en/stable/getting_started/#4-login-using-the-cli)
+nodepool.karpenter.sh/default created
+The EC2NodeClass "default" is invalid: spec.tags: Invalid value: tag contains a restricted tag matching kubernetes.io/cluster/
+
