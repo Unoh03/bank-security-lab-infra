@@ -243,6 +243,21 @@ $scenarioQueries = @{
         '${trace_id}',
         'target_status_code'
     )
+    'cloudwatch\10_t1_waf_requests.cwli' = @(
+        'Purpose:',
+        'Runtime verification:',
+        '/t1-observability/'
+    )
+    'cloudwatch\11_t1_application_requests.cwli' = @(
+        'Purpose:',
+        'Runtime verification:',
+        '/t1-observability/'
+    )
+    'athena\03_cloudfront_request_trace.sql' = @(
+        'Purpose:',
+        'Runtime verification:',
+        '"cs-protocol" AS protocol'
+    )
 }
 foreach ($relativePath in $scenarioQueries.Keys) {
     $queryPath = Join-Path $queryPackRoot $relativePath

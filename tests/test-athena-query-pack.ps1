@@ -65,6 +65,12 @@ Assert-Contains "'SUCCEEDED',\s*'FAILED',\s*'CANCELLED'" `
     'Athena polling does not recognize all terminal states.'
 Assert-Contains 'Expected four bounded Athena DDL statements' `
     'Athena schema execution does not enforce the reviewed DDL scope.'
+Assert-Contains "'athena',\s*'get-table-metadata'" `
+    'Athena does not inspect the existing CloudFront Glue schema.'
+Assert-Contains 'ADD COLUMNS \(`cs-protocol` string\)' `
+    'Athena cannot migrate an existing CloudFront table for T1 protocol evidence.'
+Assert-Contains 'CloudFront protocol column is missing\. Re-run the approved query with -CreateSchema' `
+    'CloudFront trace does not fail closed when the protocol column is absent.'
 Assert-Contains 'Join-Path\s+\$localRoot\s+''results\\athena''' `
     'Athena results are not written into the Local Evidence bundle.'
 Assert-Contains 'DataScannedInBytes' `
@@ -96,7 +102,9 @@ try {
         'CREATE DATABASE IF NOT EXISTS aws_topology_security',
         'CREATE EXTERNAL TABLE IF NOT EXISTS aws_topology_security.cloudfront_access',
         'CREATE EXTERNAL TABLE IF NOT EXISTS aws_topology_security.alb_primary_access',
-        'CREATE EXTERNAL TABLE IF NOT EXISTS aws_topology_security.vpc_reject'
+        'CREATE EXTERNAL TABLE IF NOT EXISTS aws_topology_security.vpc_reject',
+        '`cs-protocol` string',
+        'x-edge-request-id,cs-protocol,time-taken'
     )) {
         if (-not $rendered.Contains($expected)) {
             throw "Rendered Athena schema is missing: $expected"
@@ -105,6 +113,12 @@ try {
 }
 finally {
     Remove-Item -LiteralPath $renderedPath -Force -ErrorAction SilentlyContinue
+}
+
+$cloudFrontQueryPath = Join-Path $root 'observability\queries\athena\03_cloudfront_request_trace.sql'
+$cloudFrontQuery = Get-Content -LiteralPath $cloudFrontQueryPath -Raw
+if ($cloudFrontQuery -notmatch '"cs-protocol"\s+AS\s+protocol') {
+    throw 'CloudFront trace query does not return the viewer protocol for T1.'
 }
 
 Write-Host 'Athena Query Pack static tests passed.'

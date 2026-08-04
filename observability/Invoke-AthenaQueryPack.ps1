@@ -486,6 +486,54 @@ try {
                 -Sql ($schemaStatements[$index] + ';') `
                 -CaptureRows $false))
         }
+
+        # CREATE TABLE IF NOT EXISTS does not update an older Glue schema.
+        # T1 needs the viewer protocol that Standard Logging v2 already emits,
+        # so add only that missing column and leave the S3 log objects intact.
+        $cloudFrontMetadata = Invoke-AthenaNative -FilePath 'aws' -ArgumentList @(
+            'athena', 'get-table-metadata',
+            '--catalog-name', 'AwsDataCatalog',
+            '--database-name', $Database,
+            '--table-name', $CloudFrontTable,
+            '--profile', $AwsProfile,
+            '--region', $primaryRegion,
+            '--output', 'json'
+        ) -FailureMessage 'The CloudFront Athena table metadata could not be read.' |
+            ConvertFrom-Json
+        $cloudFrontColumns = @(
+            @($cloudFrontMetadata.TableMetadata.Columns) |
+                ForEach-Object { [string]$_.Name }
+        )
+        if ('cs-protocol' -notin $cloudFrontColumns) {
+            $protocolColumnSql = (
+                "ALTER TABLE $Database.$CloudFrontTable " +
+                'ADD COLUMNS (`cs-protocol` string);'
+            )
+            $executions.Add((Invoke-AthenaStatement `
+                -Label 'schema-cloudfront-protocol' `
+                -Sql $protocolColumnSql `
+                -CaptureRows $false))
+        }
+    }
+
+    if ($QueryName -ceq 'cloudfront-trace') {
+        $cloudFrontMetadata = Invoke-AthenaNative -FilePath 'aws' -ArgumentList @(
+            'athena', 'get-table-metadata',
+            '--catalog-name', 'AwsDataCatalog',
+            '--database-name', $Database,
+            '--table-name', $CloudFrontTable,
+            '--profile', $AwsProfile,
+            '--region', $primaryRegion,
+            '--output', 'json'
+        ) -FailureMessage 'The CloudFront Athena table metadata could not be read.' |
+            ConvertFrom-Json
+        $cloudFrontColumns = @(
+            @($cloudFrontMetadata.TableMetadata.Columns) |
+                ForEach-Object { [string]$_.Name }
+        )
+        if ('cs-protocol' -notin $cloudFrontColumns) {
+            throw 'CloudFront protocol column is missing. Re-run the approved query with -CreateSchema.'
+        }
     }
 
     $executions.Add((Invoke-AthenaStatement `

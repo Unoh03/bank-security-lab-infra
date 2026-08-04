@@ -1,0 +1,9 @@
+# Purpose: T1 고정 경로가 DVWA Pod의 Access Log까지 도달했는지 확인한다.
+# Normal: HTTPS 요청과 HTTP allow-all 요청이 나타나고 redirect된 HTTP 요청은 나타나지 않음.
+# Security signal: Edge에서 허용된 요청이 Application 계층까지 도달했음을 증명함.
+# Privacy: 고정 Probe 경로가 포함된 Log만 반환하며 Cookie·Session·Body를 수집하지 않음.
+# Runtime verification: pending
+fields @timestamp as event_time, @logStream as log_stream, @message
+| filter @message like /\/t1-observability\//
+| sort @timestamp asc
+| limit 100
