@@ -103,6 +103,33 @@ resource "aws_wafv2_web_acl" "edge" {
     }
   }
 
+  # The Common Rule Set recorded the XSS requests from the controlled BANK
+  # exercise, but it does not provide the dedicated SQL injection coverage
+  # needed for the observed /sqli and /sqli_blind traffic. Keep the dedicated
+  # AWS managed SQLi rules in COUNT mode so the intentionally vulnerable
+  # workload remains reachable while every match is retained in the WAF log.
+  rule {
+    name     = "aws-managed-sqli-count"
+    priority = 15
+
+    override_action {
+      count {}
+    }
+
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesSQLiRuleSet"
+        vendor_name = "AWS"
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name}-sqli-count"
+      sampled_requests_enabled   = true
+    }
+  }
+
   # WEB-01 is disabled by default. Enabling COUNT or BLOCK is an explicit
   # experiment gate because changing a rate rule resets its tracked counters.
   dynamic "rule" {

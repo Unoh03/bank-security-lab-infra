@@ -255,6 +255,27 @@ resource "aws_cloudwatch_event_target" "guardduty_alert" {
   arn       = aws_sns_topic.security_alerts.arn
   role_arn  = aws_iam_role.guardduty_eventbridge.arn
 
+  # Preserve the complete EventBridge event in CloudWatch Logs, but send only
+  # the fields an operator needs for first response to email/SMS. Forwarding
+  # the raw Finding produced twelve unordered SMS fragments during F2 runtime
+  # validation and exposed unnecessary AWS session metadata.
+  input_transformer {
+    input_paths = {
+      finding_id   = "$.detail.id"
+      finding_type = "$.detail.type"
+      region       = "$.region"
+      resource     = "$.detail.resource.resourceType"
+      severity     = "$.detail.severity"
+      time         = "$.time"
+    }
+    input_template = jsonencode(join("\n", [
+      "[GuardDuty][S<severity>] <finding_type>",
+      "<region> <resource>",
+      "ID <finding_id>",
+      "<time>",
+    ]))
+  }
+
   retry_policy {
     maximum_event_age_in_seconds = 3600
     maximum_retry_attempts       = 3
