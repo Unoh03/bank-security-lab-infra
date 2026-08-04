@@ -82,6 +82,7 @@ Scan Byte, 최대 1,000행 결과를 Evidence 하위에 보존한다. DDL은 Glu
 | BANK DVWA | `ap-northeast-2` | `/aws/eks/aws-topology-primary/dvwa` |
 | WAF | `us-east-1` | `aws-waf-logs-aws-topology-edge` |
 | CloudTrail | `ap-northeast-2` | `/aws/cloudtrail/aws-topology-security` |
+| GuardDuty Finding | `ap-northeast-2` | `/aws/events/aws-topology-guardduty-findings` |
 
 ## 사용 원칙
 
@@ -102,6 +103,7 @@ Query만 재사용하거나 매핑을 교체한다.
 |---|---|---|
 | WEB-01 반복 로그인 실패 | `01_repeated_login_failures.cwli`, `02_waf_count_matches.cwli`, `06_waf_login_rate_limit.cwli`, `03_cloudfront_request_trace.sql`, `04_alb_trace_id_correlation.sql` | `before/count/block`에서 Application 실패 Event 각 20건. `COUNT` Match 2건, `BLOCK` 0건·HTTP 403 0건으로 관측 성공·차단 미검증. Alarm `OK → ALARM → OK`와 Athena 4개 Query Runtime 확인 |
 | IAM-01 Pod Identity S3 권한 | `03_kubectl_exec_and_secret_access.cwli`, `07_pod_identity_and_s3_activity.cwli` | 조치 전 Pod Identity와 Canary S3 Put/Get/Delete, 조치 후 Credential 없음·S3 Object API 0건 확인. Foundation S3 Data Events는 활성 상태를 유지하고 Daily Pod Identity 기본값은 비활성 |
+| F2 GuardDuty Finding 전달 | `12_guardduty_findings.cwli` | AWS Sample Finding으로 GuardDuty → EventBridge → CloudWatch Logs·SNS와 Finding ID 기반 조사 흐름을 검증한다. Sample은 실제 공격 증거가 아님 |
 
 `04_cloudtrail_security_changes.cwli`는 2026-08-02 Daily Up 시간창에서
 76행을 반환했다. 72행은 `terra-user`, 4행은 EKS Service Role의

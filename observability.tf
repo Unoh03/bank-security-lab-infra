@@ -103,6 +103,33 @@ resource "aws_wafv2_web_acl" "edge" {
     }
   }
 
+  # The Common Rule Set recorded the XSS requests from the controlled BANK
+  # exercise, but it does not provide the dedicated SQL injection coverage
+  # needed for the observed /sqli and /sqli_blind traffic. Keep the dedicated
+  # AWS managed SQLi rules in COUNT mode so the intentionally vulnerable
+  # workload remains reachable while every match is retained in the WAF log.
+  rule {
+    name     = "aws-managed-sqli-count"
+    priority = 15
+
+    override_action {
+      count {}
+    }
+
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesSQLiRuleSet"
+        vendor_name = "AWS"
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name}-sqli-count"
+      sampled_requests_enabled   = true
+    }
+  }
+
   # WEB-01 is disabled by default. Enabling COUNT or BLOCK is an explicit
   # experiment gate because changing a rate rule resets its tracked counters.
   dynamic "rule" {
@@ -272,14 +299,14 @@ resource "aws_eks_pod_identity_association" "primary_dvwa_log_forwarder" {
 }
 
 resource "aws_iam_role" "dr_dvwa_log_forwarder" {
-  count              = var.enable_dr_compute && var.enable_dvwa_log_collection ? 1 : 0
+  count              = local.enable_dr_runtime && var.enable_dvwa_log_collection ? 1 : 0
   provider           = aws.dr
   name               = "${local.name}-dr-dvwa-logs"
   assume_role_policy = data.aws_iam_policy_document.pod_identity_assume_role.json
 }
 
 resource "aws_iam_role_policy" "dr_dvwa_log_forwarder" {
-  count    = var.enable_dr_compute && var.enable_dvwa_log_collection ? 1 : 0
+  count    = local.enable_dr_runtime && var.enable_dvwa_log_collection ? 1 : 0
   provider = aws.dr
   role     = aws_iam_role.dr_dvwa_log_forwarder[0].id
 
@@ -299,7 +326,7 @@ resource "aws_iam_role_policy" "dr_dvwa_log_forwarder" {
 }
 
 resource "aws_eks_pod_identity_association" "dr_dvwa_log_forwarder" {
-  count           = var.enable_dr_compute && var.enable_dvwa_log_collection ? 1 : 0
+  count           = local.enable_dr_runtime && var.enable_dvwa_log_collection ? 1 : 0
   provider        = aws.dr
   cluster_name    = module.dr_eks[0].cluster_name
   namespace       = "amazon-cloudwatch"

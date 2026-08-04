@@ -2,7 +2,7 @@ output "cloudfront_domain_name" {
   value = aws_cloudfront_distribution.this.domain_name
 }
 output "application_url" {
-  value = var.domain_name == "" ? "https://${aws_cloudfront_distribution.this.domain_name}" : "https://${var.domain_name}"
+  value = local.domain_name == "" ? "https://${aws_cloudfront_distribution.this.domain_name}" : "https://${local.domain_name}"
 }
 output "primary_alb_dns_name" {
   value = aws_lb.primary.dns_name
@@ -31,10 +31,10 @@ output "tokyo_bastion_public_ip" {
   value       = try(aws_instance.dr_bastion[0].public_ip, null)
 }
 output "primary_efs_file_system_id" {
-  value = aws_efs_file_system.primary.id
+  value = try(aws_efs_file_system.primary[0].id, null)
 }
 output "dr_efs_file_system_id" {
-  value = aws_efs_file_system.dr.id
+  value = try(aws_efs_file_system.dr[0].id, null)
 }
 output "primary_web_s3_role_arn" {
   value = try(aws_iam_role.primary_web_s3[0].arn, null)
@@ -52,7 +52,7 @@ output "primary_application_bucket_name" {
 }
 output "dr_application_bucket_name" {
   description = "DR application S3 bucket."
-  value       = aws_s3_bucket.dr.id
+  value       = try(aws_s3_bucket.dr[0].id, null)
 }
 output "waf_login_rate_rule_mode" {
   description = "Effective WEB-01 login rate rule mode."
@@ -76,18 +76,32 @@ output "primary_db_bootstrap" {
   }
 }
 output "dr_rds_endpoint" {
-  value     = aws_db_instance.dr_replica.endpoint
+  value     = try(aws_db_instance.dr_replica[0].endpoint, null)
   sensitive = true
 }
 output "primary_valkey_endpoint" {
-  value     = aws_elasticache_replication_group.primary.primary_endpoint_address
+  value     = try(aws_elasticache_replication_group.primary[0].primary_endpoint_address, null)
   sensitive = true
 }
 output "dr_valkey_endpoint" {
-  value     = aws_elasticache_replication_group.dr.primary_endpoint_address
+  value     = try(aws_elasticache_replication_group.dr[0].primary_endpoint_address, null)
   sensitive = true
 }
 output "primary_cluster_addons_association_id" {
   description = "SSM association that installs and reconciles primary EKS add-ons."
   value       = aws_ssm_association.primary_cluster_addons.id
+}
+
+output "runtime_profile" {
+  description = "Runtime profile applied to the current Daily state."
+  value       = var.runtime_profile
+}
+
+output "runtime_features" {
+  description = "Explicit optional Daily Runtime feature selection."
+  value = {
+    valkey         = var.enable_valkey
+    efs            = var.enable_efs
+    https_redirect = var.enable_https_redirect
+  }
 }

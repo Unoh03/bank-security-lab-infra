@@ -212,8 +212,33 @@ variable "web_health_check_path" {
   type        = string
   default     = "/login.php"
 }
+variable "runtime_profile" {
+  description = "Daily Runtime shape. minimal is the default, dr-test enables the DR experiment path, and full restores the previous high-availability shape."
+  type        = string
+  default     = "minimal"
+
+  validation {
+    condition     = contains(["minimal", "dr-test", "full"], var.runtime_profile)
+    error_message = "runtime_profile must be one of: minimal, dr-test, full."
+  }
+}
+variable "enable_valkey" {
+  description = "Provision Valkey only after an application or experiment dependency is demonstrated."
+  type        = bool
+  default     = false
+}
+variable "enable_efs" {
+  description = "Provision EFS and the EFS CSI add-on only after a workload dependency is demonstrated."
+  type        = bool
+  default     = false
+}
+variable "enable_https_redirect" {
+  description = "Redirect CloudFront HTTP requests to HTTPS. Disable only for an approved HTTP observation experiment."
+  type        = bool
+  default     = true
+}
 variable "enable_dr_compute" {
-  description = "Provision the warm DR EKS cluster and ALB."
+  description = "Deprecated compatibility input. runtime_profile now controls the complete DR lifecycle."
   type        = bool
   default     = true
 }
@@ -228,8 +253,9 @@ variable "domain_name" {
   default     = ""
 }
 variable "create_route53_zone" {
-  type    = bool
-  default = false
+  description = "Deprecated compatibility input. The Daily root never creates or deletes the authoritative hosted zone."
+  type        = bool
+  default     = false
 }
 variable "db_name" {
   type    = string

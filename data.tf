@@ -24,7 +24,7 @@ resource "aws_db_instance" "primary" {
   # master password is managed by RDS/Secrets Manager.
   # Omitting manage_master_user_password selects the user-managed password mode.
   password                = random_password.db_master.result
-  multi_az                = true
+  multi_az                = local.primary_rds_multi_az
   db_subnet_group_name    = module.primary_vpc.database_subnet_group_name
   vpc_security_group_ids  = [aws_security_group.primary_data.id]
   storage_encrypted       = true
@@ -37,6 +37,7 @@ resource "aws_db_instance" "primary" {
 }
 
 resource "aws_kms_key" "dr_rds" {
+  count                   = local.enable_dr_runtime ? 1 : 0
   provider                = aws.dr
   description             = "KMS key for the cross-region RDS replica"
   deletion_window_in_days = 30
@@ -44,32 +45,36 @@ resource "aws_kms_key" "dr_rds" {
 }
 
 resource "aws_kms_alias" "dr_rds" {
+  count         = local.enable_dr_runtime ? 1 : 0
   provider      = aws.dr
   name          = "alias/${local.name}-dr-rds"
-  target_key_id = aws_kms_key.dr_rds.key_id
+  target_key_id = aws_kms_key.dr_rds[0].key_id
 }
 
 resource "aws_db_instance" "dr_replica" {
+  count    = local.enable_dr_runtime ? 1 : 0
   provider = aws.dr
 
   identifier             = "${local.name}-dr-replica"
   replicate_source_db    = aws_db_instance.primary.arn
   instance_class         = var.db_instance_class
-  db_subnet_group_name   = module.dr_vpc.database_subnet_group_name
-  vpc_security_group_ids = [aws_security_group.dr_data.id]
+  db_subnet_group_name   = module.dr_vpc[0].database_subnet_group_name
+  vpc_security_group_ids = [aws_security_group.dr_data[0].id]
   storage_encrypted      = true
-  kms_key_id             = aws_kms_key.dr_rds.arn
+  kms_key_id             = aws_kms_key.dr_rds[0].arn
   publicly_accessible    = false
   skip_final_snapshot    = true
 }
 
 resource "aws_elasticache_subnet_group" "primary" {
+  count      = var.enable_valkey ? 1 : 0
   provider   = aws.primary
   name       = "${local.name}-primary"
   subnet_ids = module.primary_vpc.database_subnets
 }
 
 resource "aws_elasticache_replication_group" "primary" {
+  count    = var.enable_valkey ? 1 : 0
   provider = aws.primary
 
   replication_group_id       = "${local.name}-primary"
@@ -81,17 +86,19 @@ resource "aws_elasticache_replication_group" "primary" {
   multi_az_enabled           = true
   at_rest_encryption_enabled = true
   transit_encryption_enabled = true
-  subnet_group_name          = aws_elasticache_subnet_group.primary.name
+  subnet_group_name          = aws_elasticache_subnet_group.primary[0].name
   security_group_ids         = [aws_security_group.primary_data.id]
 }
 
 resource "aws_elasticache_subnet_group" "dr" {
+  count      = local.enable_dr_runtime && var.enable_valkey ? 1 : 0
   provider   = aws.dr
   name       = "${local.name}-dr"
-  subnet_ids = module.dr_vpc.database_subnets
+  subnet_ids = module.dr_vpc[0].database_subnets
 }
 
 resource "aws_elasticache_replication_group" "dr" {
+  count    = local.enable_dr_runtime && var.enable_valkey ? 1 : 0
   provider = aws.dr
 
   replication_group_id       = "${local.name}-dr"
@@ -103,6 +110,6 @@ resource "aws_elasticache_replication_group" "dr" {
   multi_az_enabled           = true
   at_rest_encryption_enabled = true
   transit_encryption_enabled = true
-  subnet_group_name          = aws_elasticache_subnet_group.dr.name
-  security_group_ids         = [aws_security_group.dr_data.id]
+  subnet_group_name          = aws_elasticache_subnet_group.dr[0].name
+  security_group_ids         = [aws_security_group.dr_data[0].id]
 }

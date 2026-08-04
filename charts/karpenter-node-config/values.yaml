@@ -1,4 +1,5 @@
 clusterName: ""
+projectName: ""
 nodeRole: ""
 capacityType:
   - on-demand

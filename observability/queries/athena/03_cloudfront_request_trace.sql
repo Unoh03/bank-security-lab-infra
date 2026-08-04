@@ -12,6 +12,7 @@ SELECT
   "cs-uri-stem" AS path,
   "sc-status" AS status,
   "x-edge-request-id" AS edge_request_id,
+  "cs-protocol" AS protocol,
   "time-taken" AS time_taken
 FROM ${database}.${cloudfront_table}
 WHERE from_iso8601_timestamp(concat(date, 'T', time, 'Z')) BETWEEN

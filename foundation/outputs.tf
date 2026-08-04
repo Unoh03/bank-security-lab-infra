@@ -2,6 +2,11 @@ output "aws_account_id" {
   value = data.aws_caller_identity.current.account_id
 }
 
+output "foundation_contract_version" {
+  description = "Version of the outputs required by Daily Runtime wrappers and remote-state consumers."
+  value       = 2
+}
+
 output "aws_region" {
   value = var.primary_region
 }
@@ -49,21 +54,23 @@ output "security_cloudwatch_log_group_name" {
 
 output "security_log_group_names" {
   value = {
-    cloudtrail  = aws_cloudwatch_log_group.cloudtrail.name
-    eks_primary = aws_cloudwatch_log_group.eks_primary.name
-    dvwa        = aws_cloudwatch_log_group.dvwa_primary.name
-    dvwa_dr     = aws_cloudwatch_log_group.dvwa_dr.name
-    waf         = aws_cloudwatch_log_group.waf_edge.name
+    cloudtrail         = aws_cloudwatch_log_group.cloudtrail.name
+    eks_primary        = aws_cloudwatch_log_group.eks_primary.name
+    dvwa               = aws_cloudwatch_log_group.dvwa_primary.name
+    dvwa_dr            = aws_cloudwatch_log_group.dvwa_dr.name
+    waf                = aws_cloudwatch_log_group.waf_edge.name
+    guardduty_findings = aws_cloudwatch_log_group.guardduty_findings.name
   }
 }
 
 output "security_log_group_arns" {
   value = {
-    cloudtrail  = aws_cloudwatch_log_group.cloudtrail.arn
-    eks_primary = aws_cloudwatch_log_group.eks_primary.arn
-    dvwa        = aws_cloudwatch_log_group.dvwa_primary.arn
-    dvwa_dr     = aws_cloudwatch_log_group.dvwa_dr.arn
-    waf         = aws_cloudwatch_log_group.waf_edge.arn
+    cloudtrail         = aws_cloudwatch_log_group.cloudtrail.arn
+    eks_primary        = aws_cloudwatch_log_group.eks_primary.arn
+    dvwa               = aws_cloudwatch_log_group.dvwa_primary.arn
+    dvwa_dr            = aws_cloudwatch_log_group.dvwa_dr.arn
+    waf                = aws_cloudwatch_log_group.waf_edge.arn
+    guardduty_findings = aws_cloudwatch_log_group.guardduty_findings.arn
   }
 }
 
@@ -81,4 +88,35 @@ output "dvwa_login_failure_alarm_name" {
 
 output "security_alert_email_subscription_enabled" {
   value = var.enable_security_alert_email_subscription
+}
+
+output "guardduty_detector_id" {
+  value = aws_guardduty_detector.primary.id
+}
+
+output "guardduty_optional_features" {
+  value = {
+    for name, feature in aws_guardduty_detector_feature.disabled_optional :
+    name => feature.status
+  }
+}
+
+output "guardduty_finding_event_rule_name" {
+  value = aws_cloudwatch_event_rule.guardduty_findings.name
+}
+
+output "guardduty_finding_log_group_name" {
+  value = aws_cloudwatch_log_group.guardduty_findings.name
+}
+
+output "domain_name" {
+  value = var.domain_name
+}
+
+output "route53_zone_id" {
+  value = var.domain_name == "" ? "" : data.aws_route53_zone.existing[0].zone_id
+}
+
+output "cloudfront_acm_certificate_arn" {
+  value = var.domain_name == "" ? "" : aws_acm_certificate_validation.cloudfront[0].certificate_arn
 }

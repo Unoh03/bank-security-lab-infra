@@ -29,6 +29,12 @@ variable "dr_region" {
   default = "ap-northeast-1"
 }
 
+variable "domain_name" {
+  description = "Existing Route 53 public hosted-zone domain whose DNS authority and CloudFront certificate persist across Daily Runtime cycles."
+  type        = string
+  default     = ""
+}
+
 variable "github_oidc_subjects" {
   description = "Exact GitHub OIDC sub claims allowed to push to ECR."
   type        = list(string)

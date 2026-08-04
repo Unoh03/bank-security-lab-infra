@@ -681,11 +681,58 @@ function Get-FoundationContext {
     ) -FailureMessage 'Foundation outputs could not be read.'
     $outputs = $json | ConvertFrom-Json
 
+    $requiredOutputs = @(
+        'foundation_contract_version',
+        'domain_name',
+        'route53_zone_id',
+        'cloudfront_acm_certificate_arn'
+    )
+    foreach ($requiredOutput in $requiredOutputs) {
+        if ($outputs.PSObject.Properties.Name -notcontains $requiredOutput) {
+            throw "Foundation contract v2 output is missing: $requiredOutput. Apply the reviewed Foundation plan before Daily Up."
+        }
+    }
+    if ([int]$outputs.foundation_contract_version.value -lt 2) {
+        throw 'Foundation contract version is older than v2. Apply the reviewed Foundation plan before Daily Up.'
+    }
+
     if ([string]$outputs.aws_account_id.value -cne $ExpectedAccountId) {
         throw 'Foundation state belongs to a different AWS account.'
     }
     if ([string]$outputs.aws_region.value -cne $Region) {
         throw 'Foundation state belongs to a different AWS region.'
+    }
+
+    $domainName = [string]$outputs.domain_name.value
+    $route53ZoneId = [string]$outputs.route53_zone_id.value
+    $cloudFrontCertificateArn = [string]$outputs.cloudfront_acm_certificate_arn.value
+    if ($domainName -and (-not $route53ZoneId -or -not $cloudFrontCertificateArn)) {
+        throw 'Foundation domain outputs are incomplete. Route 53 zone ID and CloudFront ACM certificate ARN are both required.'
+    }
+    if ($domainName) {
+        $hostedZoneJson = Invoke-NativeCapture -FilePath 'aws' -ArgumentList @(
+            'route53', 'get-hosted-zone',
+            '--profile', $Profile,
+            '--id', $route53ZoneId,
+            '--output', 'json'
+        ) -FailureMessage 'Persistent Route 53 hosted zone is missing.'
+        $hostedZone = $hostedZoneJson | ConvertFrom-Json
+        if ([string]$hostedZone.HostedZone.Name.TrimEnd('.') -cne $domainName.TrimEnd('.')) {
+            throw 'Foundation Route 53 hosted zone does not match the declared domain.'
+        }
+
+        $certificateJson = Invoke-NativeCapture -FilePath 'aws' -ArgumentList @(
+            'acm', 'describe-certificate',
+            '--profile', $Profile,
+            '--region', 'us-east-1',
+            '--certificate-arn', $cloudFrontCertificateArn,
+            '--output', 'json'
+        ) -FailureMessage 'Persistent CloudFront ACM certificate is missing.'
+        $certificate = $certificateJson | ConvertFrom-Json
+        if ([string]$certificate.Certificate.Status -cne 'ISSUED' -or
+            [string]$certificate.Certificate.DomainName -cne $domainName) {
+            throw 'Foundation CloudFront ACM certificate is not issued for the declared domain.'
+        }
     }
 
     $repositoryName = [string]$outputs.application_ecr_repository_name.value
@@ -831,6 +878,9 @@ function Get-FoundationContext {
         SecurityLogGroup        = $securityLogGroup
         SecurityLogGroups       = $securityLogGroups
         SecurityRetentionDays   = $securityRetentionDays
+        DomainName              = $domainName
+        Route53ZoneId           = $route53ZoneId
+        CloudFrontCertificateArn = $cloudFrontCertificateArn
     }
 }
 

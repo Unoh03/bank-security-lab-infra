@@ -1,0 +1,17 @@
+# Purpose: F2 GuardDuty Finding Event가 EventBridge 원본 보존 Log Group에 도착했는지 확인한다.
+# Normal: Finding이 없으면 0건이며 Sample 검증 때는 승인된 [SAMPLE] Finding만 나타남.
+# Attack/abuse: 실제 GuardDuty Finding의 Type·Severity·Resource가 조사 시작점으로 나타남.
+# False positive: GuardDuty Sample Finding과 반복 집계 Event는 실제 공격으로 판정하지 않음.
+# Privacy: Description·Access Key ID·전체 원문은 반환하지 않고 조사 식별자만 반환함.
+# Runtime verification: pending
+fields @timestamp as event_time,
+       detail.id as finding_id,
+       detail.type as finding_type,
+       detail.severity as severity,
+       detail.title as title,
+       detail.resource.resourceType as resource_type,
+       region,
+       account
+| filter source = "aws.guardduty" and `detail-type` = "GuardDuty Finding"
+| sort @timestamp desc
+| limit 100

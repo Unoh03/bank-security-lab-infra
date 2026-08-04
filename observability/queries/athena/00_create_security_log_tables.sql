@@ -19,11 +19,12 @@ CREATE EXTERNAL TABLE IF NOT EXISTS ${database}.${cloudfront_table} (
   `cs-uri-stem` string,
   `sc-status` string,
   `x-edge-request-id` string,
+  `cs-protocol` string,
   `time-taken` string
 )
 ROW FORMAT SERDE 'org.openx.data.jsonserde.JsonSerDe'
 WITH SERDEPROPERTIES (
-  'paths'='date,time,c-ip,cs-method,cs-uri-stem,sc-status,x-edge-request-id,time-taken'
+  'paths'='date,time,c-ip,cs-method,cs-uri-stem,sc-status,x-edge-request-id,cs-protocol,time-taken'
 )
 STORED AS INPUTFORMAT 'org.apache.hadoop.mapred.TextInputFormat'
 OUTPUTFORMAT 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat'

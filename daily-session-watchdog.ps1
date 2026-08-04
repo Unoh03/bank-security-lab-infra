@@ -23,7 +23,8 @@ function Invoke-WatchdogDailyDown {
         [Parameter(Mandatory)][string]$ConfiguredProjectName,
         [Parameter(Mandatory)][string]$ConfigPath,
         [Parameter(Mandatory)][string]$PrimaryKeyPair,
-        [Parameter(Mandatory)][string]$DrKeyPair
+        [Parameter(Mandatory)][string]$DrKeyPair,
+        [Parameter(Mandatory)][string]$SessionStateRoot
     )
 
     $dailyDownPath = Join-Path ([string]$State.TerraformRoot) 'daily-down.ps1'
@@ -48,19 +49,82 @@ function Invoke-WatchdogDailyDown {
         '-ExperimentId', (ConvertTo-DailySessionQuotedArgument ([string]$State.ExperimentId)),
         '-EvidenceStartUtc', (ConvertTo-DailySessionQuotedArgument ([string]$State.StartedAtUtc))
     )
-    $process = Start-Process `
-        -FilePath (Get-DailySessionPowerShellExecutable) `
-        -ArgumentList ($parts -join ' ') `
-        -WindowStyle Hidden `
-        -Wait `
-        -PassThru
-    return [int]$process.ExitCode
+    $attemptId = [datetimeoffset]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
+    $temporaryRoot = Join-Path $SessionStateRoot 'temp'
+    New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
+    $stdoutPath = Join-Path $temporaryRoot "$($State.SessionId).$attemptId.stdout.log"
+    $stderrPath = Join-Path $temporaryRoot "$($State.SessionId).$attemptId.stderr.log"
+    $exitCode = 70
+    $launchFailureType = ''
+    try {
+        $process = Start-Process `
+            -FilePath (Get-DailySessionPowerShellExecutable) `
+            -ArgumentList ($parts -join ' ') `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath `
+            -WindowStyle Hidden `
+            -Wait `
+            -PassThru
+        $exitCode = [int]$process.ExitCode
+    } catch {
+        $launchFailureType = $_.Exception.GetType().Name
+    }
+
+    $context = New-Object System.Collections.Generic.List[string]
+    $context.Add('context_version=1')
+    $context.Add("launch_failure_type=$launchFailureType")
+    $stateAddresses = @()
+    try {
+        $stateAddresses = @(Get-TerraformStateAddresses `
+            -Root ([string]$State.TerraformRoot))
+        $context.Add("remaining_state_count=$($stateAddresses.Count)")
+        foreach ($address in $stateAddresses) {
+            $context.Add("remaining_state=$address")
+        }
+    } catch {
+        $context.Add("state_inventory_error_type=$($_.Exception.GetType().Name)")
+    }
+
+    $taggedResidue = @()
+    try {
+        $taggedResidue = @(Get-TaggedProjectRuntimeResources `
+            -Profile $Profile `
+            -ProjectName $ConfiguredProjectName `
+            -Regions @([string]$State.PrimaryRegion, [string]$State.DrRegion))
+        $context.Add("tagged_residue_count=$($taggedResidue.Count)")
+        foreach ($resource in $taggedResidue) {
+            $context.Add("tagged_residue=$($resource.Region)|$($resource.Arn)|$($resource.Verification)")
+        }
+    } catch {
+        $context.Add("residue_inventory_error_type=$($_.Exception.GetType().Name)")
+    }
+
+    try {
+        $diagnosticPath = Write-DailySessionProcessDiagnostics `
+            -SessionId ([string]$State.SessionId) `
+            -ExitCode $exitCode `
+            -AttemptId $attemptId `
+            -StandardOutputPath $stdoutPath `
+            -StandardErrorPath $stderrPath `
+            -Context ($context -join "`r`n") `
+            -StateRoot $SessionStateRoot
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+    return [pscustomobject]@{
+        ExitCode       = $exitCode
+        DiagnosticPath = $diagnosticPath
+        StateCount     = $stateAddresses.Count
+        ResidueCount   = $taggedResidue.Count
+    }
 }
 
 $state = $null
 $stateRoot = Split-Path -Parent $SessionStatePath
 try {
     $state = Read-DailySessionState -Path $SessionStatePath
+    . (Join-Path ([string]$state.TerraformRoot) 'daily-common.ps1')
     $modulePath = Join-Path ([string]$state.TerraformRoot) (
         'automation\Daily.Automation.psm1'
     )
@@ -120,14 +184,40 @@ try {
                 -Event 'DownStarting' `
                 -Detail 'Fresh plan, evidence, destroy, residue, and Foundation checks follow.' `
                 -StateRoot $stateRoot
-            $exitCode = Invoke-WatchdogDailyDown `
+            $downResult = Invoke-WatchdogDailyDown `
                 -State $state `
                 -Profile $AwsProfile `
                 -ConfiguredProjectName $ProjectName `
                 -ConfigPath $AutomationConfigPath `
                 -PrimaryKeyPair $PrimaryBastionKeyPairName `
-                -DrKeyPair $DrBastionKeyPairName
+                -DrKeyPair $DrBastionKeyPairName `
+                -SessionStateRoot $stateRoot
+            $exitCode = [int]$downResult.ExitCode
             if ($exitCode -ne 0) {
+                $diagnosticName = [System.IO.Path]::GetFileName(
+                    [string]$downResult.DiagnosticPath
+                )
+                $retryUntil = [datetimeoffset]::Parse(
+                    [string]$state.RetryUntilUtc,
+                    [System.Globalization.CultureInfo]::InvariantCulture,
+                    [System.Globalization.DateTimeStyles]::RoundtripKind
+                )
+                if ([datetimeoffset]::UtcNow -ge $retryUntil) {
+                    [void](Set-DailySessionStateStatus `
+                        -Path $SessionStatePath `
+                        -Status 'RetryWindowExpired' `
+                        -LastResult "daily-down exit code $exitCode; manual reconciliation required")
+                    $taskName = Get-DailySessionTaskName `
+                        -SessionSafety $config.SessionSafety `
+                        -SessionId ([string]$state.SessionId)
+                    Unregister-DailySessionScheduledTask -TaskName $taskName
+                    Write-DailySessionLog `
+                        -SessionId ([string]$state.SessionId) `
+                        -Event 'DownFailedRetryExpired' `
+                        -Detail "exit_code=$exitCode; state=$($downResult.StateCount); residue=$($downResult.ResidueCount); diagnostic=$diagnosticName" `
+                        -StateRoot $stateRoot
+                    exit 4
+                }
                 [void](Set-DailySessionStateStatus `
                     -Path $SessionStatePath `
                     -Status 'DownFailed' `
@@ -135,7 +225,7 @@ try {
                 Write-DailySessionLog `
                     -SessionId ([string]$state.SessionId) `
                     -Event 'DownFailed' `
-                    -Detail "exit_code=$exitCode; a bounded retry remains scheduled." `
+                    -Detail "exit_code=$exitCode; state=$($downResult.StateCount); residue=$($downResult.ResidueCount); diagnostic=$diagnosticName; bounded retry remains scheduled." `
                     -StateRoot $stateRoot
                 exit 1
             }

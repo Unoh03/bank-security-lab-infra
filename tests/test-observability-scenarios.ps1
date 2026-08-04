@@ -8,6 +8,8 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $webScriptPath = Join-Path $root 'observability\scenarios\Invoke-WEB01.ps1'
 $iamScriptPath = Join-Path $root 'observability\scenarios\Invoke-IAM01.ps1'
+$t1ScriptPath = Join-Path $root 'observability\scenarios\Invoke-T1.ps1'
+$configPath = Join-Path $root 'automation\project.psd1'
 $variablesPath = Join-Path $root 'variables.tf'
 $observabilityPath = Join-Path $root 'observability.tf'
 $outputsPath = Join-Path $root 'outputs.tf'
@@ -15,6 +17,8 @@ $foundationOutputsPath = Join-Path $root 'foundation\outputs.tf'
 $wafCountQueryPath = Join-Path $root 'observability\queries\cloudwatch\02_waf_count_matches.cwli'
 $wafBlockQueryPath = Join-Path $root 'observability\queries\cloudwatch\06_waf_login_rate_limit.cwli'
 $podIdentityQueryPath = Join-Path $root 'observability\queries\cloudwatch\07_pod_identity_and_s3_activity.cwli'
+$t1WafQueryPath = Join-Path $root 'observability\queries\cloudwatch\10_t1_waf_requests.cwli'
+$t1ApplicationQueryPath = Join-Path $root 'observability\queries\cloudwatch\11_t1_application_requests.cwli'
 
 function Assert-Contains {
     param(
@@ -31,6 +35,8 @@ function Assert-Contains {
 foreach ($path in @(
     $webScriptPath,
     $iamScriptPath,
+    $t1ScriptPath,
+    $configPath,
     $variablesPath,
     $observabilityPath,
     $outputsPath,
@@ -38,13 +44,15 @@ foreach ($path in @(
     $wafCountQueryPath
     $wafBlockQueryPath
     $podIdentityQueryPath
+    $t1WafQueryPath
+    $t1ApplicationQueryPath
 )) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Required observability scenario file is missing: $path"
     }
 }
 
-foreach ($path in @($webScriptPath, $iamScriptPath)) {
+foreach ($path in @($webScriptPath, $iamScriptPath, $t1ScriptPath)) {
     $tokens = $null
     $errors = $null
     [void][System.Management.Automation.Language.Parser]::ParseFile(
@@ -66,6 +74,10 @@ $wafBlockQuery = Get-Content -LiteralPath $wafBlockQueryPath -Raw
 $podIdentityQuery = Get-Content -LiteralPath $podIdentityQueryPath -Raw
 $webScript = Get-Content -LiteralPath $webScriptPath -Raw
 $iamScript = Get-Content -LiteralPath $iamScriptPath -Raw
+$t1Script = Get-Content -LiteralPath $t1ScriptPath -Raw
+$t1WafQuery = Get-Content -LiteralPath $t1WafQueryPath -Raw
+$t1ApplicationQuery = Get-Content -LiteralPath $t1ApplicationQueryPath -Raw
+$config = Import-PowerShellDataFile -LiteralPath $configPath
 
 Assert-Contains $variables 'variable\s+"waf_login_rate_rule_mode"[\s\S]*?default\s*=\s*"disabled"' `
     'The WEB-01 WAF rule must remain disabled by default.'
@@ -155,6 +167,47 @@ Assert-Contains $podIdentityQuery 'fields\s+@timestamp,\s*eventTime' `
     'IAM-01 CloudTrail query cannot filter delayed delivery by the original event time.'
 if ($iamScript -match '(?i)--no-verify-ssl|:latest|AKIA[A-Z0-9]{16}') {
     throw 'IAM-01 contains an unsafe TLS bypass, moving image tag, or access key.'
+}
+
+Assert-Contains $t1Script "ConfirmRun -cne 'RUN T1 HTTP'" `
+    'T1 lacks its exact temporary HTTP confirmation.'
+Assert-Contains $t1Script 'Read-DailySessionState' `
+    'T1 does not require an active bounded Daily Session.'
+Assert-Contains $t1Script 'T1 must start from the safe HTTPS redirect state' `
+    'T1 does not fail closed unless HTTPS redirect is initially enabled.'
+Assert-Contains $t1Script 'update`taws_cloudfront_distribution\.this' `
+    'T1 does not restrict its Terraform plan to the CloudFront distribution.'
+Assert-Contains $t1Script 'finally\s*\{[\s\S]*?EnableHttpsRedirect\s+\$true' `
+    'T1 does not restore HTTPS from a finally block.'
+Assert-Contains $t1Script 'ResponseHeadersRead' `
+    'T1 downloads a response body instead of collecting header-only evidence.'
+Assert-Contains $t1Script 'X-Amz-Cf-Id' `
+    'T1 does not retain the CloudFront request correlation ID.'
+Assert-Contains $t1Script '/t1-observability/\$ExperimentId/' `
+    'T1 requests lack a fixed experiment path for cross-log correlation.'
+Assert-Contains $t1Script "ScenarioId 'T1'" `
+    'T1 does not print the mapped CloudWatch Evidence command.'
+Assert-Contains $t1Script 'QueryName cloudfront-trace' `
+    'T1 does not print the CloudFront Athena trace command.'
+if ($t1Script -match '(?m)^\s*\[string\]\$BaseUrl|GetStringAsync|ReadAsStringAsync') {
+    throw 'T1 permits an arbitrary target or downloads a response body.'
+}
+if ($t1Script -match '(?i)--no-verify-ssl|AKIA[A-Z0-9]{16}|Authorization|Cookie') {
+    throw 'T1 contains a TLS bypass, access key, or sensitive request field.'
+}
+Assert-Contains $t1WafQuery 't1-observability' `
+    'T1 WAF query is not scoped to the fixed probe route.'
+if (($t1WafQuery -replace '(?m)^\s*#.*$', '') -match '(?i)headers|cookie|requestbody') {
+    throw 'T1 WAF query exposes headers, cookies, or request bodies.'
+}
+Assert-Contains $t1ApplicationQuery 't1-observability' `
+    'T1 application query is not scoped to the fixed probe route.'
+$t1Queries = @($config.Evidence.Queries | Where-Object {
+    'T1' -in @($_.ScenarioIds)
+})
+if ($t1Queries.Count -ne 2 -or
+    @($t1Queries | Where-Object { -not [bool]$_.Required }).Count -ne 0) {
+    throw 'T1 must map exactly two required CloudWatch evidence queries.'
 }
 
 Assert-Contains $outputs 'output\s+"primary_application_bucket_name"' `

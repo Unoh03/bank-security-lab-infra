@@ -24,7 +24,11 @@ param(
     [int]$EvidenceDeliveryGraceMinutes = 0,
     [switch]$RequireEvidence,
     [string[]]$RequiredEvidenceCollector = @(),
-    [switch]$RunEvidenceQueries
+    [switch]$RunEvidenceQueries,
+    [ValidateRange(30, 3600)]
+    [int]$KarpenterCleanupTimeoutSeconds = 900,
+    [ValidateRange(1, 60)]
+    [int]$KarpenterCleanupPollSeconds = 15
 )
 
 Set-StrictMode -Version Latest
@@ -42,6 +46,8 @@ if (-not $AutomationConfigPath) {
 }
 $automationModule = Join-Path $PSScriptRoot 'automation\Daily.Automation.psm1'
 Import-Module $automationModule -Force
+$karpenterCleanupModule = Join-Path $PSScriptRoot 'automation\Karpenter.Cleanup.psm1'
+Import-Module $karpenterCleanupModule -Force
 $automationConfig = Import-DailyAutomationConfig -Path $AutomationConfigPath
 
 $startedAt = Get-Date
@@ -406,6 +412,37 @@ try {
         Write-Host "Evidence: $($result.Name) [$($result.Status)] $($result.Detail)"
     }
     Write-Host "Evidence manifest: $($evidence.ManifestPath)"
+
+    $primaryBastion = @($trackedResources | Where-Object {
+        $_.Address -ceq 'aws_instance.primary_bastion'
+    }) | Select-Object -First 1
+    $drBastion = @($trackedResources | Where-Object {
+        $_.Address -ceq 'aws_instance.dr_bastion[0]'
+    }) | Select-Object -First 1
+    $karpenterTargets = @(
+        [pscustomobject]@{
+            Region            = $Region
+            ClusterName       = "$ProjectName-primary"
+            BastionInstanceId = if ($primaryBastion) { [string]$primaryBastion.Id } else { '' }
+        },
+        [pscustomobject]@{
+            Region            = $DrRegion
+            ClusterName       = "$ProjectName-dr"
+            BastionInstanceId = if ($drBastion) { [string]$drBastion.Id } else { '' }
+        }
+    )
+    foreach ($target in $karpenterTargets) {
+        $cleanup = Invoke-KarpenterPreDestroyCleanup `
+            -AwsProfile $AwsProfile `
+            -Region ([string]$target.Region) `
+            -ProjectName $ProjectName `
+            -ClusterName ([string]$target.ClusterName) `
+            -BastionInstanceId ([string]$target.BastionInstanceId) `
+            -AllowStrictOrphanTermination `
+            -TimeoutSeconds $KarpenterCleanupTimeoutSeconds `
+            -PollSeconds $KarpenterCleanupPollSeconds
+        Write-Host "Karpenter pre-destroy cleanup: cluster=$($cleanup.Cluster); mode=$($cleanup.Mode)"
+    }
 
     Invoke-NativePassthrough -FilePath 'terraform' -ArgumentList @(
         "-chdir=$TerraformRoot", 'apply',

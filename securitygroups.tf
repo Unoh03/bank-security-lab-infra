@@ -25,11 +25,11 @@ resource "aws_security_group" "primary_alb" {
 }
 
 resource "aws_security_group" "dr_alb" {
-  count       = var.enable_dr_compute ? 1 : 0
+  count       = local.enable_dr_runtime ? 1 : 0
   provider    = aws.dr
   name_prefix = "${local.name}-dr-alb-"
   description = "DR public ALB"
-  vpc_id      = module.dr_vpc.vpc_id
+  vpc_id      = module.dr_vpc[0].vpc_id
   ingress {
     from_port   = 80
     to_port     = 80
@@ -57,7 +57,7 @@ resource "aws_vpc_security_group_ingress_rule" "primary_alb_to_web_nodes" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "dr_alb_to_web_nodes" {
-  count    = var.enable_dr_compute ? 1 : 0
+  count    = local.enable_dr_runtime ? 1 : 0
   provider = aws.dr
 
   description                  = "DR ALB to Kubernetes web Pods on node ENIs"
@@ -95,10 +95,11 @@ resource "aws_security_group" "primary_data" {
 }
 
 resource "aws_security_group" "dr_data" {
+  count       = local.enable_dr_runtime ? 1 : 0
   provider    = aws.dr
   name_prefix = "${local.name}-dr-data-"
   description = "DR RDS and Valkey"
-  vpc_id      = module.dr_vpc.vpc_id
+  vpc_id      = module.dr_vpc[0].vpc_id
   ingress {
     from_port   = 3306
     to_port     = 3306

@@ -25,6 +25,24 @@ Import-Module $evidenceModulePath -Force
 . $dailyCommonPath
 $config = Import-DailyAutomationConfig -Path $configPath
 $application = Get-DailyApplication -Config $config -Name 'dvwa'
+
+$windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$escapedModulePath = $modulePath.Replace("'", "''")
+$escapedConfigPath = $configPath.Replace("'", "''")
+$noProfileProbe = @"
+Import-Module '$escapedModulePath' -Force
+`$probeConfig = Import-DailyAutomationConfig -Path '$escapedConfigPath'
+if ([int]`$probeConfig.SchemaVersion -ne 1) { throw 'Unexpected automation schema.' }
+"@
+$encodedProbe = [Convert]::ToBase64String(
+    [Text.Encoding]::Unicode.GetBytes($noProfileProbe)
+)
+& $windowsPowerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+    -EncodedCommand $encodedProbe
+if ($LASTEXITCODE -ne 0) {
+    throw 'Daily automation config import failed in a fresh NoProfile Windows PowerShell process.'
+}
+
 $evidenceModule = Get-Module | Where-Object {
     $_.Path -and (Resolve-Path -LiteralPath $_.Path).Path -ceq (
         Resolve-Path -LiteralPath $evidenceModulePath
@@ -224,6 +242,27 @@ $scenarioQueries = @{
         'Runtime verification:',
         '${trace_id}',
         'target_status_code'
+    )
+    'cloudwatch\10_t1_waf_requests.cwli' = @(
+        'Purpose:',
+        'Runtime verification:',
+        't1-observability'
+    )
+    'cloudwatch\11_t1_application_requests.cwli' = @(
+        'Purpose:',
+        'Runtime verification:',
+        't1-observability'
+    )
+    'cloudwatch\12_guardduty_findings.cwli' = @(
+        'Purpose:',
+        'Runtime verification:',
+        'GuardDuty Finding',
+        'finding_id'
+    )
+    'athena\03_cloudfront_request_trace.sql' = @(
+        'Purpose:',
+        'Runtime verification:',
+        '"cs-protocol" AS protocol'
     )
 }
 foreach ($relativePath in $scenarioQueries.Keys) {
