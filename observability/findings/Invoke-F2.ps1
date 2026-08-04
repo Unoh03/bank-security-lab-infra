@@ -123,7 +123,8 @@ $expectedDisabledFeatures = @(
     'EBS_MALWARE_PROTECTION',
     'RDS_LOGIN_EVENTS',
     'LAMBDA_NETWORK_LOGS',
-    'RUNTIME_MONITORING'
+    'RUNTIME_MONITORING',
+    'AI_PROTECTION'
 )
 foreach ($featureName in $expectedDisabledFeatures) {
     $property = $featureStatus.PSObject.Properties[$featureName]

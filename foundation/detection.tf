@@ -7,6 +7,12 @@ locals {
     "RDS_LOGIN_EVENTS",
     "LAMBDA_NETWORK_LOGS",
     "RUNTIME_MONITORING",
+    "AI_PROTECTION",
+  ])
+  guardduty_runtime_monitoring_additional = toset([
+    "EC2_AGENT_MANAGEMENT",
+    "ECS_FARGATE_AGENT_MANAGEMENT",
+    "EKS_ADDON_MANAGEMENT",
   ])
 }
 
@@ -104,6 +110,15 @@ resource "aws_guardduty_detector_feature" "disabled_optional" {
   detector_id = aws_guardduty_detector.primary.id
   name        = each.value
   status      = "DISABLED"
+
+  dynamic "additional_configuration" {
+    for_each = each.value == "RUNTIME_MONITORING" ? local.guardduty_runtime_monitoring_additional : []
+
+    content {
+      name   = additional_configuration.value
+      status = "DISABLED"
+    }
+  }
 
   lifecycle {
     prevent_destroy = true

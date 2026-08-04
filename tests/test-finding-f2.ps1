@@ -70,13 +70,22 @@ foreach ($feature in @(
     'EBS_MALWARE_PROTECTION',
     'RDS_LOGIN_EVENTS',
     'LAMBDA_NETWORK_LOGS',
-    'RUNTIME_MONITORING'
+    'RUNTIME_MONITORING',
+    'AI_PROTECTION'
 )) {
     Assert-Contains $detection ([regex]::Escape('"' + $feature + '"')) `
         "GuardDuty optional feature '$feature' is not explicitly controlled."
 }
 if ($detection -match '"EKS_RUNTIME_MONITORING"') {
     throw 'Deprecated EKS_RUNTIME_MONITORING must not be enabled or managed for F2.'
+}
+foreach ($configuration in @(
+    'EC2_AGENT_MANAGEMENT',
+    'ECS_FARGATE_AGENT_MANAGEMENT',
+    'EKS_ADDON_MANAGEMENT'
+)) {
+    Assert-Contains $detection ([regex]::Escape('"' + $configuration + '"')) `
+        "Runtime Monitoring additional configuration '$configuration' is not explicitly controlled."
 }
 Assert-Contains $detection 'status\s*=\s*"DISABLED"' `
     'GuardDuty optional protection plans are not explicitly disabled.'
@@ -148,7 +157,7 @@ function global:terraform {
             return '{"guardduty_findings":"arn:aws:logs:ap-northeast-2:433048100798:log-group:/aws/events/aws-topology-guardduty-findings"}'
         }
         'output -json guardduty_optional_features$' {
-            return '{"S3_DATA_EVENTS":"DISABLED","EKS_AUDIT_LOGS":"DISABLED","EBS_MALWARE_PROTECTION":"DISABLED","RDS_LOGIN_EVENTS":"DISABLED","LAMBDA_NETWORK_LOGS":"DISABLED","RUNTIME_MONITORING":"DISABLED"}'
+            return '{"S3_DATA_EVENTS":"DISABLED","EKS_AUDIT_LOGS":"DISABLED","EBS_MALWARE_PROTECTION":"DISABLED","RDS_LOGIN_EVENTS":"DISABLED","LAMBDA_NETWORK_LOGS":"DISABLED","RUNTIME_MONITORING":"DISABLED","AI_PROTECTION":"DISABLED"}'
         }
         default { throw "Unexpected mocked terraform command: $signature" }
     }

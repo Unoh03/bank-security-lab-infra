@@ -14,7 +14,7 @@ GuardDuty
 ## 범위
 
 - Primary Region GuardDuty 기본 탐지
-- 선택형 Protection Plan은 모두 명시적으로 `DISABLED`
+- 선택형 Protection Plan 7개와 Runtime Agent 관리 옵션은 모두 명시적으로 `DISABLED`
 - EventBridge 원본 전달과 기존 SNS 연결
 - AWS 공식 Sample Finding 1건으로 전달 경로 검증
 - Finding ID에서 시간창·Entity·후속 Query를 자동 도출
