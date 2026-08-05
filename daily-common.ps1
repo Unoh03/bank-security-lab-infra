@@ -466,26 +466,72 @@ function Test-TaggedProjectRuntimeResourceActive {
                     return @($json.FlowLogs).Count -gt 0
                 }
                 'fleet' {
-                        $json = Get-OptionalAwsJson -ArgumentList (
+                    $json = Get-OptionalAwsJson -ArgumentList (
+                        @(
+                            'ec2', 'describe-fleets',
+                            '--fleet-ids', $id
+                        ) + $common
+                    )
+
+                    if (-not $json) {
+                        return $false
+                    }
+
+                    $fleet = @($json.Fleets) | Select-Object -First 1
+                    if (-not $fleet) {
+                        return $false
+                    }
+
+                    $fleetState = [string]$fleet.FleetState
+                    if ($fleetState -ceq 'deleted') {
+                        return $false
+                    }
+                    if ($fleetState -notin @(
+                        'deleted_terminating',
+                        'deleted_running'
+                    )) {
+                        return $true
+                    }
+
+                    # Fleet state propagation may lag behind EC2 termination.
+                    # Verify each referenced instance independently so one stale
+                    # InvalidInstanceID.NotFound does not hide another live ID.
+                    $instanceIds = @(
+                        $fleet.Instances |
+                            ForEach-Object { @($_.InstanceIds) } |
+                            Where-Object { $_ } |
+                            ForEach-Object { [string]$_ } |
+                            Sort-Object -Unique
+                    )
+                    if ($instanceIds.Count -eq 0) {
+                        return $false
+                    }
+
+                    foreach ($instanceId in $instanceIds) {
+                        if ($instanceId -notmatch '^i-[0-9a-f]{8,17}$') {
+                            throw "AWS inventory query failed closed: EC2 Fleet returned an unsafe instance ID: $instanceId"
+                        }
+                        $instanceJson = Get-OptionalAwsJson -ArgumentList (
                             @(
-                                'ec2', 'describe-fleets',
-                                '--fleet-ids', $id
+                                'ec2', 'describe-instances',
+                                '--instance-ids', $instanceId
                             ) + $common
                         )
-
-                        if (-not $json) {
-                            return $false
+                        if (-not $instanceJson) {
+                            continue
                         }
-
-                        $fleet = @($json.Fleets) | Select-Object -First 1
-                        if (-not $fleet) {
-                            return $false
+                        $instance = @(
+                            $instanceJson.Reservations |
+                                ForEach-Object { $_.Instances }
+                        ) | Select-Object -First 1
+                        if ($instance -and
+                            [string]$instance.State.Name -cne 'terminated') {
+                            return $true
                         }
-
-                        # deleted: 요청이 삭제됐고 실행 중인 Instance도 없음.
-                        # deleted_terminating / deleted_running은 아직 정리 중인 것으로 취급한다.
-                        return [string]$fleet.FleetState -cne 'deleted'
                     }
+
+                    return $false
+                }
                 default { return $null }
             }
         }
