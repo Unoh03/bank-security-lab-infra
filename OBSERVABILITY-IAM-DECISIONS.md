@@ -1,200 +1,162 @@
-# Observability·Pod Identity 설계 결정 검증
+# Observability·Pod Identity 설계 결정
 
-> 상태: **공식 검증 반영 / AWS 변경 미실행**  
+> 상태: **Grafana Cloud 경로 확정 / AWS 변경 미실행**  
 > 기준 시점: 2026-08-05  
-> 실행 순서는 [`OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](./OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)를 따른다.
+> 실행 순서: [`OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](./OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)
 
-이 문서는 무엇이 기술적 제약이고 무엇이 프로젝트 선택인지 구분한다. 구체적으로 적혀 있다는 이유만으로 모든 결정을 정답으로 취급하지 않는다.
+## 최종 선택
 
-## 판정
+```text
+Grafana Cloud Free
+├─ Athena Data Source
+│  └─ S3: CloudFront, Primary ALB, Primary VPC REJECT, CloudTrail
+└─ CloudWatch Data Source
+   └─ WAF, EKS Control Plane, DVWA, GuardDuty
+```
 
-- **기술 제약**: 공식 문서·Provider Schema가 결정한다.
-- **프로젝트 선택**: 다른 구현도 가능하지만 현재 범위에 맞춰 선택했다.
-- **사람 Gate**: 비용·Account·교육 범위에 영향을 주므로 사용자가 승인한다.
-- **Runtime Gate**: Source나 Plan만으로 확정할 수 없으며 실제 실행 결과가 필요하다.
+Amazon Managed Grafana는 이번 구현에서 제외하고 후속 학습 과제로 남긴다.
 
 ## 결정표
 
 | ID | 결정 | 판정 | 결론 |
 |---|---|---|---|
-| D01 | 분석 경로 | 기술 제약 | S3 로그는 Athena로 조회하고 Amazon Managed Grafana의 Athena Data Source에서 시각화한다. |
-| D02 | 1차 시각화 Source | 프로젝트 선택 | 기존 S3 Source인 CloudFront, Primary ALB, Primary VPC REJECT만 대상으로 한다. |
-| D03 | S3 분리 방식 | 프로젝트 선택 | 기존 Security Log Bucket 하나를 유지하고 Source별 Prefix로 구분한다. Source별 Bucket은 추가하지 않는다. |
-| D04 | CloudWatch Logs의 S3 이중 저장 | 프로젝트 선택 | WAF·EKS·DVWA·GuardDuty는 이번 범위에서 CloudWatch Logs에 유지한다. |
-| D05 | Analytics 수명주기 | 프로젝트 선택 | Foundation·Daily와 별도 State로 관리하고 `daily-down.ps1` 대상에 넣지 않는다. |
-| D06 | AWS와 Grafana Terraform Root | 프로젝트 선택 | Provider Bootstrap을 단순화하기 위해 `analytics/aws`와 `analytics/grafana`로 분리한다. |
-| D07 | Grafana 사용자 인증 | 사람 Gate + 기술 제약 | IAM User 3명은 Workspace 사용자로 직접 사용할 수 없다. IAM Identity Center 또는 SAML 중 사람이 선택한다. |
-| D08 | Workspace Permission | 기술 제약 | Terraform/API 생성은 `CUSTOMER_MANAGED`, `CURRENT_ACCOUNT`, 전용 Workspace Role을 사용한다. |
-| D09 | Grafana Version·Plugin·Network | 프로젝트 선택 + 기술 제약 | Grafana `12.4`, Plugin Management 활성화를 사용한다. Seoul에서는 Workspace VPC 연결을 만들지 않는다. |
-| D10 | Athena Workgroup·Result Bucket | 기술 제약 | `AmazonGrafanaAthenaAccess`를 사용하므로 Workgroup Tag와 규칙에 맞는 Result Bucket을 만든다. 원본 S3 Read는 별도 Policy로 부여한다. |
-| D11 | Scan·Retention 값 | 프로젝트 선택 | Query당 100 MiB, Result 7일을 기본값으로 두고 변수화한다. |
-| D12 | Athena Table 소유권 | 프로젝트 선택 | 기존 SQL DDL·Query Pack을 유지하고 첫 Pass에서 Glue Table을 Terraform으로 이전하지 않는다. |
-| D13 | Dashboard 최소 범위 | 프로젝트 선택 | 필수 Panel은 CloudFront, ALB 오류, VPC REJECT의 3개다. Request Trace는 선택이다. |
-| D14 | Pod Identity 단위 | 기술 제약 | `Cluster + Namespace + ServiceAccount → IAM Role` 단위로 관리한다. Pod 개별 Role은 만들지 않는다. |
-| D15 | Pod Identity Trust 조건 | 프로젝트 선택 | 기본 Service Trust에 Namespace·ServiceAccount Request Tag 조건을 추가해 Custom Role 범위를 좁힌다. |
-| D16 | Pod Identity 기능 검증 | Runtime Gate | 예상 Role ARN, 대표 허용 Read API, 대표 비허용 Read API를 확인한다. |
-| D17 | Node Role 노출 | Runtime Gate | Association 없는 Pod가 Node Role을 얻으면 기능은 동작해도 최소 권한 완료로 판정하지 않는다. 보정은 별도 교체 Plan으로 진행한다. |
-| D18 | Grafana 자동화 Token | 프로젝트 선택 | 짧은 수명의 Service Account Token을 Wrapper가 생성·삭제하고 Terraform State에는 보존하지 않는다. |
+| D01 | Grafana 운영 방식 | 사용자 결정 | Grafana Cloud Free를 사용한다. Grafana용 EC2와 Amazon Managed Grafana Workspace는 만들지 않는다. |
+| D02 | AWS 인증 | 기술 제약 | Grafana Cloud의 `Grafana Assume Role`을 사용한다. 장기 AWS Access Key를 저장하지 않는다. |
+| D03 | Trust 입력 | 기술 제약 | Grafana Cloud 화면이 제공하는 AWS Account ID와 External ID를 IAM Role Trust에 사용한다. 값을 추측하거나 Repository에 고정하지 않는다. |
+| D04 | 사용자 인증 | 확정 | Grafana Cloud Account로 로그인한다. IAM Identity Center와 AWS Organizations는 필요 없다. |
+| D05 | S3 분석 Source | 프로젝트 선택 | CloudFront, Primary ALB, Primary VPC REJECT를 1차 Dashboard 대상으로 한다. CloudTrail은 조회 가능하게 두되 필수 Panel에서는 제외한다. |
+| D06 | CloudWatch Source | 프로젝트 선택 | WAF, EKS, DVWA, GuardDuty는 S3에 복제하지 않고 CloudWatch Data Source에서 직접 조회한다. |
+| D07 | 로그 분리 | 프로젝트 선택 | 기존 Security Log Bucket 하나를 유지하고 Source별 Prefix로 구분한다. Source별 Bucket은 추가하지 않는다. |
+| D08 | 원본 로그 보존 | 사용자 결정 | S3 Security Log와 CloudWatch Log Group을 30일 보존한다. 기존 Foundation 기본값 `30`을 유지한다. |
+| D09 | Athena 결과 보존 | 프로젝트 선택 | Query Result는 원본 로그가 아니므로 별도 Bucket에서 7일 보존한다. |
+| D10 | Athena 권한 | 기술 제약 | Grafana Cloud용 Custom IAM Policy를 사용한다. Amazon Managed Grafana 전용 `AmazonGrafanaAthenaAccess`는 사용하지 않는다. |
+| D11 | CloudWatch 권한 | 프로젝트 선택 | 1차 구현은 Logs 조회 권한만 부여한다. Metrics 권한은 실제 Panel이 필요할 때 추가한다. |
+| D12 | Grafana as Code | 프로젝트 선택 | 첫 검증은 Grafana Cloud UI에서 Data Source를 연결한다. 연결 성공 후 Dashboard JSON 또는 Grafana Provider 자동화를 별도 단계로 진행한다. |
+| D13 | Pod Identity 단위 | 기술 제약 | `Cluster + Namespace + ServiceAccount → IAM Role` 단위로 관리한다. Pod 개별 Role은 만들지 않는다. |
+| D14 | Pod Identity 검증 | Runtime Gate | 예상 Role, 허용 Read API, 비허용 Read API를 실제 Pod에서 검증한다. |
+| D15 | Node Role 노출 | Runtime Gate | Association 없는 Pod가 Node Role을 얻는지 검사한다. Node 교체가 필요한 보정은 별도 Plan으로 분리한다. |
 
-## 검증 과정에서 수정한 오류
+## 공식 검증 결과
 
-### 1. 존재하지 않는 Grafana Provider Version
+### Grafana Cloud 비용
 
-초기 문서의 다음 제약은 잘못됐다.
+Grafana Cloud Free는 항상 무료이며 카드가 필요 없고, Grafana Visualization은 월 최대 3명의 Active User를 지원한다. Athena와 CloudWatch를 외부 Data Source로 조회하는 경우 Grafana Cloud에 로그를 적재하지 않으므로, 원본 보존 기간은 AWS S3·CloudWatch의 30일 설정이 결정한다.
 
-```text
-grafana/grafana ~> 4.42
-```
+### Grafana Assume Role
 
-2026-08-05 확인 시 최신 공개 Version은 `4.40.1`이다. 실행 계획은 다음으로 수정한다.
+Grafana Assume Role은 Grafana Cloud의 Amazon CloudWatch와 Amazon Athena Data Source에서 사용할 수 있다.
 
 ```text
-grafana/grafana ~> 4.40.0
+Grafana Cloud AWS Account
+→ sts:AssumeRole
+→ aws-topology-grafana-cloud-read
+→ Athena·Glue·S3·CloudWatch Logs 조회
 ```
 
-Codex는 `terraform init`이 선택한 Version과 Lock File을 보고한다.
-
-### 2. Workspace의 `data_sources = ["ATHENA"]`
-
-Terraform AWS Provider에는 `data_sources` 인자가 노출돼 있지만, AWS `CreateWorkspace` API는 `workspaceDataSources`를 내부용이며 사용하지 말라고 명시한다.
-
-이번 구성은 `CUSTOMER_MANAGED` Workspace Role과 Grafana Provider로 Athena Data Source를 직접 만든다. 따라서 Workspace Resource에서 `data_sources`를 지정하지 않는다.
-
-### 3. Plugin Management 표현
-
-다음은 독립 HCL 인자가 아니다.
+Trust Policy에는 Grafana Cloud 화면이 제공하는 다음 값이 필요하다.
 
 ```text
-pluginAdminEnabled = true
+Grafana AWS Account ID
+Grafana External ID
 ```
 
-Workspace의 정확한 표현은 다음 JSON Configuration이다.
+External ID는 Grafana가 선택하며 사용자가 임의로 만들지 않는다.
 
-```hcl
-configuration = jsonencode({
-  plugins = {
-    pluginAdminEnabled = true
-  }
-})
-```
+Athena와 CloudWatch 화면에 표시된 Account ID·External ID가 동일하면 Role 하나를 공유한다. 다르면 Data Source별 Role을 분리한다.
 
-### 4. 두 Terraform Root의 성격
+### Athena 최소 권한
 
-`analytics/aws`와 `analytics/grafana` 분리는 AWS의 필수 구조가 아니다. 다음 문제를 피하기 위한 프로젝트 선택이다.
-
-- Grafana Provider Endpoint와 Token은 Workspace 생성 후에 생긴다.
-- Provider 설정은 Apply 전에 알려진 값만 사용할 수 있다.
-- AWS Provider의 Service Account Token Resource는 Token Key를 State에 저장할 수 있다.
-
-하나의 Root에서 Target Apply를 반복하는 방식도 가능하지만, 현재 프로젝트에서는 두 Root가 더 단순하다.
-
-### 5. Pod Identity Trust 조건의 성격
-
-다음은 Pod Identity의 필수 Service Trust다.
+Grafana 공식 최소 예제를 기준으로 다음 API가 필요하다.
 
 ```text
-Principal.Service = pods.eks.amazonaws.com
-Action = sts:AssumeRole, sts:TagSession
+Athena:
+  ListDatabases, ListDataCatalogs, ListWorkGroups,
+  GetDatabase, GetDataCatalog, GetQueryExecution,
+  GetQueryResults, GetTableMetadata, GetWorkGroup,
+  ListTableMetadata, StartQueryExecution, StopQueryExecution
+
+Glue:
+  GetDatabase, GetDatabases, GetTable, GetTables,
+  GetPartition, GetPartitions, BatchGetPartition
 ```
 
-Namespace·ServiceAccount Request Tag 조건은 공식적으로 지원되는 추가 제한이다. 필수 문법은 아니며 현재 프로젝트의 최소 권한 선택이다.
+S3 권한은 분리한다.
 
-## 기술 근거 요약
+- Security Log Bucket: 승인된 Prefix의 `ListBucket`, `GetObject`
+- Athena Result Bucket: Query 결과 작성·조회·Multipart 정리
+- Application Bucket과 CloudTrail 이외 Prefix는 1차 Dashboard Role에서 읽지 않음
 
-### Athena와 Workspace Role
+Lake Formation은 현재 프로젝트에서 사용하지 않으므로 `lakeformation:GetDataAccess`는 추가하지 않는다.
 
-`AmazonGrafanaAthenaAccess` 사용 조건:
+### CloudWatch Logs 최소 권한
 
-- Athena Workgroup Tag: `GrafanaDataSource=true`
-- Query Result Bucket 이름: `grafana-athena-query-results-` Prefix
-- 원본 S3 Data Read는 관리형 Policy에 포함되지 않으므로 별도 허용
-
-따라서 Query Result Bucket과 원본 Security Log Bucket을 분리한다.
-
-### Grafana 인증
-
-Amazon Managed Grafana Workspace 사용자는 IAM Identity Center 또는 SAML로 인증한다. IAM User·Role은 Workspace 내부 사용자 권한 할당 대상이 아니다.
-
-IAM Identity Center는 AWS Organizations 활성화가 필요할 수 있다. 다음 작업은 사람 승인 전 금지한다.
+1차 구현은 로그 조회만 포함한다.
 
 ```text
-Organizations 활성화
-IAM Identity Center 활성화
-Directory User·Group 생성
+logs:DescribeLogGroups
+logs:GetLogGroupFields
+logs:StartQuery
+logs:StopQuery
+logs:GetQueryResults
+logs:GetLogEvents
 ```
 
-### Workspace 생성
+CloudWatch Metrics, EC2 Tag, Performance Insights 권한은 실제 Metric Panel 요구가 생길 때 추가한다.
 
-AWS API·CLI·CloudFormation으로 Workspace를 만들 때는 `CUSTOMER_MANAGED` Permission Type과 직접 관리하는 Workspace Role을 사용해야 한다. Terraform도 AWS API를 사용하므로 동일하게 적용한다.
+### 30일과 7일의 차이
 
-### Seoul VPC 제약
+```text
+원본 Security Log: 30일
+Athena Query Result: 7일
+```
 
-Amazon Managed Grafana의 Data Source용 Workspace VPC 연결은 현재 `ap-northeast-2`에서 제공되지 않는다. 이번 Data Source는 Athena·Glue·S3의 AWS Endpoint를 사용하므로 VPC Configuration을 만들지 않는다.
-
-### Grafana 자동화 Token
-
-Grafana 12에서는 Service Account Token으로 Terraform과 Grafana HTTP API를 인증한다. Service Account는 과금상 사용자로 취급되므로 자동화가 끝나면 Token과 Service Account를 삭제한다.
-
-### Pod Identity
-
-EKS Pod Identity Association은 Cluster 안의 Namespace·ServiceAccount와 IAM Role을 연결한다. 같은 ServiceAccount를 사용하는 Pod가 해당 Role의 임시 Credential을 받는다.
-
-IMDS 접근을 제한하지 않으면 Pod가 Node IAM Role Credential을 얻을 수 있다. 따라서 No-Association Pod Test는 필수지만, Node 교체를 일으킬 수 있는 보정은 별도 Plan으로 분리한다.
+원본이 30일 남아 있으므로 Query Result가 만료돼도 Athena Query를 다시 실행할 수 있다. 발표용 결과는 Evidence Bundle에 별도 보존한다.
 
 ## 현재 Source 연결
 
 | 영역 | 현재 파일 |
 |---|---|
-| Security Log Bucket·CloudTrail·CloudFront Destination | `foundation/observability.tf` |
-| CloudFront·WAF·VPC REJECT·Fluent Bit Pod Identity | `observability.tf` |
-| Athena DDL·LOCATION | `observability/queries/athena/00_create_security_log_tables.sql` |
+| Security Log Bucket·30일 보존 | `foundation/observability.tf`, `foundation/variables.tf` |
+| CloudFront·VPC REJECT·Fluent Bit | `observability.tf` |
+| Athena DDL·S3 LOCATION | `observability/queries/athena/00_create_security_log_tables.sql` |
 | Athena Query Runner | `observability/Invoke-AthenaQueryPack.ps1` |
-| AWS LBC·ExternalDNS Pod Identity | `cluster-controllers.tf` |
+| LBC·ExternalDNS Pod Identity | `cluster-controllers.tf` |
 | EFS CSI·Web S3 Pod Identity | `storage-access.tf`, `eks.tf` |
-| Karpenter Pod Identity | `eks.tf`의 Karpenter Module |
+| Karpenter Pod Identity | `eks.tf` |
 
-## 남은 사람 Gate
+## 남은 사용자 입력
 
-### G1 — 비용
+Grafana Cloud Stack 생성 후 다음 값을 확보한다.
 
-- Amazon Managed Grafana Workspace 생성 승인
-- 실제 사용자와 임시 Service Account의 과금 가능성 인지
+```text
+Grafana Stack URL
+Grafana AWS Account ID
+Grafana External ID
+```
 
-### G2 — 인증
+Grafana Cloud를 Terraform Provider로 관리할 때만 다음 값이 추가로 필요하다.
 
-현재 별도 SAML IdP가 없다면 IAM Identity Center를 선택한다. 활성화와 사용자 생성은 Terraform 구현 범위 밖에서 사람이 승인한다.
+```text
+Grafana Cloud Service Account Token
+```
 
-### G3 — 교육 요구사항 해석
+Token, External ID, Access Key, Password, Terraform State는 Commit하지 않는다.
 
-현재 범위는 다음 해석을 사용한다.
+## 후속 학습
 
-> S3에 저장되는 로그를 Source별 Prefix로 구분하고 Athena·Grafana로 분석한다.
+Amazon Managed Grafana는 별도 실습으로 남긴다.
 
-모든 WAF·EKS·Application Log까지 S3 복제가 필요하다는 명시적 지시가 확인될 때만 별도 Phase를 추가한다.
+- IAM Identity Center 인증
+- Workspace IAM Role
+- AWS Managed Workspace Lifecycle
+- Amazon Managed Grafana 요금 구조
 
-## 공식 근거
+이번 Grafana Cloud 구현과 섞지 않는다.
 
-- Amazon Managed Grafana IAM Identity Center  
-  https://docs.aws.amazon.com/grafana/latest/userguide/authentication-in-AMG-SSO.html
-- Amazon Managed Grafana Workspace 생성 API  
-  https://docs.aws.amazon.com/grafana/latest/APIReference/API_CreateWorkspace.html
-- Amazon Managed Grafana Workspace Configuration  
-  https://docs.aws.amazon.com/grafana/latest/userguide/AMG-configure-workspace.html
-- Amazon Managed Grafana Athena Prerequisites  
-  https://docs.aws.amazon.com/grafana/latest/userguide/Athena-prereq.html
-- Amazon Managed Grafana Service Accounts  
-  https://docs.aws.amazon.com/grafana/latest/userguide/v12-authenticating-grafana-apis.html
-- Terraform AWS Provider `aws_grafana_workspace`  
-  https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/grafana_workspace
-- Terraform Grafana Provider  
-  https://registry.terraform.io/providers/grafana/grafana/latest
-- Terraform Provider Configuration  
-  https://developer.hashicorp.com/terraform/language/block/provider
-- Terraform Sensitive Data  
-  https://developer.hashicorp.com/terraform/language/manage-sensitive-data
-- EKS Pod Identity  
-  https://docs.aws.amazon.com/eks/latest/userguide/pod-identities.html
-- EKS Pod Identity Association  
-  https://docs.aws.amazon.com/eks/latest/userguide/pod-id-association.html
-- EKS Pod Identity Trust Policy  
-  https://docs.aws.amazon.com/eks/latest/userguide/pod-id-role.html
+## 공식 자료
+
+- Grafana Cloud Pricing: https://grafana.com/pricing/
+- Grafana AWS Authentication: https://grafana.com/docs/grafana/latest/datasources/aws-cloudwatch/aws-authentication/
+- Athena Data Source: https://grafana.com/docs/plugins/grafana-athena-datasource/latest/configure/
+- CloudWatch Data Source: https://grafana.com/docs/grafana/latest/datasources/aws-cloudwatch/configure/
+- EKS Pod Identity: https://docs.aws.amazon.com/eks/latest/userguide/pod-identities.html
