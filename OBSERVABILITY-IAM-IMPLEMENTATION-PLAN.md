@@ -1,57 +1,66 @@
-# Observability·Pod Identity Codex 실행 계획
+# Grafana Cloud·S3 로그·Pod Identity Codex 실행 계획
 
 > 상태: **구현 레시피 / AWS 변경 미실행**  
 > 기준 시점: 2026-08-05  
 > 결정 근거: [`OBSERVABILITY-IAM-DECISIONS.md`](./OBSERVABILITY-IAM-DECISIONS.md)
 
-Codex는 이 문서를 위에서 아래로 실행한다. 아키텍처를 다시 확장하지 않고, 파일·Resource·검증·중단 조건만 따른다.
+Codex는 아래 Task를 순서대로 수행한다. 이번 첫 Pass에서는 Source·Test·Plan까지만 진행하고 `terraform apply`와 `kubectl` 변경은 하지 않는다.
 
-## 고정 범위
+## 목표 구조
 
 ```text
-CloudFront Access Log
-Primary ALB Access Log
-Primary VPC REJECT Flow Log
-→ 기존 Security Log S3 Bucket
-→ 기존 Athena Database·Tables
-→ Grafana 전용 Athena Workgroup
-→ Amazon Managed Grafana
+Grafana Cloud Free
+├─ Athena Data Source
+│  └─ Security Log S3: CloudFront, ALB, VPC REJECT
+└─ CloudWatch Data Source
+   └─ WAF, EKS, DVWA, GuardDuty
+
+Grafana Cloud
+→ STS AssumeRole + Grafana External ID
+→ aws-topology-grafana-cloud-read
 ```
 
-이번 Pass에서 하지 않는다.
+## 이번 범위에서 하지 않음
 
 ```text
-WAF·EKS·DVWA·GuardDuty Log의 S3 복제
+Amazon Managed Grafana
+IAM Identity Center·AWS Organizations
+Grafana용 EC2·EKS 설치
+AWS Access Key 발급
+CloudWatch Log의 S3 이중 저장
 기존 Glue Table의 Terraform 전환
 Foundation Security Log Bucket 변경
-Organizations·IAM Identity Center 활성화
 Node Group·Karpenter IMDS 설정 변경
-terraform apply
-kubectl mutation
 ```
 
 ---
 
-# Task 0 — Preflight
+# Task 0 — Grafana Cloud 입력 확보
 
-확인값:
+사용자가 Grafana Cloud Free Stack을 생성한다.
 
-| 항목 | 값 |
-|---|---|
-| Account | `433048100798` |
-| Region | `ap-northeast-2` |
-| Profile | `terra-user` |
-| Project | `aws-topology` |
-| Foundation State | `foundation/terraform.tfstate` |
-| Athena Database | `aws_topology_security` |
+Grafana Cloud에서 다음 두 Connection을 열고 `Grafana Assume Role`을 선택한다.
 
-Workspace Apply 전 사람 Gate:
+```text
+Amazon Athena
+Amazon CloudWatch
+```
 
-- Amazon Managed Grafana 비용 승인
-- IAM Identity Center 사용 승인
-- IAM Identity Center Admin User ID 또는 Group ID 확보
+각 화면에 표시되는 값을 기록한다.
 
-Gate가 없으면 Source·Test·Plan까지만 수행한다.
+```text
+Grafana Stack URL
+Grafana AWS Account ID
+Grafana External ID
+```
+
+판정:
+
+- Athena와 CloudWatch의 Account ID·External ID가 같으면 IAM Role 하나를 공유한다.
+- 다르면 작업을 중단하고 Data Source별 Role 두 개로 계획을 보정한다.
+- 값은 `tfvars`, State, Git에 Commit하지 않는다.
+
+첫 Codex Pass는 실제 값이 없어도 변수와 Plan Gate까지 작성할 수 있다.
 
 ---
 
@@ -63,30 +72,52 @@ Gate가 없으면 Source·Test·Plan까지만 수행한다.
 observability/log-source-map.json
 ```
 
-필수 항목:
+필수 S3 Source:
 
-| ID | Prefix | Table | Grafana |
+| ID | Prefix | Athena Table | Dashboard |
 |---|---|---|---:|
-| `cloudfront` | `AWSLogs/433048100798/CloudFront/` | `cloudfront_access` | true |
-| `alb-primary` | `alb/primary/AWSLogs/433048100798/elasticloadbalancing/ap-northeast-2/` | `alb_primary_access` | true |
-| `vpc-reject-primary` | `vpc-flow/AWSLogs/433048100798/vpcflowlogs/ap-northeast-2/` | `vpc_reject` | true |
-| `cloudtrail` | `AWSLogs/433048100798/CloudTrail/` | `null` | false |
+| `cloudfront` | `AWSLogs/433048100798/CloudFront/` | `cloudfront_access` | 필수 |
+| `alb-primary` | `alb/primary/AWSLogs/433048100798/elasticloadbalancing/ap-northeast-2/` | `alb_primary_access` | 필수 |
+| `vpc-reject-primary` | `vpc-flow/AWSLogs/433048100798/vpcflowlogs/ap-northeast-2/` | `vpc_reject` | 필수 |
+| `cloudtrail` | `AWSLogs/433048100798/CloudTrail/` | `null` | 후속 |
 
-필드:
+필수 CloudWatch Source:
+
+| ID | Region | Log Group |
+|---|---|---|
+| `waf-edge` | `us-east-1` | `aws-waf-logs-aws-topology-edge` |
+| `eks-control-primary` | `ap-northeast-2` | `/aws/eks/aws-topology-primary/cluster` |
+| `dvwa-primary` | `ap-northeast-2` | `/aws/eks/aws-topology-primary/dvwa` |
+| `dvwa-dr` | `ap-northeast-1` | `/aws/eks/aws-topology-dr/dvwa` |
+| `guardduty` | `ap-northeast-2` | `/aws/events/aws-topology-guardduty-findings` |
+
+공통 필드:
 
 ```text
-id, service, region, bucket_output, prefix,
-athena_database, athena_table, grafana_enabled, retention_days
+id, service, storage, region, retention_days
+```
+
+S3 전용 필드:
+
+```text
+bucket_output, prefix, athena_database, athena_table, dashboard_required
+```
+
+CloudWatch 전용 필드:
+
+```text
+log_group
 ```
 
 검증:
 
-- `foundation/observability.tf` Bucket Policy 경로와 일치
-- `observability/queries/athena/00_create_security_log_tables.sql`의 `LOCATION`과 일치
+- S3 Prefix가 `foundation/observability.tf` Bucket Policy와 일치
+- Athena Table `LOCATION`이 `00_create_security_log_tables.sql`과 일치
+- `retention_days = 30`
 
 ---
 
-# Task 2 — `analytics/aws`
+# Task 2 — `analytics/aws` Terraform 작성
 
 생성:
 
@@ -95,7 +126,9 @@ analytics/aws/versions.tf
 analytics/aws/providers.tf
 analytics/aws/variables.tf
 analytics/aws/main.tf
+analytics/aws/iam.tf
 analytics/aws/outputs.tf
+analytics/aws/README.md
 ```
 
 ## Provider
@@ -123,20 +156,22 @@ hashicorp/aws ~> 6.0
 | `project_name` | `aws-topology` |
 | `foundation_state_path` | `../../foundation/terraform.tfstate` |
 | `athena_database_name` | `aws_topology_security` |
-| `athena_workgroup_name` | `aws-topology-grafana` |
+| `athena_workgroup_name` | `aws-topology-grafana-cloud` |
 | `athena_scan_cutoff_bytes` | `104857600` |
 | `query_result_retention_days` | `7` |
-| `grafana_workspace_name` | `aws-topology-security` |
-| `grafana_admin_user_ids` | `[]` |
-| `grafana_admin_group_ids` | `[]` |
+| `grafana_aws_account_id` | 필수 입력 |
+| `grafana_external_id` | 필수 입력 |
 
 Validation:
 
 ```text
+grafana_aws_account_id = 12자리 숫자
+grafana_external_id = 빈 문자열 금지
 athena_scan_cutoff_bytes >= 10485760
 1 <= query_result_retention_days <= 30
-Admin User ID와 Group ID 합계 >= 1
 ```
+
+`grafana_external_id`는 `sensitive = true`로 표시한다. External ID는 Password는 아니지만 Stack 전용값이므로 기본 출력에 노출하지 않는다.
 
 ## Foundation 참조
 
@@ -150,6 +185,8 @@ data.terraform_remote_state.foundation
 security_log_bucket_name
 security_log_bucket_arn
 ```
+
+Foundation State는 Read-only로 사용한다.
 
 ## Athena Result Bucket
 
@@ -166,21 +203,23 @@ aws_s3_bucket_lifecycle_configuration.athena_results
 설정:
 
 ```text
-bucket_prefix = grafana-athena-query-results-
+bucket_prefix = aws-topology-athena-results-
 force_destroy = true
 Object Ownership = BucketOwnerEnforced
 Public Access Block = 모두 true
 Encryption = AES256
-Current Object 만료 = var.query_result_retention_days
+Current Object 만료 = 7일 기본값
 Incomplete Multipart Upload = 1일
 ```
+
+이 Bucket에는 원본 로그를 저장하지 않는다.
 
 ## Athena Workgroup
 
 Resource:
 
 ```text
-aws_athena_workgroup.grafana
+aws_athena_workgroup.grafana_cloud
 ```
 
 설정:
@@ -192,105 +231,149 @@ result = s3://<RESULT_BUCKET>/results/
 enforce_workgroup_configuration = true
 publish_cloudwatch_metrics_enabled = true
 bytes_scanned_cutoff_per_query = var.athena_scan_cutoff_bytes
-tag GrafanaDataSource = true
 ```
 
-## Workspace Role
+## Grafana Cloud IAM Role
 
 Resource:
 
 ```text
-aws_iam_role.grafana_workspace
-aws_iam_role_policy_attachment.grafana_athena
-aws_iam_role_policy.grafana_source_read
+aws_iam_role.grafana_cloud_read
+aws_iam_role_policy.grafana_cloud_read
 ```
 
 Trust:
 
 ```text
-Service = grafana.amazonaws.com
+Principal.AWS = arn:aws:iam::<grafana_aws_account_id>:root
 Action = sts:AssumeRole
+Condition.StringEquals.sts:ExternalId = var.grafana_external_id
 ```
 
-Managed Policy:
+Role 이름:
 
 ```text
-arn:aws:iam::aws:policy/service-role/AmazonGrafanaAthenaAccess
+aws-topology-grafana-cloud-read
 ```
 
-Inline Source Read:
+### Athena API
+
+```text
+athena:ListDatabases
+athena:ListDataCatalogs
+athena:ListWorkGroups
+athena:GetDatabase
+athena:GetDataCatalog
+athena:GetQueryExecution
+athena:GetQueryResults
+athena:GetTableMetadata
+athena:GetWorkGroup
+athena:ListTableMetadata
+athena:StartQueryExecution
+athena:StopQueryExecution
+```
+
+Resource는 Athena API 특성상 `*`를 사용한다.
+
+### Glue Read
+
+```text
+glue:GetDatabase
+glue:GetDatabases
+glue:GetTable
+glue:GetTables
+glue:GetPartition
+glue:GetPartitions
+glue:BatchGetPartition
+```
+
+첫 Pass는 `Resource = "*"`로 시작하고, 정상 동작 후 Catalog ARN 제한 가능성을 후속 검토한다.
+
+### Security Log S3 Read
+
+Bucket Action:
 
 ```text
 s3:GetBucketLocation
 s3:ListBucket
+```
+
+`ListBucket` Prefix Condition:
+
+```text
+AWSLogs/433048100798/CloudFront/
+AWSLogs/433048100798/CloudFront/*
+alb/primary/AWSLogs/433048100798/elasticloadbalancing/ap-northeast-2/
+alb/primary/AWSLogs/433048100798/elasticloadbalancing/ap-northeast-2/*
+vpc-flow/AWSLogs/433048100798/vpcflowlogs/ap-northeast-2/
+vpc-flow/AWSLogs/433048100798/vpcflowlogs/ap-northeast-2/*
+AWSLogs/433048100798/CloudTrail/
+AWSLogs/433048100798/CloudTrail/*
+```
+
+Object Action:
+
+```text
 s3:GetObject
 ```
 
-허용 Prefix:
+Object ARN은 위 Prefix로 제한한다.
+
+### Athena Result S3
+
+Bucket:
 
 ```text
-AWSLogs/433048100798/CloudFront/*
-alb/primary/AWSLogs/433048100798/elasticloadbalancing/ap-northeast-2/*
-vpc-flow/AWSLogs/433048100798/vpcflowlogs/ap-northeast-2/*
+s3:GetBucketLocation
+s3:ListBucket
+s3:ListBucketMultipartUploads
 ```
 
-`ListBucket`에는 Prefix 자체와 `*` 하위를 모두 넣는다. Security Log Bucket의 Write·Delete, CloudTrail Prefix, Application Bucket은 허용하지 않는다.
-
-## Workspace
-
-Resource:
+Object:
 
 ```text
-aws_grafana_workspace.security
-aws_grafana_role_association.admin
+s3:GetObject
+s3:PutObject
+s3:AbortMultipartUpload
+s3:ListMultipartUploadParts
 ```
 
-설정:
+대상은 Result Bucket과 `/results/*`로 제한한다.
 
-```hcl
-account_access_type      = "CURRENT_ACCOUNT"
-authentication_providers = ["AWS_SSO"]
-permission_type          = "CUSTOMER_MANAGED"
-role_arn                 = aws_iam_role.grafana_workspace.arn
-grafana_version          = "12.4"
-configuration = jsonencode({
-  plugins = {
-    pluginAdminEnabled = true
-  }
-})
-```
-
-작성하지 않음:
+### CloudWatch Logs Read
 
 ```text
-data_sources
-vpc_configuration
-network_access_control
+logs:DescribeLogGroups
+logs:GetLogGroupFields
+logs:StartQuery
+logs:StopQuery
+logs:GetQueryResults
+logs:GetLogEvents
 ```
 
-Admin Association:
+첫 Pass는 Grafana 공식 Logs-only 예제와 동일하게 `Resource = "*"`를 사용한다. CloudWatch Metrics·EC2·Tag·Performance Insights 권한은 추가하지 않는다.
+
+금지:
 
 ```text
-role = ADMIN
-user_ids = var.grafana_admin_user_ids
-group_ids = var.grafana_admin_group_ids
+Security Log Bucket Write·Delete
+Application Bucket 접근
+IAM 변경
+EC2·EKS 변경
+CloudWatch Metrics 조회
 ```
-
-IAM User Name·ARN은 넣지 않는다.
 
 ## Outputs
 
 ```text
-grafana_workspace_id
-grafana_workspace_endpoint
-grafana_workspace_role_arn
+grafana_cloud_role_arn
 athena_workgroup_name
 athena_result_bucket_name
 athena_database_name
 security_log_bucket_name
 ```
 
-Token·Password는 Output하지 않는다.
+External ID는 Output하지 않는다.
 
 ## 검증
 
@@ -305,81 +388,115 @@ terraform -chdir=analytics/aws plan -out=analytics-aws.tfplan
 
 - Account 불일치
 - Foundation State·Output 없음
-- 기존 Foundation·Daily Resource 변경
+- Foundation·Daily Resource 변경
 - Security Log Bucket 변경
-- Admin Identity Center ID 없음
+- Grafana Account ID·External ID 없음
 
-첫 Pass에서는 Apply하지 않는다.
+첫 Codex Pass에서는 Apply하지 않는다. `*.tfplan`은 Commit하지 않는다.
 
 ---
 
-# Task 3 — `analytics/grafana`
+# Task 3 — Static Test 작성
 
 생성:
 
 ```text
-analytics/grafana/versions.tf
-analytics/grafana/providers.tf
-analytics/grafana/variables.tf
-analytics/grafana/main.tf
-analytics/grafana/security-overview.json
+tests/test-grafana-cloud-contract.ps1
 ```
 
-## Provider
+검사:
+
+- Amazon Managed Grafana Resource가 없음
+- IAM Identity Center·Organizations Resource가 없음
+- Grafana IAM User·Access Key Resource가 없음
+- Trust에 Grafana Account ID와 `sts:ExternalId` Condition이 있음
+- Result Bucket이 Source Bucket과 분리됨
+- Result 7일 Lifecycle
+- Security Log 30일 기존값을 변경하지 않음
+- Athena·Glue·S3·CloudWatch Logs 이외 변경 권한 없음
+- Security Log Bucket Write·Delete 권한 없음
+- CloudWatch Metrics 권한 없음
+- `terraform apply` 자동 실행 없음
+
+실행:
+
+```powershell
+.\tests\test-grafana-cloud-contract.ps1
+```
+
+---
+
+# Task 4 — AWS Apply와 Grafana Cloud 연결
+
+이 Task는 사용자가 Plan을 검토한 뒤 별도로 수행한다.
+
+## AWS Apply
+
+```powershell
+terraform -chdir=analytics/aws apply analytics-aws.tfplan
+```
+
+확인:
 
 ```text
-grafana/grafana ~> 4.40.0
+Result Bucket 존재
+Workgroup 존재
+IAM Role Trust의 Account ID·External ID 일치
+Role Policy에 변경 권한 없음
 ```
 
-인증은 환경변수만 사용한다.
+## Athena Data Source
+
+Grafana Cloud UI:
 
 ```text
-GRAFANA_URL
-GRAFANA_AUTH
+Connections
+→ Amazon Athena
+→ Authentication Provider: Grafana Assume Role
+→ Assume Role ARN: terraform output grafana_cloud_role_arn
+→ Region: ap-northeast-2
+→ Catalog: AwsDataCatalog
+→ Database: aws_topology_security
+→ Workgroup: aws-topology-grafana-cloud
+→ Output Location: 비움
+→ Save & test
 ```
 
-Token을 HCL·tfvars·Output에 기록하지 않는다.
+Workgroup이 Result Location을 강제하므로 Output Location은 비운다.
 
-## Resource
+## CloudWatch Data Source
 
 ```text
-grafana_data_source.athena
-grafana_folder.security
-grafana_dashboard.security_overview
+Connections
+→ Amazon CloudWatch
+→ Authentication Provider: Grafana Assume Role
+→ 동일 Role ARN
+→ Default Region: ap-northeast-2
+→ Save & test
 ```
 
-Athena Data Source:
+확인 결과:
 
 ```text
-name = AWS Topology Athena
-uid = aws-topology-athena
-type = grafana-athena-datasource
+CloudWatch Metrics API 성공 여부는 권한 범위에 따라 실패할 수 있음
+CloudWatch Logs Query는 성공해야 함
 ```
 
-```json
-{
-  "authType": "default",
-  "defaultRegion": "ap-northeast-2",
-  "catalog": "AwsDataCatalog",
-  "database": "aws_topology_security",
-  "workgroup": "aws-topology-grafana"
-}
-```
+CloudWatch Plugin의 `Save & test`가 Metrics 권한까지 필수로 요구한다면, 실패 내용을 확인한 뒤 필요한 최소 Metrics 조회 권한만 추가하는 별도 보정을 제출한다. 처음부터 Metrics 권한을 넓히지 않는다.
 
-Folder:
+---
+
+# Task 5 — Dashboard 초안
+
+생성:
 
 ```text
-Title = AWS Topology Security
-UID = aws-topology-security
-```
-
-Dashboard:
-
-```text
-Title = AWS Topology Security Overview
-UID = aws-topology-security-overview
-Default Range = 최근 6시간
-Auto Refresh = Off
+analytics/dashboard/
+├─ README.md
+├─ cloudfront-requests.sql
+├─ alb-errors.sql
+├─ vpc-reject.sql
+└─ security-overview.json
 ```
 
 필수 Panel:
@@ -387,95 +504,23 @@ Auto Refresh = Off
 1. CloudFront 요청·4xx·5xx Time Series
 2. ALB 4xx·5xx Top Source
 3. VPC REJECT Top Source·Destination Port
+4. WAF·EKS·DVWA·GuardDuty 중 최소 1개 CloudWatch Logs Panel
 
 공통:
 
-- Grafana Time Filter 필수
-- 전체 기간 Scan 금지
-- Cookie·Authorization·Query String·Body 미표시
-
-Request Trace Panel은 선택이다.
-
-검증:
-
-```powershell
-terraform -chdir=analytics/grafana fmt -check
-terraform -chdir=analytics/grafana init
-terraform -chdir=analytics/grafana validate
+```text
+기본 Time Range = 최근 6시간
+Auto Refresh = Off
+모든 Query에 Time Filter
+전체 기간 Scan 금지
+Cookie·Authorization·Query String·Body 미표시
 ```
 
-Grafana Plan은 Workspace와 임시 Token 생성 후 실행한다.
+첫 검증은 UI에서 Dashboard를 구성한 뒤 JSON을 Export하여 `security-overview.json`에 저장한다. Grafana Provider 자동화는 Data Source와 Dashboard가 실제 동작한 뒤 후속 Task로 진행한다.
 
 ---
 
-# Task 4 — Wrapper
-
-생성:
-
-```text
-analytics/setup-analytics.ps1
-analytics/destroy-analytics.ps1
-analytics/README.md
-```
-
-## Setup
-
-기본은 Preview다.
-
-```text
-AWS Identity 확인
-→ analytics/aws fmt·init·validate·plan
-→ Plan 요약
-→ 승인 없으면 종료
-→ analytics/aws apply
-→ Workspace ACTIVE 대기
-→ 임시 ADMIN Service Account 생성
-→ TTL 3600초 Token 생성
-→ GRAFANA_URL·GRAFANA_AUTH 설정
-→ grafana-athena-datasource Plugin 확인·필요 시 설치
-→ analytics/grafana init·validate·plan·apply
-→ Data Source Health·Dashboard UID 확인
-→ finally에서 Token 삭제
-→ finally에서 Service Account 삭제
-```
-
-승인 문구:
-
-```text
-APPLY ANALYTICS
-```
-
-AWS API:
-
-```text
-CreateWorkspaceServiceAccount
-CreateWorkspaceServiceAccountToken
-DeleteWorkspaceServiceAccountToken
-DeleteWorkspaceServiceAccount
-```
-
-`aws_grafana_workspace_service_account_token` Resource는 사용하지 않는다.
-
-## Destroy
-
-```text
-임시 Token 생성
-→ analytics/grafana destroy
-→ Token·Service Account 삭제
-→ analytics/aws destroy
-```
-
-승인 문구:
-
-```text
-DESTROY ANALYTICS
-```
-
-Foundation·Daily State를 변경하지 않는다.
-
----
-
-# Task 5 — S3·Athena 검증
+# Task 6 — S3·Athena Runtime 검증 Script
 
 생성:
 
@@ -490,7 +535,7 @@ AwsProfile, ExpectedAccountId, FoundationRoot,
 MapPath, StartUtc, EndUtc, EvidenceRoot
 ```
 
-각 Grafana Source에서 확인:
+각 필수 S3 Source에서 확인:
 
 ```text
 S3 Object >= 1
@@ -511,70 +556,35 @@ Object가 없으면 `NotObserved`로 기록하고 원인을 추측하지 않는�
 
 ---
 
-# Task 6 — Pod Identity Trust·Matrix
+# Task 7 — Pod Identity Inventory·Runtime Script
 
 생성:
 
 ```text
-pod-identity-trust.tf
 observability/Export-PodIdentityMatrix.ps1
 observability/Test-PodIdentityRuntime.ps1
+tests/test-pod-identity-contract.ps1
 ```
 
-## Custom Role Trust
+첫 Pass에서는 기존 Role·Association을 변경하지 않는다.
 
-대상:
+## Inventory
 
-| Key | Namespace | ServiceAccount |
-|---|---|---|
-| `primary-fluent-bit` | `amazon-cloudwatch` | `aws-for-fluent-bit` |
-| `dr-fluent-bit` | `amazon-cloudwatch` | `aws-for-fluent-bit` |
-| `primary-efs-csi` | `kube-system` | `efs-csi-controller-sa` |
-| `dr-efs-csi` | `kube-system` | `efs-csi-controller-sa` |
-| `primary-web-s3` | `var.web_namespace` | `var.web_service_account` |
-| `dr-web-s3` | `var.web_namespace` | `var.web_service_account` |
-
-Trust:
+수집:
 
 ```text
-Principal.Service = pods.eks.amazonaws.com
-Action = sts:AssumeRole, sts:TagSession
-StringEquals aws:RequestTag/kubernetes-namespace
-StringEquals aws:RequestTag/kubernetes-service-account
+EKS Pod Identity Association
+IAM Role Trust
+Managed·Inline Policy
+Kubernetes ServiceAccount
+Pod별 ServiceAccount
 ```
 
-수정 대상:
+Matrix 필드:
 
 ```text
-observability.tf
-storage-access.tf
-eks.tf의 EFS Add-on Role 참조
-```
-
-## Module Role
-
-대상:
-
-```text
-AWS Load Balancer Controller
-ExternalDNS
-Karpenter
-```
-
-규칙:
-
-- 현재 Module Version의 Schema 확인
-- 지원하면 LBC·ExternalDNS에 `trust_policy_conditions` 추가
-- 조건 추가만을 위한 Module Upgrade·Fork 금지
-- Karpenter는 첫 Pass에서 Inventory만 작성
-
-## Matrix
-
-필드:
-
-```text
-cluster, namespace, service_account, association_id,
-role_arn, managed_policies, inline_policies, status
+cluster, namespace, service_account,
+association_id, role_arn, policies, status
 ```
 
 상태:
@@ -584,15 +594,12 @@ ConfiguredAndObserved
 ConfiguredButRuntimeAbsent
 RuntimeUnexpected
 DisabledByDesign
+NoAssociationExpected
 ```
 
----
-
-# Task 7 — Pod Identity Runtime Script
+## Runtime Test
 
 첫 Pass에서는 Script만 작성하고 실행하지 않는다.
-
-활성 Workload 검증:
 
 ```text
 Association 확인
@@ -605,113 +612,40 @@ Association 확인
 → 임시 Pod 삭제
 ```
 
-대표 허용 Probe:
+Association 없는 ServiceAccount에서도 `sts get-caller-identity`를 실행한다.
 
-| Workload | Probe |
-|---|---|
-| AWS LBC | `elasticloadbalancing:DescribeLoadBalancers` |
-| ExternalDNS | `route53:ListResourceRecordSets` |
-| Fluent Bit | `logs:DescribeLogStreams` |
-| EFS CSI | `elasticfilesystem:DescribeFileSystems` |
-| Web S3 | `s3:GetBucketLocation` |
-| Karpenter | Module Policy의 Read Action 1개 |
+- Credential 없음: 통과
+- Node Role 반환: 격리 미충족, 별도 Hardening Plan 작성
 
-Write Canary 승인 문구:
-
-```text
-RUN POD IDENTITY S3 CANARY
-```
-
-No-Association ServiceAccount에서도 `sts get-caller-identity`를 실행한다.
-
-- Credential 없음: 격리 확인
-- Node Role 반환: IAM 최소 권한 미완료, 별도 IMDS 보정 Plan 필요
-
-첫 Pass에서 Node·Karpenter Metadata Option은 변경하지 않는다.
-
-출력:
-
-```text
-<evidence>/pod-identity-matrix.json
-<evidence>/pod-identity-runtime.json
-```
-
-Access Key·Secret·Session Token은 기록하지 않는다.
+기존 Controller·Node를 교체하거나 Trust Policy를 일괄 수정하지 않는다.
 
 ---
 
-# Task 8 — Static Test
+# Task 8 — 첫 Codex Pass 종료 조건
 
-생성:
-
-```text
-tests/test-analytics-contract.ps1
-tests/test-pod-identity-contract.ps1
-```
-
-Analytics Test:
-
-- Result Bucket Prefix·암호화·Public Block·Lifecycle
-- Workgroup Result Location·Scan Cutoff·`GrafanaDataSource=true`
-- Workspace `AWS_SSO`, `CURRENT_ACCOUNT`, `CUSTOMER_MANAGED`, `12.4`
-- Workspace Configuration의 Plugin Management
-- Workspace Resource에 `data_sources` 없음
-- Role에 `AmazonGrafanaAthenaAccess`
-- Source Read가 세 Prefix로 제한
-- Security Bucket Write·Delete 없음
-- Terraform Source에 Token Resource 없음
-- Grafana Provider `~> 4.40.0`
-- Data Source·Folder·Dashboard UID 고정
-- 필수 Panel 3개에 Time Filter
-
-Pod Identity Test:
-
-- Custom Trust의 Service Principal·두 STS Action·두 Request Tag Condition
-- Fluent Bit Log Group 범위
-- Web S3 `web/*` 범위
-- ExternalDNS Hosted Zone 범위
-- 휴면 Toggle 기본값 `false`
-- 승인 없이 Write Canary 실행 금지
-- Diagnostic Image에 `latest` 없음
-- Credential 출력 금지
-
----
-
-# Task 9 — 첫 Codex Pass 종료
-
-수행:
+필수:
 
 ```text
-Task 1~6, 8 Source 작성
-Task 7 Script 작성만 수행
-PowerShell Parser·Static Test
-terraform fmt
-terraform validate
-analytics/aws Fresh Plan
-```
-
-금지:
-
-```text
-terraform apply
-AWS Resource Mutation
-Organizations·IAM Identity Center 변경
-kubectl Mutation
-S3 Write Canary
-Secret·Token·tfstate·tfplan Commit
+Log Source Map 작성
+analytics/aws Source 작성
+Static Test 성공
+terraform fmt·validate 성공
+Fresh Plan 생성
+Pod Identity Inventory·Runtime Test Script 작성
+AWS Apply 없음
+Kubernetes 변경 없음
 ```
 
 보고:
 
 ```text
 변경 파일
-Provider Schema·선택 Version
-fmt·validate·test 결과
-analytics/aws Plan Resource 목록
-Foundation·Daily 변경 0건 여부
-Module Trust Condition 지원 여부
-사람 Gate
-Runtime 검증 항목
+Test 결과
+Plan Resource 목록
+예상 비용 Resource
+Grafana Cloud에서 사람이 입력할 값
+Apply 전 미확정 항목
+Runtime에서만 확인 가능한 항목
 ```
 
 ## Codex 시작 Prompt
@@ -719,16 +653,20 @@ Runtime 검증 항목
 ```text
 Repository: Unoh03/bank-security-lab-infra
 Base: main
-Branch: codex/observability-iam
 
 OBSERVABILITY-IAM-DECISIONS.md와
-OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md를 먼저 읽어라.
+OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md를 읽고 Task 0~3, 6~8의
+첫 Pass만 구현하라.
 
-IMPLEMENTATION PLAN의 Task 1~6과 Task 8을 구현하라.
-Task 7은 안전한 Script만 작성하고 실행하지 마라.
-Task 9의 금지사항을 지켜라.
+금지:
+- terraform apply/destroy
+- AWS Resource 변경
+- kubectl mutation
+- Amazon Managed Grafana
+- IAM Identity Center·Organizations
+- AWS Access Key 생성
+- Existing Foundation·Daily State 수정
+- tfstate, tfplan, tfvars, Token, External ID Commit
 
-끝나면 변경 파일, Provider Version·Schema 확인, Test 결과,
-Fresh Plan, 기존 Resource 영향, 사람 Gate, Runtime 검증 항목을
-분리해서 보고하라.
+종료 시 Source, Plan, Runtime 미검증을 구분하여 보고하라.
 ```
