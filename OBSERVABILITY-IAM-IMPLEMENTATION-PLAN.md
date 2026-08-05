@@ -340,6 +340,17 @@ s3:ListMultipartUploadParts
 
 대상은 Result Bucket과 `/results/*`로 제한한다.
 
+### CloudWatch Metrics Read
+
+```text
+cloudwatch:DescribeAlarmsForMetric
+cloudwatch:DescribeAlarmHistory
+cloudwatch:DescribeAlarms
+cloudwatch:ListMetrics
+cloudwatch:GetMetricData
+cloudwatch:GetInsightRuleReport
+```
+
 ### CloudWatch Logs Read
 
 ```text
@@ -351,7 +362,7 @@ logs:GetQueryResults
 logs:GetLogEvents
 ```
 
-첫 Pass는 Grafana 공식 Logs-only 예제와 동일하게 `Resource = "*"`를 사용한다. CloudWatch Metrics·EC2·Tag·Performance Insights 권한은 추가하지 않는다.
+Grafana CloudWatch Data Source의 `Save & test`는 Metrics API와 Logs API를 모두 확인하므로 두 Read 묶음을 `Resource = "*"`로 허용한다.
 
 금지:
 
@@ -360,7 +371,10 @@ Security Log Bucket Write·Delete
 Application Bucket 접근
 IAM 변경
 EC2·EKS 변경
-CloudWatch Metrics 조회
+EC2 Tag·Instance 조회
+Resource Groups Tagging API
+Performance Insights
+CloudWatch Write
 ```
 
 ## Outputs
@@ -413,9 +427,10 @@ tests/test-grafana-cloud-contract.ps1
 - Result Bucket이 Source Bucket과 분리됨
 - Result 7일 Lifecycle
 - Security Log 30일 기존값을 변경하지 않음
-- Athena·Glue·S3·CloudWatch Logs 이외 변경 권한 없음
+- Athena·Glue·S3·CloudWatch Read 이외 변경 권한 없음
 - Security Log Bucket Write·Delete 권한 없음
-- CloudWatch Metrics 권한 없음
+- EC2·Tag·Performance Insights 권한 없음
+- CloudWatch Write 권한 없음
 - `terraform apply` 자동 실행 없음
 
 실행:
@@ -475,14 +490,14 @@ Connections
 → Save & test
 ```
 
-확인 결과:
+완료 조건:
 
 ```text
-CloudWatch Metrics API 성공 여부는 권한 범위에 따라 실패할 수 있음
-CloudWatch Logs Query는 성공해야 함
+Successfully queried the CloudWatch metrics API
+Successfully queried the CloudWatch logs API
 ```
 
-CloudWatch Plugin의 `Save & test`가 Metrics 권한까지 필수로 요구한다면, 실패 내용을 확인한 뒤 필요한 최소 Metrics 조회 권한만 추가하는 별도 보정을 제출한다. 처음부터 Metrics 권한을 넓히지 않는다.
+그 뒤 Explore에서 프로젝트 Log Group 하나에 제한 시간 Query를 실행한다.
 
 ---
 
