@@ -30,7 +30,7 @@ Amazon Managed Grafana는 이번 구현에서 제외하고 후속 학습 과제�
 | D08 | 원본 로그 보존 | 사용자 결정 | S3 Security Log와 CloudWatch Log Group을 30일 보존한다. 기존 Foundation 기본값 `30`을 유지한다. |
 | D09 | Athena 결과 보존 | 프로젝트 선택 | Query Result는 원본 로그가 아니므로 별도 Bucket에서 7일 보존한다. |
 | D10 | Athena 권한 | 기술 제약 | Grafana Cloud용 Custom IAM Policy를 사용한다. Amazon Managed Grafana 전용 `AmazonGrafanaAthenaAccess`는 사용하지 않는다. |
-| D11 | CloudWatch 권한 | 프로젝트 선택 | 1차 구현은 Logs 조회 권한만 부여한다. Metrics 권한은 실제 Panel이 필요할 때 추가한다. |
+| D11 | CloudWatch 권한 | 기술 제약 + 프로젝트 선택 | `Save & test`가 Metrics와 Logs API를 모두 확인하므로 Logs와 최소 Metrics Read를 허용한다. EC2 Tag·Performance Insights 권한은 제외한다. |
 | D12 | Grafana as Code | 프로젝트 선택 | 첫 검증은 Grafana Cloud UI에서 Data Source를 연결한다. 연결 성공 후 Dashboard JSON 또는 Grafana Provider 자동화를 별도 단계로 진행한다. |
 | D13 | Pod Identity 단위 | 기술 제약 | `Cluster + Namespace + ServiceAccount → IAM Role` 단위로 관리한다. Pod 개별 Role은 만들지 않는다. |
 | D14 | Pod Identity 검증 | Runtime Gate | 예상 Role, 허용 Read API, 비허용 Read API를 실제 Pod에서 검증한다. |
@@ -50,7 +50,7 @@ Grafana Assume Role은 Grafana Cloud의 Amazon CloudWatch와 Amazon Athena Data 
 Grafana Cloud AWS Account
 → sts:AssumeRole
 → aws-topology-grafana-cloud-read
-→ Athena·Glue·S3·CloudWatch Logs 조회
+→ Athena·Glue·S3·CloudWatch 조회
 ```
 
 Trust Policy에는 Grafana Cloud 화면이 제공하는 다음 값이 필요하다.
@@ -84,24 +84,34 @@ S3 권한은 분리한다.
 
 - Security Log Bucket: 승인된 Prefix의 `ListBucket`, `GetObject`
 - Athena Result Bucket: Query 결과 작성·조회·Multipart 정리
-- Application Bucket과 CloudTrail 이외 Prefix는 1차 Dashboard Role에서 읽지 않음
+- CloudFront·ALB·VPC REJECT와 후속 CloudTrail Prefix만 허용
+- Application Bucket과 지정되지 않은 Prefix는 제외
 
 Lake Formation은 현재 프로젝트에서 사용하지 않으므로 `lakeformation:GetDataAccess`는 추가하지 않는다.
 
-### CloudWatch Logs 최소 권한
+### CloudWatch 최소 권한
 
-1차 구현은 로그 조회만 포함한다.
+Grafana CloudWatch Data Source의 `Save & test`는 Metrics API와 Logs API를 모두 확인한다. 따라서 다음 Read 권한을 1차 Role에 포함한다.
 
 ```text
-logs:DescribeLogGroups
-logs:GetLogGroupFields
-logs:StartQuery
-logs:StopQuery
-logs:GetQueryResults
-logs:GetLogEvents
+CloudWatch Metrics:
+  cloudwatch:DescribeAlarmsForMetric
+  cloudwatch:DescribeAlarmHistory
+  cloudwatch:DescribeAlarms
+  cloudwatch:ListMetrics
+  cloudwatch:GetMetricData
+  cloudwatch:GetInsightRuleReport
+
+CloudWatch Logs:
+  logs:DescribeLogGroups
+  logs:GetLogGroupFields
+  logs:StartQuery
+  logs:StopQuery
+  logs:GetQueryResults
+  logs:GetLogEvents
 ```
 
-CloudWatch Metrics, EC2 Tag, Performance Insights 권한은 실제 Metric Panel 요구가 생길 때 추가한다.
+EC2 Tag·Instance 조회, Resource Groups Tagging API, Performance Insights는 Dashboard에서 실제 필요성이 확인될 때만 추가한다.
 
 ### 30일과 7일의 차이
 
