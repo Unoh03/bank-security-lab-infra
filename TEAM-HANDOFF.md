@@ -2,11 +2,22 @@
 
 ## 관련 구현 계획
 
-S3 보안 로그 분석, Amazon Managed Grafana, EKS Pod Identity 및 Log Source 분리의 정확한 요구사항·Terraform 계약·Runtime 검증·Codex 첫 실행 범위는 다음 문서를 기준으로 한다.
+S3 보안 로그 분석, Grafana Cloud, EKS Pod Identity 및 Log Source 분리는 다음 두 문서를 기준으로 한다.
 
+- [`OBSERVABILITY-IAM-DECISIONS.md`](./OBSERVABILITY-IAM-DECISIONS.md)
+  - 기술 제약, 프로젝트 선택, 비용·보존 결정
 - [`OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](./OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)
+  - Codex 실행 순서, 생성 파일, 검증 명령, 중단 조건
 
-해당 문서는 Source 존재와 실제 Runtime 완료를 구분하며, 이후 구현에서 이 문서의 Stop Gate와 Definition of Done을 우선 적용한다.
+현재 기본 경로는 다음이다.
+
+```text
+Grafana Cloud Free
+├─ Athena → S3의 CloudFront·ALB·VPC REJECT
+└─ CloudWatch → WAF·EKS·DVWA·GuardDuty
+```
+
+Amazon Managed Grafana는 이번 구현에서 제외하고 후속 학습 과제로 남긴다. IAM Identity Center·AWS Organizations·Grafana용 EC2는 만들지 않는다. 원본 Security Log는 30일, Athena Query Result는 7일 보존한다.
 
 ## 현재 판정
 
