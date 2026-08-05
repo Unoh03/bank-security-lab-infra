@@ -465,6 +465,27 @@ function Test-TaggedProjectRuntimeResourceActive {
                     if (-not $json) { return $false }
                     return @($json.FlowLogs).Count -gt 0
                 }
+                'fleet' {
+                        $json = Get-OptionalAwsJson -ArgumentList (
+                            @(
+                                'ec2', 'describe-fleets',
+                                '--fleet-ids', $id
+                            ) + $common
+                        )
+
+                        if (-not $json) {
+                            return $false
+                        }
+
+                        $fleet = @($json.Fleets) | Select-Object -First 1
+                        if (-not $fleet) {
+                            return $false
+                        }
+
+                        # deleted: 요청이 삭제됐고 실행 중인 Instance도 없음.
+                        # deleted_terminating / deleted_running은 아직 정리 중인 것으로 취급한다.
+                        return [string]$fleet.FleetState -cne 'deleted'
+                    }
                 default { return $null }
             }
         }
