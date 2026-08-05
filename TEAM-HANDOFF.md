@@ -1,5 +1,13 @@
 # 3차 프로젝트 Terraform·CI/CD 인수인계
 
+## 관련 구현 계획
+
+S3 보안 로그 분석, Amazon Managed Grafana, EKS Pod Identity 및 Log Source 분리의 정확한 요구사항·Terraform 계약·Runtime 검증·Codex 첫 실행 범위는 다음 문서를 기준으로 한다.
+
+- [`OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](./OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)
+
+해당 문서는 Source 존재와 실제 Runtime 완료를 구분하며, 이후 구현에서 이 문서의 Stop Gate와 Definition of Done을 우선 적용한다.
+
 ## 현재 판정
 
 > 이 Source는 장운호 개인 AWS Account에서 검증 중인 작업본이다.
