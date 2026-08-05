@@ -41,7 +41,9 @@ if (-not $AutomationConfigPath) {
     $AutomationConfigPath = Join-Path $PSScriptRoot 'automation\project.psd1'
 }
 $automationModule = Join-Path $PSScriptRoot 'automation\Daily.Automation.psm1'
+$gitOpsValidationModule = Join-Path $PSScriptRoot 'automation\GitOps.Validation.psm1'
 Import-Module $automationModule -Force
+Import-Module $gitOpsValidationModule -Force
 $automationConfig = Import-DailyAutomationConfig -Path $AutomationConfigPath
 $enableValkeyValue = if ($EnableValkey.IsPresent) { 'true' } else { 'false' }
 $enableEfsValue = if ($EnableEfs.IsPresent) { 'true' } else { 'false' }
@@ -149,10 +151,27 @@ function Invoke-ApplicationCiWhenNeeded {
     $correctRepository = $image.Repository -ceq $Foundation.RepositoryUrl
     $exists = $validTag -and $correctRepository -and
         (Test-EcrImage -RepositoryName $Foundation.RepositoryName -Tag $image.Tag)
+    $freshness = if ($validTag) {
+        Get-ApplicationImageFreshness `
+            -RepositoryRoot $DvWaRoot `
+            -ImageTag $image.Tag `
+            -Revision 'origin/main'
+    } else {
+        $null
+    }
 
-    if ($exists) {
-        Write-Host "ECR image already exists: $($image.Tag)"
+    if ($exists -and $freshness -and [bool]$freshness.IsFresh) {
+        Write-Host "ECR image already exists and covers current build inputs: $($image.Tag)"
         return $image
+    }
+
+    if ($exists -and $freshness) {
+        Write-Warning "Declared ECR image is stale: $($freshness.Reason)"
+        foreach ($path in @(
+            $freshness.BuildRelevantPaths | Select-Object -First 10
+        )) {
+            Write-Warning "Build-relevant change after image source commit: $path"
+        }
     }
 
     Assert-CommandAvailable -Name 'gh'
@@ -199,10 +218,16 @@ function Invoke-ApplicationCiWhenNeeded {
 
     Sync-ApplicationRepository
     $image = Get-DeclaredImage -ValuesPath $valuesPath
+    $freshness = Get-ApplicationImageFreshness `
+        -RepositoryRoot $DvWaRoot `
+        -ImageTag $image.Tag `
+        -Revision 'origin/main'
     if ($image.Repository -cne $Foundation.RepositoryUrl -or
         $image.Tag -notmatch '^sha-[0-9a-f]{40}$' -or
-        -not (Test-EcrImage -RepositoryName $Foundation.RepositoryName -Tag $image.Tag)) {
-        throw 'CI completed, but the declared immutable image is not present in Foundation ECR.'
+        -not (Test-EcrImage -RepositoryName $Foundation.RepositoryName -Tag $image.Tag) -or
+        -not [bool]$freshness.IsFresh) {
+        $detail = if ($freshness) { [string]$freshness.Reason } else { 'unavailable' }
+        throw "CI completed, but the declared immutable image is not current and present in Foundation ECR: $detail"
     }
 
     return $image
@@ -416,6 +441,12 @@ try {
     Wait-SsmAssociationSuccess -AssociationId $associationId
 
     $image = Invoke-ApplicationCiWhenNeeded -Foundation $foundation
+    $expectedGitOpsRevision = Invoke-NativeCapture -FilePath 'git' -ArgumentList @(
+        '-C', $DvWaRoot, 'rev-parse', 'origin/main'
+    ) -FailureMessage 'The expected GitOps revision could not be resolved.'
+    if ($expectedGitOpsRevision -notmatch '^[0-9a-f]{40}$') {
+        throw "The expected GitOps revision is not a full commit SHA: $expectedGitOpsRevision"
+    }
 
     $bastionIp = Invoke-NativeCapture -FilePath 'terraform' -ArgumentList @(
         "-chdir=$TerraformRoot", 'output', '-raw', 'seoul_bastion_public_ip'
@@ -515,23 +546,58 @@ try {
 
 $waitCommand = @'
 set -e
+application="__ARGO_APPLICATION__"
+expected_revision="__EXPECTED_REVISION__"
+
+kubectl -n argocd annotate application "${application}" \
+  argocd.argoproj.io/refresh=hard \
+  --overwrite >/dev/null
+
+sync_status=""
+health_status=""
+sync_revision=""
+refresh_value=""
+conditions=""
+error_conditions=""
+
 for attempt in $(seq 1 120); do
-  sync_status="$(kubectl -n argocd get application __ARGO_APPLICATION__ -o jsonpath={.status.sync.status} 2>/dev/null || true)"
-  health_status="$(kubectl -n argocd get application __ARGO_APPLICATION__ -o jsonpath={.status.health.status} 2>/dev/null || true)"
-  if [ "x$sync_status" = xSynced ] && [ "x$health_status" = xHealthy ]; then
+  sync_status="$(kubectl -n argocd get application "${application}" -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
+  health_status="$(kubectl -n argocd get application "${application}" -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
+  sync_revision="$(kubectl -n argocd get application "${application}" -o jsonpath='{.status.sync.revision}' 2>/dev/null || true)"
+  refresh_value="$(kubectl -n argocd get application "${application}" -o jsonpath='{.metadata.annotations.argocd\.argoproj\.io/refresh}' 2>/dev/null || true)"
+  conditions="$(kubectl -n argocd get application "${application}" -o jsonpath='{range .status.conditions[*]}{.type}{"|"}{.message}{"\n"}{end}' 2>/dev/null || true)"
+  error_conditions="$(printf '%s\n' "${conditions}" | grep -E '^[^|]*Error\|' || true)"
+
+  if [ -z "${refresh_value}" ] &&
+     [ "x${sync_status}" = xSynced ] &&
+     [ "x${health_status}" = xHealthy ] &&
+     [ "x${sync_revision}" = "x${expected_revision}" ] &&
+     [ -z "${error_conditions}" ]; then
     break
   fi
-  if [ "$attempt" -eq 120 ]; then
-    echo "Argo CD did not reach Synced Healthy within 20 minutes: $sync_status $health_status" >&2
+
+  if [ "${attempt}" -eq 120 ]; then
+    echo "Argo CD did not reconcile the expected GitOps revision within 20 minutes." >&2
+    echo "expected_revision=${expected_revision}" >&2
+    echo "sync_revision=${sync_revision}" >&2
+    echo "sync_status=${sync_status}" >&2
+    echo "health_status=${health_status}" >&2
+    echo "refresh_annotation=${refresh_value}" >&2
+    if [ -n "${conditions}" ]; then
+      echo "conditions:" >&2
+      printf '%s\n' "${conditions}" >&2
+    fi
     exit 1
   fi
   sleep 10
 done
+
 kubectl -n __NAMESPACE__ rollout status __WORKLOAD_KIND__/__WORKLOAD_NAME__ --timeout=10m
 kubectl -n __NAMESPACE__ get pod,service
 '@
     $waitCommand = $waitCommand.
         Replace('__ARGO_APPLICATION__', $argoApplication).
+        Replace('__EXPECTED_REVISION__', $expectedGitOpsRevision).
         Replace('__NAMESPACE__', $applicationNamespace).
         Replace('__WORKLOAD_KIND__', $workloadKind).
         Replace('__WORKLOAD_NAME__', $workloadName)
@@ -573,7 +639,7 @@ kubectl -n __NAMESPACE__ get pod,service
     Write-Host "Account: $($identity.Account)"
     Write-Host "Region: $Region"
     Write-Host "Image: $expectedImage"
-    Write-Host 'Argo CD: Synced / Healthy'
+    Write-Host "Argo CD: Synced / Healthy / revision $expectedGitOpsRevision"
     Write-Host "Application '$ApplicationName': Ready"
     Write-Host "URL: $applicationUrl"
     Write-Host "Elapsed: $([math]::Round($elapsed.TotalMinutes, 1)) minutes"
