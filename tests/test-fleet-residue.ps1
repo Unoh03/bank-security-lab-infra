@@ -70,6 +70,7 @@ function global:aws {
         }
         $instanceIds = switch ($global:FleetResidueMockScenario) {
             'no-instance-ids' { @() }
+            'blank-instance-ids' { @('', '   ', $null) }
             'mixed-notfound-running' {
                 @(
                     'i-0123456789abcdef0',
@@ -195,6 +196,12 @@ try {
         -Condition ([bool](Test-TaggedProjectRuntimeResourceActive `
             -Arn $arn -Profile 'test' -Region 'ap-northeast-2')) `
         -Message 'A deleting Fleet with no referenced instances must be inactive.'
+
+    $global:FleetResidueMockScenario = 'blank-instance-ids'
+    Assert-False `
+        -Condition ([bool](Test-TaggedProjectRuntimeResourceActive `
+            -Arn $arn -Profile 'test' -Region 'ap-northeast-2')) `
+        -Message 'Blank or whitespace Fleet instance IDs must be ignored.'
 
     $global:FleetResidueMockScenario = 'access-denied'
     Assert-Throws `

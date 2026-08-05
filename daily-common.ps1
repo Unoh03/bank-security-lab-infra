@@ -497,11 +497,22 @@ function Test-TaggedProjectRuntimeResourceActive {
                     # Verify each referenced instance independently so one stale
                     # InvalidInstanceID.NotFound does not hide another live ID.
                     $instanceIds = @(
-                        $fleet.Instances |
-                            ForEach-Object { @($_.InstanceIds) } |
-                            Where-Object { $_ } |
-                            ForEach-Object { [string]$_ } |
-                            Sort-Object -Unique
+                        @(
+                            foreach ($fleetInstance in @($fleet.Instances)) {
+                                if ($null -eq $fleetInstance) {
+                                    continue
+                                }
+                                if ($fleetInstance.PSObject.Properties.Name -notcontains 'InstanceIds') {
+                                    continue
+                                }
+                                foreach ($rawInstanceId in @($fleetInstance.InstanceIds)) {
+                                    $candidate = ([string]$rawInstanceId).Trim()
+                                    if ($candidate) {
+                                        $candidate
+                                    }
+                                }
+                            }
+                        ) | Sort-Object -Unique
                     )
                     if ($instanceIds.Count -eq 0) {
                         return $false
