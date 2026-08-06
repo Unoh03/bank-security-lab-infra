@@ -62,7 +62,7 @@ function global:aws {
     if ($arguments.Count -ge 2 -and
         $arguments[0] -ceq 'ec2' -and
         $arguments[1] -ceq 'describe-fleets') {
-                $state = switch ($global:FleetResidueMockScenario) {
+        $state = switch ($global:FleetResidueMockScenario) {
             'deleted' { 'deleted' }
             'active' { 'active' }
             'active-instant-terminated' { 'active' }
@@ -85,7 +85,7 @@ function global:aws {
         } else {
             1
         }
-                $instanceIds = switch ($global:FleetResidueMockScenario) {
+        $instanceIds = switch ($global:FleetResidueMockScenario) {
             'no-instance-ids' { @() }
             'blank-instance-ids' { @('', '   ', $null) }
             'active-instant-no-instance-ids-fulfilled' { @() }
@@ -102,7 +102,7 @@ function global:aws {
         return (@{
             Fleets = @(
                 @{
-                                        FleetId = 'fleet-11111111-2222-3333-4444-555555555555'
+                    FleetId = 'fleet-11111111-2222-3333-4444-555555555555'
                     FleetState = $state
                     Type = $fleetType
                     FulfilledCapacity = $fulfilledCapacity
@@ -132,7 +132,7 @@ function global:aws {
             $state = 'running'
         } else {
             switch ($global:FleetResidueMockScenario) {
-                                'active-instant-not-found' {
+                'active-instant-not-found' {
                     $global:LASTEXITCODE = 255
                     return "An error occurred (InvalidInstanceID.NotFound) when calling the DescribeInstances operation: The instance ID does not exist"
                 }
@@ -148,7 +148,7 @@ function global:aws {
                     $global:LASTEXITCODE = 254
                     return 'An error occurred (AccessDeniedException) when calling the DescribeInstances operation'
                 }
-                                'running' { $state = 'running' }
+                'running' { $state = 'running' }
                 'active-instant-running' { $state = 'running' }
                 default { $state = 'terminated' }
             }
@@ -181,7 +181,7 @@ try {
             -Arn $arn -Profile 'test' -Region 'ap-northeast-2')) `
         -Message 'A deleted Fleet must be inactive.'
 
-        $global:FleetResidueMockScenario = 'active'
+    $global:FleetResidueMockScenario = 'active'
     Assert-True `
         -Condition ([bool](Test-TaggedProjectRuntimeResourceActive `
             -Arn $arn -Profile 'test' -Region 'ap-northeast-2')) `
@@ -216,7 +216,6 @@ try {
         -Condition ([bool](Test-TaggedProjectRuntimeResourceActive `
             -Arn $arn -Profile 'test' -Region 'ap-northeast-2')) `
         -Message 'An empty active instant Fleet with no fulfilled capacity must be inactive.'
-
 
     $global:FleetResidueMockScenario = 'running'
     Assert-True `
@@ -260,7 +259,7 @@ try {
             -Arn $arn -Profile 'test' -Region 'ap-northeast-2')) `
         -Message 'Blank or whitespace Fleet instance IDs must be ignored.'
 
-        $unsupportedCalls = @(
+    $unsupportedCalls = @(
         $global:FleetResidueMockCalls | Where-Object {
             $_ -match '(^| )ec2 describe-fleet-instances( |$)'
         }

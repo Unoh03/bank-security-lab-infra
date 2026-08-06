@@ -482,7 +482,7 @@ function Test-TaggedProjectRuntimeResourceActive {
                         return $false
                     }
 
-                                        $fleetState = [string]$fleet.FleetState
+                    $fleetState = [string]$fleet.FleetState
                     if ($fleetState -ceq 'deleted') {
                         return $false
                     }
@@ -521,7 +521,7 @@ function Test-TaggedProjectRuntimeResourceActive {
                             }
                         ) | Sort-Object -Unique
                     )
-                                        if ($instanceIds.Count -eq 0) {
+                    if ($instanceIds.Count -eq 0) {
                         if ($fleetType -ceq 'instant') {
                             $fulfilledCapacity = 0.0
                             if ($fleet.PSObject.Properties.Name -contains 'FulfilledCapacity') {
