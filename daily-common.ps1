@@ -486,16 +486,23 @@ function Test-TaggedProjectRuntimeResourceActive {
                     if ($fleetState -ceq 'deleted') {
                         return $false
                     }
-                    if ($fleetState -notin @(
-                        'deleted_terminating',
-                        'deleted_running'
-                    )) {
+
+                    $fleetType = [string]$fleet.Type
+                    $inspectReferencedInstances = (
+                        $fleetType -ceq 'instant' -or
+                        $fleetState -in @(
+                            'deleted_terminating',
+                            'deleted_running'
+                        )
+                    )
+                    if (-not $inspectReferencedInstances) {
                         return $true
                     }
 
-                    # Fleet state propagation may lag behind EC2 termination.
-                    # Verify each referenced instance independently so one stale
-                    # InvalidInstanceID.NotFound does not hide another live ID.
+                    # DescribeFleetInstances does not support instant Fleets.
+                    # DescribeFleets already returns Instances[].InstanceIds, so
+                    # verify each referenced EC2 instance directly. This also
+                    # handles Fleet-state propagation lag after EC2 termination.
                     $instanceIds = @(
                         @(
                             foreach ($fleetInstance in @($fleet.Instances)) {
@@ -515,6 +522,16 @@ function Test-TaggedProjectRuntimeResourceActive {
                         ) | Sort-Object -Unique
                     )
                     if ($instanceIds.Count -eq 0) {
+                        if ($fleetType -ceq 'instant') {
+                            $fulfilledCapacity = 0.0
+                            if ($fleet.PSObject.Properties.Name -contains 'FulfilledCapacity') {
+                                $fulfilledCapacity = [double]$fleet.FulfilledCapacity
+                            }
+                            # An active instant Fleet that reports fulfilled
+                            # capacity but omits its instance IDs is unresolved.
+                            # Keep failing closed instead of hiding a live EC2.
+                            return $fulfilledCapacity -gt 0
+                        }
                         return $false
                     }
 
