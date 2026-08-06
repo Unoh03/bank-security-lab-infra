@@ -7,13 +7,13 @@
 이 계획은 처음 전달받은 네 요구사항을 처음부터 다시 밟는다.
 
 ```text
-1. S3 로그 분석과 Grafana 시각화
+1. S3 로그 분석과 시각화
 2. EKS Workload별 Pod Identity
 3. 리소스별 S3 로그 저장 구분
 4. 구성 결과 설명과 실제 화면·Runtime 증명
 ```
 
-기존 Grafana Cloud 중심 계획은 폐기한다. 현재 실제로 성공한 로컬 Docker Grafana를 출발점으로 사용하되, 이미 성공했다고 확인한 범위와 아직 검증하지 않은 범위를 분리한다.
+특정 Grafana 제품은 필수가 아니다. 현재 실제로 성공한 로컬 Docker Grafana를 출발점으로 사용하되, 이미 성공했다고 확인한 범위와 아직 검증하지 않은 범위를 분리한다.
 
 ---
 
@@ -91,7 +91,7 @@ Grafana Provider 자동화
 
 ## 목표
 
-원래 요구사항의 모호한 두 항목을 아키텍처 변경 전에 분리한다.
+아키텍처 변경 전에 남아 있는 모호한 요구를 확정한다.
 
 ### Gate A — S3 구분
 
@@ -102,18 +102,24 @@ B안: Source별 별도 Bucket
 
 현재 Source는 A안이다. 평가자가 B안을 명시하지 않았다면 A안을 유지하고, Prefix·Bucket Policy·Athena LOCATION으로 분리됨을 증명한다.
 
-### Gate B — Grafana 제품
+### Gate B — 시각화 방식
+
+**해결됨.** 특정 Grafana 제품이나 Amazon Managed Grafana는 필수가 아니다. 실제 S3 로그 분석 결과를 시각화하면 된다.
+
+현재 채택 경로:
 
 ```text
-현재: Local Docker Grafana + AWS Athena
-미확정: Amazon Managed Grafana가 필수인지
+S3 Security Log
+→ Amazon Athena
+→ Local Docker Grafana
+→ Dashboard
 ```
 
-Amazon Managed Grafana가 명시적 필수 조건이 아니라면 현재 로컬 Grafana 경로를 사용한다. 이 Gate가 해결되기 전 Managed Grafana Workspace를 만들지 않는다.
+따라서 Grafana Cloud와 Amazon Managed Grafana를 핵심 경로에서 제외한다.
 
 ## 산출물
 
-`OBSERVABILITY-IAM-DECISIONS.md`의 A01·A02에 최종 판정을 기록한다.
+`OBSERVABILITY-IAM-DECISIONS.md`의 A01 판정을 최종 기록한다. A02는 해결된 상태를 유지한다.
 
 ---
 
@@ -595,7 +601,7 @@ Node Role 노출 Test
 | 요구사항 | Source | Runtime | Evidence | 최종 판정 |
 |---|---|---|---|---|
 | S3 로그 분석 |  |  |  |  |
-| Grafana 시각화 |  |  |  |  |
+| 시각화 |  |  |  |  |
 | Pod Identity |  |  |  |  |
 | S3 로그 분리 |  |  |  |  |
 
