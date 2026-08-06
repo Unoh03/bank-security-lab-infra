@@ -33,7 +33,12 @@ function Replace-Exact {
 $dailyCommonPath
 '@
 
-$updated = [regex]::Replace($source, $functionPattern, $replacement, 1)
+$updated = [regex]::Replace(
+    $source,
+    $functionPattern,
+    [System.Text.RegularExpressions.MatchEvaluator]{ param($match) $replacement },
+    1
+)
 if ($updated -ceq $source) {
     throw 'The temporary patch runner could not replace Replace-Exact.'
 }
