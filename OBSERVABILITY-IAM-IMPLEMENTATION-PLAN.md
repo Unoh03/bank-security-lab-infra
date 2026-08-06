@@ -1,68 +1,62 @@
-# S3 로그 분석·Grafana 시각화·Pod Identity 단계별 실행 계획
+# 근실시간 관제·S3 로그 분석·Pod Identity 단계별 실행 계획
 
-> 상태: **기준 재정립 / 현재 상태부터 재검증 / 자동 변경 금지**  
+> 상태: **WAF Grafana Runtime 확인 / Live Tail Viewer 다음 작업 / 자동 변경 금지**  
 > 기준 시점: 2026-08-06  
 > 결정 근거: [`OBSERVABILITY-IAM-DECISIONS.md`](./OBSERVABILITY-IAM-DECISIONS.md)
 
-이 계획은 처음 전달받은 네 요구사항을 처음부터 다시 밟는다.
+이 계획은 다음 네 요구사항을 완성한다.
 
 ```text
-1. S3 로그 분석과 시각화
-2. EKS Workload별 Pod Identity
-3. 리소스별 S3 로그 저장 구분
-4. 구성 결과 설명과 실제 화면·Runtime 증명
+1. 공격 중 자동으로 나타나는 근실시간 관제 화면
+2. S3 로그의 상세 분석과 Evidence
+3. EKS Workload별 Pod Identity 검증
+4. 리소스별 로그 저장 구분과 결과 설명
 ```
 
-특정 Grafana 제품은 필수가 아니다. 현재 실제로 성공한 로컬 Docker Grafana를 출발점으로 사용하되, 이미 성공했다고 확인한 범위와 아직 검증하지 않은 범위를 분리한다.
+특정 Grafana 제품은 필수가 아니다. 현재 Local Docker Grafana와 AWS CloudWatch·Athena를 사용한다.
 
 ---
 
 ## 0. 실행 원칙
 
-### 0.1 단계 Gate
-
-각 단계는 다음 네 상태를 구분한다.
+### 0.1 단계 상태
 
 ```text
 SourceConfigured   Terraform·Script·Manifest가 존재
-Planned            Plan 또는 예상 변경이 검토됨
+Planned            변경안·Plan이 검토됨
 RuntimeObserved    실제 AWS·Kubernetes·Grafana에서 확인
-EvidenceSaved      재현 가능한 결과와 화면이 보존됨
+EvidenceSaved      재현 가능한 결과가 보존됨
 ```
 
-`SourceConfigured`만으로 완료라고 보고하지 않는다.
+Source가 존재하는 것만으로 완료라고 보고하지 않는다.
 
 ### 0.2 변경 통제
 
-첫 Pass는 Read-only Inventory와 Runtime 조회까지만 수행한다.
-
-금지:
+Read-only Test가 먼저다.
 
 ```text
-terraform apply / destroy
-kubectl apply / patch / delete
-새 S3 Bucket 생성
-새 Grafana 서비스 생성
-IAM Role·Policy 변경
-Pod Identity Association 변경
-Node Group·Karpenter 교체
-Secret·Access Key·tfstate·tfplan Commit
+금지:
+- 필요성 확인 전 Terraform 수정
+- terraform apply / destroy
+- kubectl apply / patch / delete
+- IAM Role·Policy의 즉석 변경
+- 새 S3 Bucket·Managed Grafana Resource 생성
+- Secret·Access Key·tfstate·tfplan·tfvars Commit
 ```
 
-변경이 필요하면 Source Diff와 Plan을 먼저 만들고 사용자 승인 뒤 별도 Pass에서 적용한다.
+Live Tail CLI Test가 성공하면 Terraform을 수정하지 않는다. `AccessDenied`일 때만 Credential 관리 경계를 확인하고 최소 권한 Source·Plan을 작성한다.
 
-### 0.3 범위 통제
-
-핵심 요구를 완료하기 전 다음 항목으로 확장하지 않는다.
+### 0.3 역할 분리
 
 ```text
-Grafana Cloud 재시도
-Amazon Managed Grafana
-CloudWatch 기반 근실시간 Dashboard
-EventBridge·SNS Alert
-자동 대응
-별도 Athena Result Bucket
-Grafana Provider 자동화
+Grafana + CloudWatch Logs Insights
+→ 읽기 쉬운 근실시간 Dashboard
+
+CloudWatch Live Tail
+→ Polling 없는 즉시성 우선 Event Feed
+
+S3 + Athena
+→ 사후 조사·상관분석·Evidence
 ```
 
 ---
@@ -72,131 +66,307 @@ Grafana Provider 자동화
 | 항목 | 현재 상태 | 다음 Gate |
 |---|---|---|
 | Local Docker Grafana | 실행·접속 성공 | 재현 정보 유지 |
-| Athena Data Source | `Data source is working` 확인 | 실제 Source Table 행 조회 |
-| Athena Catalog·Database | `AwsDataCatalog`, `aws_topology_security` 확인 | Table Metadata·LOCATION 확인 |
-| Athena Table 목록 | 세 Table 확인 | 각 Table 실제 행 확인 |
-| CloudFront S3 로그 | Source·Prefix 정의 | 최신 Object 존재 확인 |
-| ALB S3 로그 | Source·Prefix 정의 | 최신 Object 존재 확인 |
-| VPC REJECT S3 로그 | Source·Prefix 정의 | 최신 Object 존재 확인 |
-| Grafana Dashboard | 미구성 | 세 필수 Panel 작성 |
+| Athena Data Source | `Data source is working` | 실제 Table 행·Schema 검증 |
+| Athena Table 목록 | 3개 확인 | S3 Object·실제 행 확인 |
+| CloudWatch Data Source | Metrics·Logs API 연결 성공 | Dashboard 정리 |
+| WAF Log Group | `us-east-1/aws-waf-logs-aws-topology-edge` 조회 성공 | Field 정규화 |
+| XSS Test | COUNT Event 확인 | Evidence 유지 |
+| SQLi Test | Event 자동 표시 확인 | 하위 Rule Field 확인 |
+| Grafana Auto Refresh | `5s` | Dashboard 저장·지연 반복 측정 |
+| 관측된 표시 지연 | 대략 10초 | Live Tail과 비교 |
+| CloudWatch Live Tail | 미실행 | Permission·Runtime Smoke Test |
+| Readable Live Tail Viewer | 미구현 | Codex 구현 |
 | Pod Identity Source | 여러 Workload 정의 | AWS·Kubernetes Inventory |
-| Pod Identity Runtime | 전체 재검증 안 됨 | 예상 Role·허용·거부 Test |
-| 최종 Evidence | 일부 Screenshot·노트만 존재 | 통합 Evidence Bundle |
+| Pod Identity Runtime | 전체 재검증 안 됨 | STS·허용·거부 Test |
 
-현재 Table 목록 조회만으로는 S3 원본 로그가 정상 파싱된다고 판정하지 않는다.
+현재 Grafana Runtime Evidence는 다음 Obsidian Note에 있다.
+
+```text
+10_학습 노트/클라우드/Grafana 로컬 Docker에서 CloudWatch WAF 근실시간 관제.md
+10_학습 노트/클라우드/Grafana 로컬 Docker에서 Athena 연결.md
+```
 
 ---
 
-# Phase 1 — 합격 기준 고정
+# Phase 1 — 현재 WAF Grafana 관제 Baseline 고정
 
 ## 목표
 
-아키텍처 변경 전에 남아 있는 모호한 요구를 확정한다.
+이미 성공한 Grafana 경로를 추정이 아니라 재현 가능한 Baseline으로 남긴다.
 
-### Gate A — S3 구분
+## 현재 Query
 
-```text
-A안: Security Log Bucket 하나 + Source별 Prefix
-B안: Source별 별도 Bucket
+```sql
+fields
+    @timestamp,
+    action,
+    terminatingRuleId,
+    httpRequest.country,
+    httpRequest.clientIp,
+    httpRequest.httpMethod,
+    httpRequest.host,
+    httpRequest.uri,
+    httpRequest.args
+| sort @timestamp desc
+| limit 50
 ```
 
-현재 Source는 A안이다. 평가자가 B안을 명시하지 않았다면 A안을 유지하고, Prefix·Bucket Policy·Athena LOCATION으로 분리됨을 증명한다.
+## 수행
 
-### Gate B — 시각화 방식
+1. Dashboard와 Panel 이름을 의미 있게 지정한다.
+2. Auto Refresh를 `5s`로 유지한다.
+3. XSS와 SQLi Request를 각각 다시 1회 실행한다.
+4. Request 시각, WAF Event `@timestamp`, Grafana 표시 시각을 기록한다.
+5. 동일 조건에서 3회 이상 측정해 최소·최대·대략적 평균을 기록한다.
+6. Dashboard JSON과 Screenshot을 보존한다.
 
-**해결됨.** 특정 Grafana 제품이나 Amazon Managed Grafana는 필수가 아니다. 실제 S3 로그 분석 결과를 시각화하면 된다.
-
-현재 채택 경로:
+## 읽기 쉬운 출력 기준
 
 ```text
-S3 Security Log
-→ Amazon Athena
-→ Local Docker Grafana
-→ Dashboard
+Timestamp
+탐지 Rule 또는 Rule Group
+COUNT / BLOCK
+최종 Action
+Country
+Source IP
+Method
+Host
+URI
+Args
 ```
 
-따라서 Grafana Cloud와 Amazon Managed Grafana를 핵심 경로에서 제외한다.
+WAF 중첩 JSON에서 탐지 Rule이 단순 Field Query로 나오지 않으면 Dashboard Transform 또는 별도 Query를 검증한다. 컴파일되지 않은 `jsonParse` Query를 확정본으로 저장하지 않는다.
 
-## 산출물
+## 완료 Gate
 
-`OBSERVABILITY-IAM-DECISIONS.md`의 A01 판정을 최종 기록한다. A02는 해결된 상태를 유지한다.
+- 사용자 입력 없이 새 Event 자동 표시
+- XSS·SQLi Event 구분 가능
+- 실제 지연 측정값 보존
+- Raw JSON을 열지 않아도 핵심 요청 정보를 읽을 수 있음
 
 ---
 
-# Phase 2 — 현재 Source와 Runtime Inventory
+# Phase 2 — CloudWatch Live Tail Permission·Runtime Smoke Test
 
 ## 목표
 
-코드를 바꾸기 전에 현재 정의와 실제 AWS 상태가 무엇인지 확정한다.
+Terraform을 건드리기 전에 현재 `terra-user`로 Live Tail이 실행되는지 확인한다.
 
-## 2.1 Source Inventory
-
-확인 파일:
-
-```text
-foundation/observability.tf
-foundation/variables.tf
-observability.tf
-observability/queries/athena/00_create_security_log_tables.sql
-observability/Invoke-AthenaQueryPack.ps1
-cluster-controllers.tf
-storage-access.tf
-eks.tf
-```
-
-기록할 항목:
-
-```text
-Security Log Bucket Output
-Retention
-Bucket Policy Principal·Resource
-Source별 Prefix
-Athena Database·Table·LOCATION
-Pod Identity Role
-Cluster·Namespace·ServiceAccount
-조건부 Count·Feature Flag
-```
-
-## 2.2 AWS Read-only Inventory
-
-확인:
+## 사전 확인
 
 ```powershell
+aws --version
 aws sts get-caller-identity --profile terra-user
-terraform -chdir=foundation output
-aws athena list-data-catalogs --profile terra-user --region ap-northeast-2
-aws athena list-table-metadata --profile terra-user --region ap-northeast-2 --catalog-name AwsDataCatalog --database-name aws_topology_security
+aws logs describe-log-groups `
+  --profile terra-user `
+  --region us-east-1 `
+  --log-group-name-prefix 'aws-waf-logs-aws-topology-edge' `
+  --query 'logGroups[].{name:logGroupName,class:logGroupClass,arn:arn}' `
+  --output table
 ```
 
-중단 조건:
+판정:
 
-- AWS Account가 `433048100798`이 아님
-- Foundation State Output을 읽을 수 없음
-- 예상하지 않은 Bucket·Database를 대상으로 하게 됨
+- Account는 `433048100798`
+- Log Group은 `STANDARD`
+- Live Tail Identifier에는 ARN 끝의 `:*`를 포함하지 않음
 
-## 산출물
+## CLI Test
 
-다음 Matrix를 결과 보고에 포함한다.
+```powershell
+aws logs start-live-tail `
+  --profile terra-user `
+  --region us-east-1 `
+  --log-group-identifiers `
+  arn:aws:logs:us-east-1:433048100798:log-group:aws-waf-logs-aws-topology-edge `
+  --mode interactive
+```
+
+Test 중 통제된 XSS Request를 1회 발생시킨다. 종료는 `Ctrl+C`다.
+
+## 판정
+
+### 성공
 
 ```text
-Source 정의
-AWS 실제 Resource
-일치 여부
-Runtime 관측 여부
-남은 검증
+Terraform 변경 없음
+IAM 변경 없음
+Live Tail RuntimeObserved
+Phase 3 Viewer 구현으로 진행
 ```
 
-첫 Pass에서는 별도 Inventory 파일을 만들 필요가 있을 때만 생성한다. 문서 수를 늘리기 전에 기존 Evidence 구조를 확인한다.
+### `AccessDenied`
+
+다음만 수행한다.
+
+1. 현재 Principal과 연결된 Policy Source를 확인한다.
+2. `logs:StartLiveTail`, 필요 시 `logs:StopLiveTail`의 최소 권한안을 작성한다.
+3. WAF Log Group ARN으로 Resource를 제한할 수 있는지 검토한다.
+4. Terraform 또는 기존 IAM 관리 방식의 Source Diff와 Plan만 만든다.
+5. 사용자 승인 전 Apply하지 않는다.
+
+### 기타 실패
+
+```text
+CLI Version
+ARN `:*` 포함 여부
+Region
+Log Group Class
+Network·Proxy
+SDK/CLI Streaming 지원
+```
+
+을 구분한다. 권한 문제로 추측하지 않는다.
+
+## Evidence
+
+```text
+시작 시각
+종료 시각
+Session 지속 시간
+수신 Event 시각
+Request → Live Tail 표시 지연
+명령 Exit 상태
+오류 전문 또는 성공 Screenshot
+```
 
 ---
 
-# Phase 3 — S3 로그 저장·분리 Runtime 검증
+# Phase 3 — Readable WAF Live Tail Viewer 구현
 
 ## 목표
 
-세 필수 Source가 실제로 각 Prefix에 Object를 저장하고 있는지 확인한다.
+CloudWatch Live Tail Raw JSON을 관제자가 즉시 읽을 수 있는 한 줄 Event로 변환한다.
 
-## 필수 Source
+## 구현 선택
+
+Codex는 Repository와 로컬 환경을 확인한 뒤 다음 중 가장 단순하고 재현 가능한 방식을 선택한다.
+
+```text
+PowerShell Wrapper
+Python/boto3 Streaming Viewer
+작은 Local Web UI
+```
+
+Terraform은 구현 수단이 아니다. 현재 Credential로 Live Tail이 성공하면 Local Source만 추가한다.
+
+## 필수 출력
+
+| 표시 항목 | WAF Field 예시 |
+|---|---|
+| Event Time | `timestamp` 또는 수신 Event 시각 |
+| Detection | Matching Rule ID |
+| Detection Mode | `COUNT` / `BLOCK` |
+| Final Action | `ALLOW` / `BLOCK` |
+| Country | `httpRequest.country` |
+| Source IP | `httpRequest.clientIp` |
+| Method | `httpRequest.httpMethod` |
+| Host | `httpRequest.host` |
+| URI | `httpRequest.uri` |
+| Args | `httpRequest.args` |
+
+## 동작 요구
+
+```text
+새 Event를 Streaming으로 지속 수신
+한 Event를 한 행 또는 한 Card로 표시
+XSS·SQLi·Rate Rule을 구분
+COUNT와 최종 ALLOW를 혼동하지 않음
+Ctrl+C 또는 종료 동작으로 Session 종료
+자동 재시작은 기본 비활성
+원본 JSON 저장은 기본 비활성
+```
+
+## 보안 요구
+
+- Access Key·Secret Key를 Source나 Output에 기록하지 않는다.
+- WAF Cookie Redaction을 유지한다.
+- Evidence 저장 시 Client IP, Request ID, JA3·JA4 전체 값의 공개 여부를 별도 검토한다.
+- Viewer가 Log를 별도 파일에 무기한 저장하지 않는다.
+- Session 시작·종료 시각을 표시해 사용 시간을 통제한다.
+
+## Test
+
+```text
+XSS Query Argument
+SQL Injection Query Argument
+일반 ALLOW Request
+동시에 여러 Event
+Ctrl+C 종료
+3시간 전에 수동 종료
+```
+
+WAF Logging Filter 때문에 일반 ALLOW Request가 저장되지 않을 수 있다. 이 경우 `NoEventExpected`로 기록한다.
+
+## 산출물 예시
+
+```text
+observability/live-tail/
+├─ README.md
+├─ Start-WafLiveTail.ps1 또는 viewer.py
+└─ tests/
+```
+
+정확한 파일 구조는 기존 Repository 관례를 우선한다.
+
+## 완료 Gate
+
+- Live Tail Event가 Polling 없이 수신
+- 주요 Field가 읽기 쉬운 형태로 표시
+- XSS·SQLi 구분
+- Session 정상 종료
+- 설치·실행 절차 재현
+- AWS Resource 변경 없음 또는 승인된 최소 IAM 변경만 존재
+
+---
+
+# Phase 4 — Grafana 근실시간 Dashboard 정리
+
+## 목표
+
+Live Tail은 즉시성, Grafana는 집계와 상황판을 담당하도록 역할을 분리한다.
+
+## Panel 후보
+
+```text
+최근 WAF 탐지 Event Table
+최근 5분 COUNT·BLOCK 수
+XSS·SQLi·Rate Rule별 건수
+Country별 탐지 수
+Top URI
+최종 ALLOW·BLOCK 비율
+```
+
+## 공통 기준
+
+```text
+Auto Refresh: 5s 또는 비용 검토 후 10s
+Time Range: 최근 5~15분
+Query Window 최소화
+Raw @message 기본 숨김
+Cookie·Authorization·Body 미표시
+```
+
+Dashboard는 Live Tail Viewer를 대체하지 않는다. 약 10초의 현재 지연을 허용하는 읽기 쉬운 관제 화면으로 사용한다.
+
+## 산출물
+
+```text
+analytics/dashboard/waf-realtime-overview.json
+Panel Query
+Dashboard Screenshot
+측정된 표시 지연
+```
+
+빈 Dashboard JSON을 먼저 Commit하지 않는다. 실제 동작한 뒤 Export한다.
+
+---
+
+# Phase 5 — S3 로그 저장·분리 Runtime 검증
+
+## 목표
+
+사후 분석 Source가 실제로 각 Prefix에 저장되는지 확인한다.
 
 | ID | Prefix |
 |---|---|
@@ -204,60 +374,27 @@ Runtime 관측 여부
 | `alb-primary` | `alb/primary/AWSLogs/433048100798/elasticloadbalancing/ap-northeast-2/` |
 | `vpc-reject-primary` | `vpc-flow/AWSLogs/433048100798/vpcflowlogs/ap-northeast-2/` |
 
-CloudTrail은 보조 Source로 별도 기록한다.
-
-## 검증 순서
+수행:
 
 1. Foundation Output에서 실제 Bucket 이름을 읽는다.
-2. 각 Prefix의 Object Count와 최신 Object 시각을 조회한다.
-3. 최신 Object 하나의 Key·Size·LastModified를 기록한다.
+2. 각 Prefix의 Object Count와 최신 Object를 확인한다.
+3. Bucket Policy Write Resource와 실제 Prefix를 대조한다.
 4. Object가 없으면 `NotObserved`로 기록한다.
-5. 원인을 추측하지 말고 로그 생성 조건과 Runtime 활성 상태를 별도 확인한다.
 
-PowerShell 예시:
-
-```powershell
-$bucket = terraform -chdir=foundation output -raw security_log_bucket_name
-
-aws s3api list-objects-v2 `
-  --profile terra-user `
-  --bucket $bucket `
-  --prefix 'AWSLogs/433048100798/CloudFront/' `
-  --max-items 10
-```
-
-같은 방식으로 ALB와 VPC Prefix를 확인한다.
-
-## 분리 판정
-
-다음을 모두 만족하면 Prefix 기반 분리가 기술적으로 확인된 것이다.
+완료 조건:
 
 ```text
 Source별 Prefix가 겹치지 않음
-Bucket Policy의 Write Resource가 Source별 Prefix로 제한됨
-Athena LOCATION이 해당 Prefix와 일치
+Bucket Policy가 Source별 Prefix로 제한됨
+Athena LOCATION이 Prefix와 일치
 실제 Object가 예상 Prefix에 존재
 ```
 
-## 완료 Gate
-
-| Source | Object 존재 | 최신 시각 | Prefix 일치 | 판정 |
-|---|---:|---|---:|---|
-| CloudFront |  |  |  |  |
-| ALB |  |  |  |  |
-| VPC REJECT |  |  |  |  |
-
 ---
 
-# Phase 4 — Athena 실제 데이터 검증
+# Phase 6 — Athena 실제 데이터 검증
 
-## 목표
-
-Table 이름만 존재하는 상태에서 실제 S3 로그가 파싱되는 상태로 넘어간다.
-
-## 4.1 Metadata 검증
-
-각 Table의 `LOCATION`, Column, SerDe를 DDL과 대조한다.
+## 대상
 
 ```text
 cloudfront_access
@@ -265,184 +402,31 @@ alb_primary_access
 vpc_reject
 ```
 
-## 4.2 제한 Query
+수행:
 
-처음에는 최근 데이터 일부만 조회한다. 전체 기간 Scan을 금지한다.
+- Table Metadata·LOCATION·SerDe 대조
+- 제한된 시간 범위 Query
+- QueryExecutionId, Row, DataScannedInBytes 기록
+- 주요 Column의 NULL·Parsing 상태 확인
 
-### CloudFront
-
-```sql
-SELECT *
-FROM aws_topology_security.cloudfront_access
-ORDER BY date DESC, time DESC
-LIMIT 10;
-```
-
-### ALB
-
-```sql
-SELECT *
-FROM aws_topology_security.alb_primary_access
-ORDER BY time DESC
-LIMIT 10;
-```
-
-### VPC REJECT
-
-```sql
-SELECT *
-FROM aws_topology_security.vpc_reject
-ORDER BY start DESC
-LIMIT 10;
-```
-
-Table에 데이터가 많아지면 기존 `observability/Invoke-AthenaQueryPack.ps1`의 최대 6시간 제한 Query를 우선 사용한다.
-
-## 4.3 결과 기록
-
-각 Query마다 기록:
-
-```text
-QueryExecutionId
-State
-실행 시각
-Returned Rows
-DataScannedInBytes
-Result S3 URI
-대표 Column 값
-```
-
-민감 정보는 Screenshot과 Repository에 포함하지 않는다.
-
-## 완료 Gate
-
-- 세 Table이 `SUCCEEDED`
-- 실제 로그 행 반환 또는 Source가 실제로 비어 있음을 Evidence로 확인
-- 주요 Column이 전부 NULL이 아님
-- Table LOCATION과 실제 Object Prefix가 일치
-
-Schema 오류가 있으면 DDL 수정안을 작성하되 즉시 실행하지 않는다.
+Athena는 실시간 관제 경로가 아니다. 필요할 때 상세 조사하고 `daily-down.ps1 -EvidenceOnly` 결과와 상호 보완한다.
 
 ---
 
-# Phase 5 — 로컬 Grafana S3 로그 시각화
-
-## 목표
-
-이미 연결된 Athena Data Source를 사용해 핵심 세 Source를 실제 Panel로 보여준다.
-
-## 현재 Data Source
-
-```text
-Authentication Provider: Credentials file
-Credentials Profile Name: terra-user
-Region: ap-northeast-2
-Catalog: AwsDataCatalog
-Database: aws_topology_security
-Workgroup: primary
-Output Location: s3://<SECURITY_LOG_BUCKET>/athena-results/grafana/
-```
-
-Data Source를 새로 만들지 않는다. 현재 연결이 사라졌을 때만 Obsidian 재현 노트를 기준으로 복구한다.
-
-## 필수 Panel
-
-### Panel 1 — CloudFront 요청 상태
-
-```text
-시간별 요청 수
-4xx 수
-5xx 수
-```
-
-### Panel 2 — ALB 오류 Source
-
-```text
-4xx·5xx 요청 수
-Top Client IP
-Top Request URL 또는 Path
-```
-
-### Panel 3 — VPC REJECT
-
-```text
-Top Source IP
-Top Destination Port
-시간대별 REJECT 수
-```
-
-## 공통 기준
-
-```text
-기본 Time Range: 최근 6시간
-Query마다 시간 제한
-Cookie·Authorization·Body 미표시
-광범위한 SELECT * Dashboard Query 금지
-S3 로그 전달 주기를 고려해 Auto Refresh는 검증 중 Off
-필요 시 최종 Dashboard에서 5분 이상으로 설정
-```
-
-## 산출물
-
-```text
-analytics/dashboard/security-overview.json
-Panel별 SQL
-Dashboard 전체 Screenshot
-Panel별 정상 데이터 Screenshot
-```
-
-`analytics/dashboard/`가 아직 없으므로 실제 Dashboard가 동작한 뒤 생성한다. 빈 JSON이나 추정 Query를 먼저 Commit하지 않는다.
-
-## 완료 Gate
-
-- 세 Panel 모두 실제 데이터 표시
-- Grafana Time Range 변경이 Query에 반영
-- Dashboard JSON Export 성공
-- Screenshot과 Query가 같은 시점을 가리킴
-
----
-
-# Phase 6 — Pod Identity Source·AWS·Kubernetes Inventory
-
-## 목표
-
-현재 Source에 정의된 Association과 실제 Runtime을 Workload별로 정리한다.
+# Phase 7 — Pod Identity Inventory
 
 ## 예상 Workload
 
 ```text
-Primary / DR AWS Load Balancer Controller
-Primary / 조건부 DR ExternalDNS
-Primary / DR EFS CSI Controller
-Primary / 조건부 DR Web S3 Workload
-Primary / 조건부 DR Fluent Bit
-Primary / 조건부 DR Karpenter
+AWS Load Balancer Controller
+ExternalDNS
+EFS CSI Controller
+Web S3 Workload
+Fluent Bit
+Karpenter
 ```
 
-## Inventory 수집
-
-AWS:
-
-```text
-EKS Pod Identity Association
-Association ID
-IAM Role ARN
-Role Trust
-Managed Policy
-Inline Policy
-```
-
-Kubernetes:
-
-```text
-Namespace
-ServiceAccount
-Pod
-Pod가 사용하는 ServiceAccount
-Workload Ready 상태
-```
-
-## Matrix 필드
+Matrix:
 
 ```text
 cluster
@@ -456,7 +440,7 @@ source_status
 runtime_status
 ```
 
-## 상태값
+상태:
 
 ```text
 ConfiguredAndObserved
@@ -466,76 +450,24 @@ DisabledByDesign
 NoAssociationExpected
 ```
 
-조건부 Resource가 비활성 상태면 실패가 아니라 `DisabledByDesign`으로 기록한다.
-
-## 완료 Gate
-
-- Source의 모든 Association 후보가 Matrix에 존재
-- AWS Association과 Kubernetes ServiceAccount가 연결됨
-- 실제 Pod가 없는 항목은 이유와 Feature Flag를 기록
-- 예상하지 않은 Association을 별도 표시
-
 ---
 
-# Phase 7 — Pod Identity Runtime 권한 검증
-
-## 목표
-
-Role이 존재하는지만 보지 않고 실제 Pod가 어떤 AWS Identity와 권한을 받는지 확인한다.
-
-## 사전 조건
-
-```text
-EKS Cluster Up
-Pod Identity Agent Ready
-대상 ServiceAccount 존재
-대상 Workload 또는 임시 Test Pod 실행 가능
-사용자 승인
-```
-
-## Test 절차
+# Phase 8 — Pod Identity Runtime 권한 검증
 
 각 ServiceAccount에 대해:
 
 ```text
-1. Association 확인
-2. 실제 Pod의 ServiceAccount 확인
-3. 같은 ServiceAccount를 사용하는 임시 AWS CLI Pod 실행
-4. sts:GetCallerIdentity 실행
-5. 예상 Role ARN과 비교
-6. 대표 허용 Read API 실행
-7. iam:ListUsers 실행
-8. AccessDenied 확인
-9. 임시 Pod 삭제
+Association 확인
+실제 Pod ServiceAccount 확인
+같은 ServiceAccount의 임시 AWS CLI Pod
+sts:GetCallerIdentity
+예상 Role 비교
+대표 허용 Read API
+비허용 API AccessDenied
+임시 Pod 삭제
 ```
 
-대표 허용 API 예시:
-
-| Workload | 안전한 대표 검증 |
-|---|---|
-| AWS Load Balancer Controller | ELBv2 Describe 계열 |
-| ExternalDNS | Route 53 List·Get 계열 |
-| EFS CSI | EFS Describe 계열 |
-| Web S3 | 승인된 Bucket·`web/` Prefix의 List 또는 Get |
-| Fluent Bit | 대상 Log Group Describe 계열 |
-| Karpenter | 정책에 포함된 Describe·Get 계열 |
-
-실제 Policy를 읽은 뒤 허용 API를 선택한다. 일반 지식으로 Action을 추측하지 않는다.
-
-## Negative Test
-
-```text
-iam:ListUsers → AccessDenied
-승인되지 않은 S3 Bucket·Prefix → AccessDenied
-```
-
-Write API는 별도 통제된 Test가 없으면 실행하지 않는다.
-
-## Node Role 노출 Test
-
-Association 없는 전용 ServiceAccount로 `sts:GetCallerIdentity`를 실행한다.
-
-판정:
+Association 없는 ServiceAccount도 STS를 실행한다.
 
 ```text
 Credential 없음 → 통과
@@ -543,141 +475,100 @@ Node Role 반환 → 격리 미충족
 다른 Role 반환 → RuntimeUnexpected
 ```
 
-Node Role이 반환되면 Node 교체·IMDS 변경을 즉시 실행하지 않고 별도 Hardening Plan을 작성한다.
-
-## 완료 Gate
-
-- 예상 Role 일치
-- 대표 허용 API 성공
-- 비허용 API 거부
-- 임시 Pod 제거 확인
-- Association 없는 Pod가 Node Role을 획득하지 않음
-
 ---
 
-# Phase 8 — Evidence와 최종 설명
+# Phase 9 — Evidence와 최종 설명
 
-## 목표
+## 근실시간 관제
 
-`구성된 결과를 듣고 보는 것`을 재현 가능한 증거로 완성한다.
+```text
+Grafana CloudWatch 연결 성공
+WAF Dashboard와 Auto Refresh
+XSS·SQLi Event
+Grafana 표시 지연
+Live Tail CLI Test
+Readable Viewer 화면
+Live Tail 표시 지연
+```
 
-## 필수 Evidence
-
-### S3·Athena
+## S3·Athena
 
 ```text
 Source별 Prefix와 최신 Object
-Athena Table Metadata
+Athena Metadata
 QueryExecutionId
-Returned Rows
-DataScannedInBytes
+Rows·DataScannedInBytes
 ```
 
-### Grafana
-
-```text
-Data Source 성공 화면
-Dashboard 전체 화면
-CloudFront Panel
-ALB Panel
-VPC REJECT Panel
-Export한 Dashboard JSON
-```
-
-### Pod Identity
+## Pod Identity
 
 ```text
 Workload Matrix
-Association ID·Role ARN
+Association·Role ARN
 Pod ServiceAccount
-STS Caller Identity
-허용 API 결과
-AccessDenied 결과
-Node Role 노출 Test
+STS Identity
+허용·거부 API 결과
+Node Role Negative Test
 ```
 
-## 결과 보고 형식
+최종 보고:
 
-| 요구사항 | Source | Runtime | Evidence | 최종 판정 |
+| 요구사항 | Source | Runtime | Evidence | 판정 |
 |---|---|---|---|---|
+| 근실시간 관제 |  |  |  |  |
 | S3 로그 분석 |  |  |  |  |
-| 시각화 |  |  |  |  |
-| Pod Identity |  |  |  |  |
 | S3 로그 분리 |  |  |  |  |
-
-`NotObserved`, `DisabledByDesign`, `Failed`, `NotRun`을 성공과 구분한다.
+| Pod Identity |  |  |  |  |
 
 ---
 
-# Phase 9 — 핵심 완료 후 선택 범위
-
-핵심 네 요구사항을 완료한 뒤에만 판단한다.
+# Phase 10 — 핵심 완료 후 선택 범위
 
 ```text
-CloudWatch Data Source
-WAF·EKS·DVWA·GuardDuty Dashboard
 GuardDuty → EventBridge → SNS
 Grafana Alert Rule
-Amazon Managed Grafana 학습
-Grafana Cloud Plugin 재검증
-별도 Athena Result Bucket과 7일 Lifecycle
-Source별 별도 S3 Bucket Migration
+자동 격리·자동 차단
+Amazon Managed Grafana
+Grafana Cloud
+별도 Athena Result Bucket
+Source별 S3 Bucket Migration
 ```
-
-이 항목은 관제 품질을 높일 수 있지만 현재 핵심 완료 조건에는 포함하지 않는다.
 
 ---
 
 # Codex Pass 계획
 
-## Pass 1 — Read-only Baseline Audit
+## Pass 1 — Live Tail Feasibility·Viewer 설계
 
 목표:
 
 ```text
-현재 Source Inventory
-실제 S3 Prefix Object 확인
-Athena Metadata와 제한 Query 확인
-Pod Identity AWS·Kubernetes Inventory
-Gap Report
+현재 Account·CLI·Log Group Class 확인
+Live Tail Permission·Runtime Smoke Test
+Terraform 필요 여부 판정
+Local Viewer 구현 방식 결정
+Source·Test·README 작성
 ```
 
-금지:
+규칙:
+
+- CLI Test 성공 시 IAM·Terraform을 수정하지 않는다.
+- AccessDenied일 때만 최소 권한 Diff와 Plan을 작성한다.
+- 사용자 승인 없이 Apply하지 않는다.
+- Raw WAF JSON을 사람이 읽을 수 있는 Event로 변환한다.
+
+## Pass 2 — Grafana Dashboard·S3·Athena Baseline
 
 ```text
-Source 수정
-terraform apply/destroy
-kubectl Mutation
-새 Resource 생성
-IAM 변경
+WAF Dashboard Export
+표시 지연 반복 측정
+S3 Prefix Object 확인
+Athena 실제 행·Schema 확인
 ```
 
-종료 보고:
+## Pass 3 — Pod Identity Runtime
 
-```text
-직접 확인한 사실
-Source에서만 확인한 사실
-Runtime 미관측
-요구사항별 Gap
-다음 Pass에서 필요한 최소 변경
-```
-
-## Pass 2 — 필요한 최소 보정 Source·Test
-
-Pass 1 결과에서 실제 결함이 확인된 항목만 수정한다.
-
-```text
-잘못된 Athena Schema·LOCATION
-누락된 Pod Identity Test Script
-누락된 Evidence 수집
-Dashboard Query
-```
-
-`terraform fmt`, `validate`, Static Test, Plan까지 수행하고 Apply하지 않는다.
-
-## Pass 3 — 사용자 승인 Runtime 적용·검증
-
-검토된 Plan만 적용하고 Phase 3~8의 Runtime Gate를 수행한다.
+검토된 Inventory와 Test Script를 이용해 사용자 승인 후 Runtime을 검증한다.
 
 ---
 
@@ -688,25 +579,51 @@ Repository: Unoh03/bank-security-lab-infra
 Base: main
 
 OBSERVABILITY-IAM-DECISIONS.md와
-OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md를 기준으로 Pass 1만 수행하라.
+OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md를 읽고 Live Tail 관련 Pass 1만 수행하라.
+
+현재 사실:
+- Local Docker Grafana의 CloudWatch Data Source 연결 성공
+- WAF Log Group: us-east-1 / aws-waf-logs-aws-topology-edge
+- Grafana Auto Refresh 5s에서 XSS·SQLi Event 자동 표시
+- 실제 전체 표시 지연은 대략 10초
+- Raw JSON보다 읽기 쉬운 즉시 Event Feed가 필요함
 
 목표:
-1. 원래 네 요구사항별 현재 Source와 Runtime 상태를 다시 Inventory한다.
-2. Foundation Security Log Bucket의 CloudFront, ALB, VPC REJECT Prefix를 Read-only로 검증한다.
-3. Athena Database·Table Metadata와 제한된 실제 Query를 검증한다.
-4. 현재 EKS Pod Identity Association·IAM Role·ServiceAccount·Pod Matrix를 만든다.
-5. SourceConfigured, RuntimeObserved, EvidenceSaved를 분리한 Gap Report를 작성한다.
+1. Account 433048100798과 terra-user Identity를 확인한다.
+2. WAF Log Group Class와 ARN을 Read-only로 확인한다.
+3. `aws logs start-live-tail` Permission·Runtime을 검증한다.
+4. 성공하면 Terraform을 수정하지 않는다.
+5. WAF Live Tail JSON을 Timestamp, Detection, COUNT/BLOCK, Final Action,
+   Country, Source IP, Method, Host, URI, Args로 표시하는 Local Viewer를 구현한다.
+6. Ctrl+C 또는 정상 종료로 Session이 닫히는지 Test한다.
+7. README와 Test 결과를 작성한다.
+
+AccessDenied일 때만:
+- 현재 Credential의 IAM 관리 경계를 찾는다.
+- logs:StartLiveTail 및 필요 시 logs:StopLiveTail 최소 권한 Diff·Plan을 작성한다.
+- Apply하지 않는다.
 
 금지:
-- Source 수정
 - terraform apply/destroy
-- kubectl apply/patch/delete
-- AWS Resource 변경
-- IAM Role·Policy 변경
-- 새 S3 Bucket·Grafana Resource 생성
-- Secret, Access Key, tfstate, tfplan, tfvars Commit
+- kubectl Mutation
+- 새 AWS Resource 생성
+- 임의 IAM 변경
+- Access Key·Secret·tfstate·tfplan·tfvars Commit
+- 원본 WAF Log의 민감 Field를 공개 Evidence에 저장
 
-Account 433048100798과 예상 Region을 먼저 검증하라.
-Object나 Pod가 없으면 NotObserved 또는 DisabledByDesign으로 기록하고 원인을 추측하지 마라.
-종료 시 다음 Pass에서 필요한 최소 변경만 제안하라.
+종료 시 다음을 구분해 보고하라:
+- 직접 확인한 Runtime 사실
+- Source 변경
+- Test 결과
+- IAM·Terraform 변경 필요 여부
+- 실제 Live Tail 표시 지연
+- 남은 제한사항
 ```
+
+---
+
+## 공식 참고
+
+- CloudWatch Logs Live Tail: https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CloudWatchLogs_LiveTail.html
+- AWS CLI `start-live-tail`: https://docs.aws.amazon.com/cli/latest/reference/logs/start-live-tail.html
+- CloudWatch Logs IAM: https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/iam-identity-based-access-control-cwl.html
