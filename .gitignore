@@ -19,3 +19,5 @@ credentials.*
 crash.log
 crash.*.log
 logs/
+
+/*-before-down-*.yaml

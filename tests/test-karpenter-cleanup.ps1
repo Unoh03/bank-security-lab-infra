@@ -234,6 +234,6 @@ foreach ($source in @($nodeClassSource, $ssmTemplateSource)) {
         }
     }
 }
-}
+
 
 Write-Host 'Karpenter cleanup self-test passed.'
