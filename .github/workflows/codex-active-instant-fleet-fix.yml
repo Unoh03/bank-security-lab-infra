@@ -20,7 +20,7 @@ jobs:
 
       - name: Apply focused patch
         shell: pwsh
-        run: .\tools\apply-active-instant-fleet-fix.ps1
+        run: .\tools\run-active-instant-fleet-fix.ps1
 
       - name: Run Fleet residue contracts
         shell: pwsh
@@ -52,6 +52,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add daily-common.ps1 tests/test-fleet-residue.ps1
-          git rm -f .github/workflows/codex-active-instant-fleet-fix.yml tools/apply-active-instant-fleet-fix.ps1
+          git rm -f .github/workflows/codex-active-instant-fleet-fix.yml tools/apply-active-instant-fleet-fix.ps1 tools/run-active-instant-fleet-fix.ps1
           git commit -m "Handle active instant EC2 Fleet residue"
           git push origin HEAD:${{ github.ref_name }}
