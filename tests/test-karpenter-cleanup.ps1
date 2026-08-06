@@ -19,22 +19,42 @@ function New-TestTag {
 
 function New-TestKarpenterInstance {
     param(
-        [string]$Discovery = 'aws-topology-primary',
-        [string]$ClusterOwnership = 'owned',
+        [AllowNull()][string]$Discovery = 'aws-topology-primary',
+        [AllowNull()][string]$ClusterOwnership = 'owned',
+        [AllowNull()][string]$OtherClusterOwnership = $null,
         [string]$Project = 'aws-topology',
-        [string]$ManagedBy = 'Karpenter'
+        [string]$ManagedBy = 'Karpenter',
+        [AllowNull()][string]$NodeClaim = 'default-test',
+        [AllowNull()][string]$NodePool = 'default'
     )
+
+    $tags = New-Object System.Collections.Generic.List[object]
+    if (-not [string]::IsNullOrWhiteSpace($Discovery)) {
+        $tags.Add((New-TestTag -Key 'karpenter.sh/discovery' -Value $Discovery))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ClusterOwnership)) {
+        $tags.Add((New-TestTag `
+            -Key 'kubernetes.io/cluster/aws-topology-primary' `
+            -Value $ClusterOwnership))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($OtherClusterOwnership)) {
+        $tags.Add((New-TestTag `
+            -Key 'kubernetes.io/cluster/another-cluster' `
+            -Value $OtherClusterOwnership))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($NodeClaim)) {
+        $tags.Add((New-TestTag -Key 'karpenter.sh/nodeclaim' -Value $NodeClaim))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($NodePool)) {
+        $tags.Add((New-TestTag -Key 'karpenter.sh/nodepool' -Value $NodePool))
+    }
+    $tags.Add((New-TestTag -Key 'Project' -Value $Project))
+    $tags.Add((New-TestTag -Key 'ManagedBy' -Value $ManagedBy))
+
     return [pscustomobject]@{
         InstanceId = 'i-0123456789abcdef0'
         State = [pscustomobject]@{ Name = 'running' }
-        Tags = @(
-            New-TestTag -Key 'karpenter.sh/discovery' -Value $Discovery
-            New-TestTag -Key 'kubernetes.io/cluster/aws-topology-primary' -Value $ClusterOwnership
-            New-TestTag -Key 'karpenter.sh/nodeclaim' -Value 'default-test'
-            New-TestTag -Key 'karpenter.sh/nodepool' -Value 'default'
-            New-TestTag -Key 'Project' -Value $Project
-            New-TestTag -Key 'ManagedBy' -Value $ManagedBy
-        )
+        Tags = $tags.ToArray()
     }
 }
 
@@ -46,6 +66,15 @@ if (-not $strictScope.IsKarpenter -or -not $strictScope.StrictOwned) {
     throw 'Exact project, cluster, and Karpenter tags were not accepted.'
 }
 
+$legacyMissingDiscovery = Test-KarpenterInstanceScope `
+    -Instance (New-TestKarpenterInstance -Discovery $null) `
+    -ProjectName 'aws-topology' `
+    -ClusterName 'aws-topology-primary'
+if (-not $legacyMissingDiscovery.IsKarpenter -or
+    -not $legacyMissingDiscovery.StrictOwned) {
+    throw 'A legacy Karpenter instance with exact cluster ownership but no discovery tag was not safely tracked.'
+}
+
 $wrongProject = Test-KarpenterInstanceScope `
     -Instance (New-TestKarpenterInstance -Project 'another-project') `
     -ProjectName 'aws-topology' `
@@ -54,12 +83,97 @@ if (-not $wrongProject.IsKarpenter -or $wrongProject.StrictOwned) {
     throw 'A Karpenter instance with the wrong Project tag was not rejected for orphan termination.'
 }
 
-$wrongCluster = Test-KarpenterInstanceScope `
+$otherCluster = Test-KarpenterInstanceScope `
+    -Instance (New-TestKarpenterInstance `
+        -Discovery 'another-cluster' `
+        -ClusterOwnership $null `
+        -OtherClusterOwnership 'owned') `
+    -ProjectName 'aws-topology' `
+    -ClusterName 'aws-topology-primary'
+if ($otherCluster.IsKarpenter -or $otherCluster.StrictOwned) {
+    throw 'An instance belonging only to another cluster entered target-cluster cleanup scope.'
+}
+
+$conflictingIdentity = Test-KarpenterInstanceScope `
     -Instance (New-TestKarpenterInstance -Discovery 'another-cluster') `
     -ProjectName 'aws-topology' `
     -ClusterName 'aws-topology-primary'
-if ($wrongCluster.IsKarpenter -or $wrongCluster.StrictOwned) {
-    throw 'An instance with the wrong cluster discovery tag entered Karpenter cleanup scope.'
+if (-not $conflictingIdentity.IsKarpenter -or
+    $conflictingIdentity.StrictOwned -or
+    -not $conflictingIdentity.IdentityConflict) {
+    throw 'Conflicting discovery and ownership tags were not retained as an unsafe cleanup candidate.'
+}
+
+$ambiguousIdentity = Test-KarpenterInstanceScope `
+    -Instance (New-TestKarpenterInstance `
+        -Discovery $null `
+        -ClusterOwnership $null) `
+    -ProjectName 'aws-topology' `
+    -ClusterName 'aws-topology-primary'
+if (-not $ambiguousIdentity.IsKarpenter -or
+    $ambiguousIdentity.StrictOwned -or
+    -not $ambiguousIdentity.Ambiguous) {
+    throw 'A project-scoped Karpenter instance with no cluster identity was not retained for fail-closed handling.'
+}
+
+$missingNodeIdentity = Test-KarpenterInstanceScope `
+    -Instance (New-TestKarpenterInstance -NodeClaim $null) `
+    -ProjectName 'aws-topology' `
+    -ClusterName 'aws-topology-primary'
+if (-not $missingNodeIdentity.IsKarpenter -or $missingNodeIdentity.StrictOwned) {
+    throw 'A target-cluster instance missing NodeClaim identity was accepted for strict orphan termination.'
+}
+
+$global:KarpenterInventoryCalls = New-Object System.Collections.Generic.List[string]
+function global:aws {
+    $arguments = @($args | ForEach-Object { [string]$_ })
+    $global:KarpenterInventoryCalls.Add(($arguments -join ' '))
+    $global:LASTEXITCODE = 0
+    return (@{
+        Reservations = @(
+            @{
+                Instances = @(
+                    @{
+                        InstanceId = 'i-0123456789abcdef0'
+                        State = @{ Name = 'running' }
+                        Tags = @(
+                            @{ Key = 'kubernetes.io/cluster/aws-topology-primary'; Value = 'owned' }
+                            @{ Key = 'karpenter.sh/nodeclaim'; Value = 'default-test' }
+                            @{ Key = 'karpenter.sh/nodepool'; Value = 'default' }
+                            @{ Key = 'Project'; Value = 'aws-topology' }
+                            @{ Key = 'ManagedBy'; Value = 'Karpenter' }
+                        )
+                    }
+                )
+            }
+        )
+    } | ConvertTo-Json -Depth 8 -Compress)
+}
+try {
+    $inventory = @(Get-KarpenterClusterInstances `
+        -AwsProfile 'test' `
+        -Region 'ap-northeast-2' `
+        -ProjectName 'aws-topology' `
+        -ClusterName 'aws-topology-primary')
+    if ($inventory.Count -ne 1 -or -not $inventory[0].StrictOwned) {
+        throw 'Broad Karpenter inventory did not retain a legacy instance with a missing discovery tag.'
+    }
+    $inventoryCall = @($global:KarpenterInventoryCalls) | Select-Object -First 1
+    foreach ($requiredFilter in @(
+        'Name=tag:Project,Values=aws-topology',
+        'Name=tag:ManagedBy,Values=Karpenter'
+    )) {
+        if ($inventoryCall -notmatch [regex]::Escape($requiredFilter)) {
+            throw "Karpenter inventory is missing its broad ownership filter: $requiredFilter"
+        }
+    }
+    if ($inventoryCall -match 'Name=tag:karpenter\.sh/discovery' -or
+        $inventoryCall -match 'Name=tag:kubernetes\.io/cluster/') {
+        throw 'Karpenter inventory still filters out partially tagged instances before scope validation.'
+    }
+} finally {
+    Remove-Item Function:\aws -Force -ErrorAction SilentlyContinue
+    Remove-Variable KarpenterInventoryCalls -Scope Global -ErrorAction SilentlyContinue
 }
 
 $commands = @(Get-KarpenterNodePoolDeleteCommands -Region 'ap-northeast-2')
@@ -98,7 +212,7 @@ $ssmTemplateSource = Get-Content -LiteralPath (
     Join-Path $root 'templates\install-cluster-addons.sh.tpl'
 ) -Raw
 foreach ($source in @($nodeClassSource, $ssmTemplateSource)) {
-    foreach ($requiredTag in @('kubernetes.io/cluster/', 'Project:', 'ManagedBy:')) {
+    foreach ($requiredTag in @('karpenter.sh/discovery:', 'kubernetes.io/cluster/', 'Project:', 'ManagedBy:')) {
         if ($source -notmatch [regex]::Escape($requiredTag)) {
             throw "Karpenter node template is missing a strict cleanup tag: $requiredTag"
         }

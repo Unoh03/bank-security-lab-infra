@@ -61,41 +61,97 @@ function Test-KarpenterInstanceScope {
 
     $tags = @($Instance.Tags)
     $discovery = Get-KarpenterTagValue -Tags $tags -Key 'karpenter.sh/discovery'
-    $clusterOwnership = Get-KarpenterTagValue `
-        -Tags $tags `
-        -Key "kubernetes.io/cluster/$ClusterName"
     $nodeClaim = Get-KarpenterTagValue -Tags $tags -Key 'karpenter.sh/nodeclaim'
     $nodePool = Get-KarpenterTagValue -Tags $tags -Key 'karpenter.sh/nodepool'
     $project = Get-KarpenterTagValue -Tags $tags -Key 'Project'
     $managedBy = Get-KarpenterTagValue -Tags $tags -Key 'ManagedBy'
 
-    $isKarpenter = (
-        $discovery -ceq $ClusterName -and
-        $clusterOwnership -ceq 'owned' -and
-        [bool]$nodeClaim -and
-        [bool]$nodePool
+    $clusterTagPrefix = 'kubernetes.io/cluster/'
+    $ownedClusters = @(
+        $tags |
+            ForEach-Object {
+                $key = [string]$_.Key
+                if ($key.StartsWith(
+                        $clusterTagPrefix,
+                        [System.StringComparison]::Ordinal
+                    ) -and [string]$_.Value -ceq 'owned') {
+                    $key.Substring($clusterTagPrefix.Length)
+                }
+            } |
+            Where-Object { $_ } |
+            Sort-Object -Unique
     )
-    $strictOwned = (
-        $isKarpenter -and
+
+    $discoveryMatches = $discovery -ceq $ClusterName
+    $ownershipMatches = $ownedClusters -ccontains $ClusterName
+    $otherOwnedClusters = @(
+        $ownedClusters | Where-Object { $_ -cne $ClusterName }
+    )
+    $discoveryPointsElsewhere = (
+        [bool]$discovery -and
+        -not $discoveryMatches
+    )
+    $hasTargetIdentity = $discoveryMatches -or $ownershipMatches
+    $hasOtherIdentity = (
+        $discoveryPointsElsewhere -or
+        $otherOwnedClusters.Count -gt 0
+    )
+    $identityConflict = $hasTargetIdentity -and $hasOtherIdentity
+    $projectManaged = (
         $project -ceq $ProjectName -and
         $managedBy -ceq 'Karpenter'
     )
-    $reason = if (-not $isKarpenter) {
-        'cluster or Karpenter identity tags do not match'
-    } elseif (-not $strictOwned) {
+    $hasNodeIdentity = [bool]$nodeClaim -and [bool]$nodePool
+
+    # Project/ManagedBy are the broad inventory boundary. A candidate with no
+    # cluster identity remains in scope as ambiguous so cleanup fails closed
+    # instead of incorrectly reporting NothingToRemove.
+    $ambiguous = (
+        -not $hasTargetIdentity -and
+        -not $hasOtherIdentity -and
+        $projectManaged
+    )
+    $isKarpenter = $hasTargetIdentity -or $ambiguous
+    $strictOwned = (
+        $isKarpenter -and
+        $ownershipMatches -and
+        -not $identityConflict -and
+        $projectManaged -and
+        $hasNodeIdentity -and
+        (-not $discovery -or $discoveryMatches)
+    )
+
+    $reason = if ($identityConflict) {
+        'conflicting Karpenter cluster identity tags'
+    } elseif (-not $isKarpenter) {
+        'Karpenter cluster identity tags point to another cluster'
+    } elseif ($ambiguous) {
+        'Project and ManagedBy match but Karpenter cluster identity tags are missing'
+    } elseif (-not $ownershipMatches) {
+        'target cluster ownership tag is missing'
+    } elseif (-not $hasNodeIdentity) {
+        'Karpenter NodeClaim or NodePool tag is missing'
+    } elseif (-not $projectManaged) {
         'Project or ManagedBy tag does not match the strict orphan-cleanup contract'
+    } elseif (-not $discovery) {
+        'strict project, cluster ownership, and Karpenter tags match; discovery tag is absent'
     } else {
         'strict project, cluster, and Karpenter tags match'
     }
 
     return [pscustomobject]@{
-        InstanceId  = [string]$Instance.InstanceId
-        State       = [string]$Instance.State.Name
-        NodeClaim   = $nodeClaim
-        NodePool    = $nodePool
-        IsKarpenter = $isKarpenter
-        StrictOwned = $strictOwned
-        Reason      = $reason
+        InstanceId      = [string]$Instance.InstanceId
+        State           = [string]$Instance.State.Name
+        Discovery       = $discovery
+        OwnedClusters   = $ownedClusters
+        NodeClaim       = $nodeClaim
+        NodePool        = $nodePool
+        HasNodeIdentity = $hasNodeIdentity
+        Ambiguous       = $ambiguous
+        IdentityConflict = $identityConflict
+        IsKarpenter     = $isKarpenter
+        StrictOwned     = $strictOwned
+        Reason          = $reason
     }
 }
 
@@ -116,8 +172,8 @@ function Get-KarpenterClusterInstances {
         '--region', $Region,
         '--filters',
         'Name=instance-state-name,Values=pending,running,stopping,stopped,shutting-down',
-        "Name=tag:karpenter.sh/discovery,Values=$ClusterName",
-        "Name=tag:kubernetes.io/cluster/$ClusterName,Values=owned",
+        "Name=tag:Project,Values=$ProjectName",
+        'Name=tag:ManagedBy,Values=Karpenter',
         '--output', 'json'
     ) -FailureMessage "Karpenter instance inventory failed for $ClusterName."
     $response = $json | ConvertFrom-Json

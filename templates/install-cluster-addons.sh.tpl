@@ -50,6 +50,8 @@ spec:
     - tags:
         karpenter.sh/discovery: "${cluster_name}"
   tags:
+    karpenter.sh/discovery: "${cluster_name}"
+    "kubernetes.io/cluster/${cluster_name}": "owned"
     Project: "${project_name}"
     ManagedBy: "Karpenter"
 ---
