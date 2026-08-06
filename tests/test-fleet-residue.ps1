@@ -62,15 +62,34 @@ function global:aws {
     if ($arguments.Count -ge 2 -and
         $arguments[0] -ceq 'ec2' -and
         $arguments[1] -ceq 'describe-fleets') {
-        $state = switch ($global:FleetResidueMockScenario) {
+                $state = switch ($global:FleetResidueMockScenario) {
             'deleted' { 'deleted' }
             'active' { 'active' }
+            'active-instant-terminated' { 'active' }
+            'active-instant-not-found' { 'active' }
+            'active-instant-running' { 'active' }
+            'active-instant-no-instance-ids-fulfilled' { 'active' }
+            'active-instant-no-instance-ids-empty' { 'active' }
             'deleted-running-not-found' { 'deleted_running' }
             default { 'deleted_terminating' }
         }
-        $instanceIds = switch ($global:FleetResidueMockScenario) {
+        $fleetType = if ($global:FleetResidueMockScenario -like 'active-instant-*') {
+            'instant'
+        } else {
+            'maintain'
+        }
+        $fulfilledCapacity = if (
+            $global:FleetResidueMockScenario -ceq 'active-instant-no-instance-ids-empty'
+        ) {
+            0
+        } else {
+            1
+        }
+                $instanceIds = switch ($global:FleetResidueMockScenario) {
             'no-instance-ids' { @() }
             'blank-instance-ids' { @('', '   ', $null) }
+            'active-instant-no-instance-ids-fulfilled' { @() }
+            'active-instant-no-instance-ids-empty' { @() }
             'mixed-notfound-running' {
                 @(
                     'i-0123456789abcdef0',
@@ -83,8 +102,10 @@ function global:aws {
         return (@{
             Fleets = @(
                 @{
-                    FleetId = 'fleet-11111111-2222-3333-4444-555555555555'
+                                        FleetId = 'fleet-11111111-2222-3333-4444-555555555555'
                     FleetState = $state
+                    Type = $fleetType
+                    FulfilledCapacity = $fulfilledCapacity
                     Instances = @(
                         @{ InstanceIds = $instanceIds }
                     )
@@ -111,6 +132,10 @@ function global:aws {
             $state = 'running'
         } else {
             switch ($global:FleetResidueMockScenario) {
+                                'active-instant-not-found' {
+                    $global:LASTEXITCODE = 255
+                    return "An error occurred (InvalidInstanceID.NotFound) when calling the DescribeInstances operation: The instance ID does not exist"
+                }
                 'not-found' {
                     $global:LASTEXITCODE = 255
                     return "An error occurred (InvalidInstanceID.NotFound) when calling the DescribeInstances operation: The instance ID does not exist"
@@ -123,7 +148,8 @@ function global:aws {
                     $global:LASTEXITCODE = 254
                     return 'An error occurred (AccessDeniedException) when calling the DescribeInstances operation'
                 }
-                'running' { $state = 'running' }
+                                'running' { $state = 'running' }
+                'active-instant-running' { $state = 'running' }
                 default { $state = 'terminated' }
             }
         }
@@ -155,11 +181,42 @@ try {
             -Arn $arn -Profile 'test' -Region 'ap-northeast-2')) `
         -Message 'A deleted Fleet must be inactive.'
 
-    $global:FleetResidueMockScenario = 'active'
+        $global:FleetResidueMockScenario = 'active'
     Assert-True `
         -Condition ([bool](Test-TaggedProjectRuntimeResourceActive `
             -Arn $arn -Profile 'test' -Region 'ap-northeast-2')) `
-        -Message 'An active Fleet must remain active.'
+        -Message 'An active non-instant Fleet must remain active.'
+
+    $global:FleetResidueMockScenario = 'active-instant-terminated'
+    Assert-False `
+        -Condition ([bool](Test-TaggedProjectRuntimeResourceActive `
+            -Arn $arn -Profile 'test' -Region 'ap-northeast-2')) `
+        -Message 'An active instant Fleet with only terminated instances must be inactive.'
+
+    $global:FleetResidueMockScenario = 'active-instant-not-found'
+    Assert-False `
+        -Condition ([bool](Test-TaggedProjectRuntimeResourceActive `
+            -Arn $arn -Profile 'test' -Region 'ap-northeast-2')) `
+        -Message 'An active instant Fleet with only NotFound instances must be inactive.'
+
+    $global:FleetResidueMockScenario = 'active-instant-running'
+    Assert-True `
+        -Condition ([bool](Test-TaggedProjectRuntimeResourceActive `
+            -Arn $arn -Profile 'test' -Region 'ap-northeast-2')) `
+        -Message 'An active instant Fleet with a running instance must remain active.'
+
+    $global:FleetResidueMockScenario = 'active-instant-no-instance-ids-fulfilled'
+    Assert-True `
+        -Condition ([bool](Test-TaggedProjectRuntimeResourceActive `
+            -Arn $arn -Profile 'test' -Region 'ap-northeast-2')) `
+        -Message 'An active instant Fleet with fulfilled capacity but no instance IDs must fail closed.'
+
+    $global:FleetResidueMockScenario = 'active-instant-no-instance-ids-empty'
+    Assert-False `
+        -Condition ([bool](Test-TaggedProjectRuntimeResourceActive `
+            -Arn $arn -Profile 'test' -Region 'ap-northeast-2')) `
+        -Message 'An empty active instant Fleet with no fulfilled capacity must be inactive.'
+
 
     $global:FleetResidueMockScenario = 'running'
     Assert-True `
@@ -202,6 +259,15 @@ try {
         -Condition ([bool](Test-TaggedProjectRuntimeResourceActive `
             -Arn $arn -Profile 'test' -Region 'ap-northeast-2')) `
         -Message 'Blank or whitespace Fleet instance IDs must be ignored.'
+
+        $unsupportedCalls = @(
+        $global:FleetResidueMockCalls | Where-Object {
+            $_ -match '(^| )ec2 describe-fleet-instances( |$)'
+        }
+    )
+    Assert-False `
+        -Condition ($unsupportedCalls.Count -gt 0) `
+        -Message 'Instant Fleet validation must not call unsupported DescribeFleetInstances.'
 
     $global:FleetResidueMockScenario = 'access-denied'
     Assert-Throws `
