@@ -13,7 +13,5 @@ spec:
     - tags:
         karpenter.sh/discovery: {{ .Values.clusterName | quote }}
   tags:
-    karpenter.sh/discovery: {{ .Values.clusterName | quote }}
-    {{ printf "kubernetes.io/cluster/%s" .Values.clusterName | quote }}: "owned"
     Project: {{ .Values.projectName | quote }}
     ManagedBy: "Karpenter"

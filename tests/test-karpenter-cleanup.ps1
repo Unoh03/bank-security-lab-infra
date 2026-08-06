@@ -212,11 +212,28 @@ $ssmTemplateSource = Get-Content -LiteralPath (
     Join-Path $root 'templates\install-cluster-addons.sh.tpl'
 ) -Raw
 foreach ($source in @($nodeClassSource, $ssmTemplateSource)) {
-    foreach ($requiredTag in @('karpenter.sh/discovery:', 'kubernetes.io/cluster/', 'Project:', 'ManagedBy:')) {
-        if ($source -notmatch [regex]::Escape($requiredTag)) {
-            throw "Karpenter node template is missing a strict cleanup tag: $requiredTag"
+    # Selector의 discovery Tag와 사용자 정의 소유권 Tag는 필요하다.
+    foreach ($requiredText in @(
+        'karpenter.sh/discovery:',
+        'Project:',
+        'ManagedBy:'
+    )) {
+        if ($source -notmatch [regex]::Escape($requiredText)) {
+            throw "Karpenter node template is missing required content: $requiredText"
         }
     }
+
+    # EC2NodeClass spec.tags에는 Karpenter restricted domain을 직접 넣으면 안 된다.
+    # 정확히 네 칸 들여쓴 줄만 검사하므로, 여덟 칸 들여쓴 Selector Tag는 허용된다.
+    foreach ($restrictedSpecTag in @(
+        '(?m)^ {4}karpenter\.sh/discovery:',
+        '(?m)^ {4}\S.*kubernetes\.io/cluster/'
+    )) {
+        if ($source -match $restrictedSpecTag) {
+            throw "EC2NodeClass spec.tags contains a restricted Karpenter tag: $restrictedSpecTag"
+        }
+    }
+}
 }
 
 Write-Host 'Karpenter cleanup self-test passed.'
