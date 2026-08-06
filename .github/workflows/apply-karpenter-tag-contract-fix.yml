@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git rm .github/workflows/apply-karpenter-tag-contract-fix.yml automation/apply-karpenter-tag-contract-fix.py automation/repair-karpenter-tag-runner.py
+          git rm -f .github/workflows/apply-karpenter-tag-contract-fix.yml automation/apply-karpenter-tag-contract-fix.py automation/repair-karpenter-tag-runner.py
           git add templates/install-cluster-addons.sh.tpl automation/Karpenter.Cleanup.psm1 tests/test-karpenter-cleanup.ps1
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
