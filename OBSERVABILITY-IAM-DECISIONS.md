@@ -25,7 +25,7 @@ EKS 각각의 POD들의 IAM 권한 설정 (pod identity)
 
 | 원문 | 현재 해석 | 주의점 |
 |---|---|---|
-| `AWS Grafana` | AWS의 S3·Athena 데이터를 Grafana에서 시각화 | 원문만으로 Amazon Managed Grafana 사용이 필수라고 단정하지 않는다. 현재 검증된 경로는 로컬 Docker Grafana다. |
+| `AWS Grafana` | AWS 로그를 분석하고 결과를 시각화하는 것이 목적 | 특정 Grafana 제품이나 AWS Managed Service 사용은 필수가 아니다. 현재 검증된 로컬 Docker Grafana를 기준으로 진행한다. |
 | `각각의 POD들의 IAM 권한` | `Cluster + Namespace + ServiceAccount → IAM Role` 단위의 EKS Pod Identity | Pod Replica마다 별도 IAM Role을 만들지 않는다. 같은 ServiceAccount를 쓰는 Pod는 같은 Workload Identity를 공유한다. |
 | `리소스별로 로그저장 S3 구분` | 현재는 Security Log Bucket 하나에서 Source별 Prefix로 구분 | 별도 Bucket이 필수라는 뜻인지, Prefix 구분으로 충분한지는 최종 평가 기준을 확인해야 한다. |
 | `결과를 듣고 보는 것` | 구성 설명, 실제 Query 결과, Grafana 화면, Pod 내부 권한 검증 Evidence | Terraform Source가 존재하는 것만으로 완료로 판정하지 않는다. |
@@ -112,8 +112,8 @@ EKS에는 `eks-pod-identity-agent` Add-on이 Source에 포함되어 있다. 실�
 | ID | 결정 | 상태 | 결론 |
 |---|---|---|---|
 | D01 | 핵심 범위 | 확정 | 처음 전달받은 네 요구사항만 우선 완료한다. 근실시간 관제와 알림은 후속 범위다. |
-| D02 | 현재 Grafana 실행 방식 | Runtime 확인 | 현재 기준 구현은 로컬 Docker Grafana다. Grafana Cloud 경로는 플러그인 설정 오류로 중단했고 기본 계획에서 제외한다. |
-| D03 | Amazon Managed Grafana | 미확정·후속 | 원문에서 필수 제품으로 확인되지 않았다. 평가자가 명시적으로 요구할 때 별도 계획을 작성한다. |
+| D02 | 현재 시각화 방식 | Runtime 확인 | 현재 기준 구현은 로컬 Docker Grafana다. 실제 시각화가 목적이므로 특정 Grafana 서비스는 필수가 아니다. |
+| D03 | Amazon Managed Grafana | 핵심 범위 제외 | 필수 제품이 아니다. 후속 학습 또는 추가 요구가 있을 때만 별도 계획을 작성한다. |
 | D04 | 필수 S3 분석 Source | 확정 | CloudFront, Primary ALB, Primary VPC REJECT 세 Source를 1차 완료 대상으로 한다. |
 | D05 | CloudTrail 분석 | 후속 | S3에는 저장되지만 현재 Athena Table과 필수 Grafana Panel 범위에서는 제외한다. |
 | D06 | 로그 저장 분리 방식 | 잠정 | 현재는 Security Log Bucket 하나와 Source별 Prefix를 사용한다. 별도 Bucket 필수 여부는 평가 기준 확인 전까지 열린 결정으로 둔다. |
@@ -145,9 +145,20 @@ Security Log Bucket
 
 평가자가 `리소스별 별도 Bucket`을 요구한다면 현재 구조는 변경이 필요하다. 평가자가 논리적 분리, Prefix, IAM Policy 범위 분리를 인정한다면 현재 구조를 유지한다.
 
-### A02 — Grafana 제품의 합격 기준
+### A02 — 시각화 방식
 
-현재 구현은 로컬 Grafana가 AWS Athena를 조회하는 방식이다. `Amazon Managed Grafana`가 필수라는 명시적 근거가 확인되면 별도 Workspace·인증·비용 계획을 작성한다. 근거가 없으면 현재 로컬 Grafana를 기준으로 완료한다.
+**해결됨.** 특정 Grafana 제품이나 Amazon Managed Grafana를 사용할 필요는 없다. S3 로그 분석 결과가 실제로 시각화되면 요구사항을 충족한다.
+
+현재 채택 경로:
+
+```text
+S3 Security Log
+→ Amazon Athena
+→ Local Docker Grafana
+→ Dashboard
+```
+
+따라서 Grafana Cloud와 Amazon Managed Grafana는 핵심 구현 경로에서 제외한다.
 
 ### A03 — DR도 필수 증명 대상인지
 
@@ -157,7 +168,7 @@ Security Log Bucket
 
 ## 6. 핵심 완료 조건
 
-### S3 로그 분석·Grafana
+### S3 로그 분석·시각화
 
 - 필수 세 Prefix에서 실제 S3 Object 확인
 - Athena Table `LOCATION`과 실제 Prefix 일치
