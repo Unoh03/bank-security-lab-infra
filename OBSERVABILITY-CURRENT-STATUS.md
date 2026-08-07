@@ -2,7 +2,7 @@
 
 > **용도:** 지금 어디까지 왔고, 바로 다음에 무엇을 해야 하는지만 확인하는 현황판  
 > **기준 시점:** 2026-08-07  
-> **현재 Focus:** S3 Source별 Prefix Runtime 검증  
+> **현재 Focus:** `vpc_reject` Athena 결과 행·파싱 확인 → Grafana Athena 조사 Dashboard  
 > **관련 결정:** [`OBSERVABILITY-IAM-DECISIONS.md`](./OBSERVABILITY-IAM-DECISIONS.md)  
 > **전체 계획:** [`OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](./OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)
 
@@ -26,27 +26,32 @@ flowchart LR
     A["WAF Event"] --> B["CloudWatch Logs"]
     B --> C["Live Tail"]
     C --> D["Local WAF Viewer\nRuntime 검증 완료"]
-    B --> E["Grafana CloudWatch\n자동 표시 성공"]
+    B --> E["Grafana CloudWatch\n자동 표시 성공·Export 전"]
 
-    F["CloudFront·ALB·VPC Logs"] --> G["Security Log S3\n현재 Focus"]
+    F["CloudFront·ALB·VPC Logs"] --> G["Security Log S3\nPrefix Runtime 완료"]
     G --> H["Athena"]
-    H --> I["Grafana Athena\n연결 성공·실제 행 미검증"]
+    H --> I["CloudFront 34행 완료"]
+    H --> J["ALB 29행 완료"]
+    H --> K["VPC Query 성공\n행·파싱 확인 전"]
+    H --> L["Grafana Athena\n조사 Dashboard 전"]
 
-    J["EKS ServiceAccount"] --> K["Pod Identity Association"]
-    K --> L["IAM Role"]
-    L --> M["Pod Runtime 권한\n미검증"]
+    M["EKS ServiceAccount"] --> N["Pod Identity Association"]
+    N --> O["IAM Role"]
+    O --> P["Pod Runtime 권한\n미검증"]
 ```
 
 ### 현재 순서
 
 ```text
-1. S3 Prefix Runtime 검증
-2. Athena 실제 행·조사 시각화
-3. Pod Identity Runtime 검증
-4. WAF 단계적 보강
+1. VPC REJECT Athena 결과 행·파싱 확인
+2. S3/Athena Grafana 조사 Dashboard 구성·Export
+3. Grafana WAF Dashboard 마감·Export
+4. Pod Identity Runtime 검증
+5. WAF 단계적 보강
+6. 최종 Evidence 통합
 ```
 
-WAF Live Viewer Workstream은 기능·종료·지연·문서화 Gate를 통과했으므로 현재 순서에서 제거한다. 새 Viewer 기능을 추가하지 않는다.
+WAF Live Viewer와 S3 Prefix Runtime 검증은 닫았다. 새 Viewer 기능이나 S3 구조 변경으로 돌아가지 않는다.
 
 ---
 
@@ -65,95 +70,41 @@ WAF Live Viewer Workstream은 기능·종료·지연·문서화 Gate를 통과�
 | URL | `https://unoh.click` |
 | Daily-up elapsed | `18.6 minutes` |
 
-현재 Runtime은 S3·Athena·Pod Identity 검증을 수행할 수 있는 상태다.
+현재 Runtime은 Athena·Grafana·Pod Identity 검증을 수행할 수 있는 상태다.
 
 > `daily-down.ps1` 실행 후에는 이 섹션을 그대로 신뢰하지 말고 Runtime 상태를 다시 확인한다.
 
 ---
 
-## 3. Repository 상태
-
-WAF Viewer Source와 Runbook:
-
-```text
-tools/waf-live-viewer/Start-WafLiveViewer.ps1
-tools/waf-live-viewer/README.md
-```
-
-최근 Viewer 관련 Remote Commit:
-
-```text
-03c1dc0bfbc0edcce4f7313df76be91518eeb217  waf-wiewer 클리어 기능 수정2
-2458db63826b47ab74f51abe1cddb013b348ae70  fix: correct WAF viewer console formatting
-b9d2c29789a9bc5d99673667f42abde62b4a16cf  docs: add WAF live viewer runbook
-```
-
-이 문서를 포함한 Remote 변경이 Local보다 앞설 수 있으므로 다음 작업 시작 전에는 동기화 상태를 먼저 확인한다.
-
-```powershell
-# Remote 참조만 갱신한다.
-git fetch origin
-
-# Local과 origin/main의 앞섬·뒤처짐 및 Working Tree를 확인한다.
-git status -sb
-```
-
-Working Tree가 깨끗하고 `behind`만 존재하면:
-
-```powershell
-git pull --ff-only
-```
-
----
-
-## 4. Workstream 상태표
+## 3. Workstream 상태표
 
 | Workstream | Source | Runtime | Evidence | 현재 판정 |
 |---|---:|---:|---:|---|
-| Local Docker Grafana | 있음 | 실행 성공 | Athena·CloudWatch 성공 화면 | **기반 완료** |
-| Grafana CloudWatch WAF | 있음 | XSS·SQLi 자동 표시 | Obsidian Screenshot | **기능 성공 / Dashboard 마감 전** |
-| CloudWatch Live Tail CLI | AWS 기능 | `print-only` 성공 | Raw Event 수신 | **Runtime 완료** |
-| AWS CLI `interactive` Live Tail | 해당 없음 | Event Loop 오류 | 오류 확인 | **사용하지 않음** |
-| Local WAF Live Viewer | Source·README 있음 | XSS·SQLi·UI·종료 검증 | Viewer Screenshot·7회 지연 | **완료** |
-| S3 Source별 Prefix | Terraform 있음 | Object 미확인 | 없음 | **현재 Focus / Runtime 미검증** |
-| S3 → Athena Data Source | 있음 | `Save & test` 성공 | 성공 화면 | **연결 성공** |
-| Athena Table 목록 | DDL 있음 | 3개 확인 | Query 결과 | **Metadata 확인** |
-| Athena 실제 로그 행 | Query Pack 있음 | 미확인 | 없음 | **미검증** |
-| EKS Pod Identity | Terraform 있음 | 전체 미확인 | 일부 과거 Evidence만 존재 | **Source 구성 / Runtime 미검증** |
+| Local Docker Grafana | 있음 | Athena·CloudWatch 연결 성공 | 성공 화면 | **기반 완료** |
+| Grafana CloudWatch WAF | 있음 | XSS·SQLi 자동 표시 | Obsidian Screenshot | **기능 성공 / Dashboard Export 전** |
+| CloudWatch Live Tail CLI | AWS 기능 | `print-only` 성공 | Raw Event 수신 | **완료** |
+| AWS CLI `interactive` Live Tail | 해당 없음 | Windows Event Loop 오류 | 오류 확인 | **사용하지 않음** |
+| Local WAF Live Viewer | Script·README 있음 | 전체 Runtime Test 통과 | Viewer Screenshot·명령 출력 | **완료** |
+| Security Log S3 Prefix | Terraform 있음 | 세 Source 최신 Object 확인 | S3 CLI 출력 | **완료** |
+| Bucket Policy Write Scope | Terraform 있음 | Runtime Policy 확인 | S3 Policy 출력 | **확인 완료 / CloudFront 범위 보정 후보** |
+| Glue Table `LOCATION` | DDL 있음 | 세 Table 모두 실제 Prefix와 일치 | Glue CLI 출력 | **완료** |
+| CloudFront Athena | Query Pack 있음 | 34행·주요 Column 정상 | Local Evidence | **완료** |
+| ALB Athena | Query Pack 있음 | 29행·주요 Column 정상 | Local Evidence | **완료** |
+| VPC REJECT Athena | Query Pack 있음 | Query Pack 완료 | Local Evidence | **행·파싱 확인 전** |
+| Grafana Athena Dashboard | 미완성 | 미검증 | 없음 | **현재 후속 작업** |
+| EKS Pod Identity | Terraform 있음 | 전체 Runtime 미확인 | 일부 과거 Evidence | **Source 구성 / Runtime 미검증** |
 | WAF 차단 보강 | 계획 있음 | 미적용 | 없음 | **계획만 존재** |
 
 ---
 
-## 5. 지금까지 직접 확인한 사실
+## 4. 완료된 Workstream
 
-### 5.1 Grafana + CloudWatch
+### 4.1 Local WAF Live Viewer
 
-```text
-통제된 XSS·SQLi Request
-→ CloudFront WAF
-→ CloudWatch Logs
-→ Local Grafana
-→ 5초 Auto Refresh로 자동 표시
-```
-
-확인값:
-
-- CloudWatch Metrics API 연결 성공
-- CloudWatch Logs API 연결 성공
-- WAF Log Group: `us-east-1 / aws-waf-logs-aws-topology-edge`
-- Raw JSON이 아닌 Field Table Query 실행 성공
-- 체감 전체 표시 지연: 약 `10초`
-
-Grafana 지연의 최소·최대·평균은 아직 별도 반복 측정하지 않았다.
-
-### 5.2 CloudWatch Live Tail + Local Viewer
-
-현재 검증된 경로:
+현재 구조:
 
 ```text
-CloudFront WAF
-→ CloudWatch Logs
-→ aws logs start-live-tail --mode print-only
+AWS CLI start-live-tail --mode print-only
 → PowerShell JSON Parser
 → 127.0.0.1 Local HTTP Server
 → http://127.0.0.1:8787
@@ -161,119 +112,181 @@ CloudFront WAF
 
 직접 확인:
 
-```text
-XSS 분류                       성공
-SQLi 분류                      성공
-일반 ALLOW 무표시              확인
-Filter                         성공
-Filter별 Clear                 성공
-Pause / Resume                 성공
-Pause 중 Event 보존            성공
-Ctrl+C 후 aws 자식 Process     미잔존
-Ctrl+C 후 TCP 8787 Listener    미잔존
-```
+- XSS·SQLi 분류
+- 일반 ALLOW 요청 무표시
+- 최신 Event 여러 건 표시
+- XSS·SQLi·BLOCK Filter
+- Filter별 Clear
+- Pause·Resume와 Pause 중 Event 보존
+- WAF Event 시각과 Local 수신 시각 기준 지연 계산
+- `Ctrl+C` 종료 후 `aws start-live-tail` 자식 Process 미잔존
+- 종료 후 TCP `8787` Listener 미잔존
+- Client IP 마스킹
+- Request ID·JA3·JA4·Cookie·전체 Header 미표시
+- Raw Event 자동 저장 안 함
+- README와 Source Commit·Push
 
-Viewer는 다음 정보만 표시한다.
-
-```text
-WAF timestamp
-Local received timestamp
-End-to-end delay
-XSS / SQLi / OTHER
-Managed Rule / Rule Group
-COUNT / BLOCK
-Final ALLOW / BLOCK
-Country
-Masked Client IP
-HTTP Method
-Host
-URI
-URL-decoded Args
-```
-
-다음 값은 기본 화면에 표시하거나 자동 저장하지 않는다.
-
-```text
-전체 Client IP
-Request ID
-JA3·JA4 Fingerprint
-Cookie
-Authorization
-전체 Header
-AWS Credential
-Raw WAF JSON
-```
-
-7회 지연 측정값:
+지연 Sample:
 
 ```text
 20, 17, 21, 20, 15, 20, 14초
+
 최소: 14초
 최대: 21초
 평균: 약 18.1초
 ```
 
-초기 `약 5초` 체감값은 단일 관측이었으며, 현재 Baseline은 반복 측정한 `14~21초 / 평균 약 18.1초`를 우선한다.
+이 값은 WAF `timestamp`부터 Local Viewer 수신 시각까지의 측정치다. Pause 시간은 포함하지 않는다.
 
-`Pause`를 5분 이상 유지한 뒤 Resume해도 Event의 지연값은 약 14초로 표시됐다. 따라서 Viewer의 지연값은 화면 표시 대기 시간이 아니라 WAF timestamp와 Local 수신 시각 차이를 계산하고 있음이 확인됐다.
+### 4.2 S3 Source별 Prefix Runtime
 
-Windows AWS CLI의 `--mode interactive`는 다음 오류로 사용하지 않는다.
-
-```text
-There is no current event loop in thread 'MainThread'.
-```
-
-Viewer는 검증된 `print-only` Mode를 사용한다.
-
-### 5.3 S3 + Athena
-
-확인된 것:
-
-- Athena Data Source: `Data source is working`
-- Catalog: `AwsDataCatalog`
-- Database: `aws_topology_security`
-- Workgroup: `primary`
-- Table 목록:
+Security Log Bucket:
 
 ```text
-cloudfront_access
-alb_primary_access
-vpc_reject
+aws-topology-security-logs-e10b7e4f152e9420159dba755d
 ```
+
+| Source | 실제 Prefix | 최신 Object 확인 |
+|---|---|---|
+| CloudFront | `AWSLogs/433048100798/CloudFront/` | `2026-08-07T02:04:13Z`, 560 bytes |
+| Primary ALB | `alb/primary/AWSLogs/433048100798/elasticloadbalancing/ap-northeast-2/` | `2026-08-07T02:00:11Z`, 396 bytes |
+| Primary VPC REJECT | `vpc-flow/AWSLogs/433048100798/vpcflowlogs/ap-northeast-2/` | `2026-08-07T02:04:17Z`, 5,138 bytes |
+
+세 Source 모두 같은 날 Daily Runtime에서 최신 `.gz` Log Object를 생성하고 있었다.
+
+Glue `LOCATION`도 각각 위 Prefix와 일치했다.
+
+Bucket Policy 확인:
+
+```text
+VendedLogWrite
+- Principal: delivery.logs.amazonaws.com
+- AWSLogs/433048100798/*
+- vpc-flow/AWSLogs/433048100798/*
+
+PrimaryAlbAccessLogWrite
+- Principal: logdelivery.elasticloadbalancing.amazonaws.com
+- alb/primary/AWSLogs/433048100798/*
+```
+
+판정:
+
+```text
+Source별 실제 저장 분리                완료
+ALB 전용 Prefix Write 범위              확인
+VPC Flow 전용 Prefix Write 범위         확인
+CloudFront 실제 Prefix                  확인
+CloudFront Policy Resource              실제 /CloudFront/ Prefix보다 넓음
+```
+
+CloudFront Policy 범위는 현재 기능 실패가 아니다. 최소 권한 정밀화 후보로 남기되, 지금 S3 구조를 즉시 재설계하지 않는다.
+
+---
+
+## 5. Athena 실제 데이터 검증
+
+### 5.1 CloudFront — 완료
+
+첫 실행은 기존 Glue Table에 `cs-protocol` Column이 없어 Query Pack의 사전검사에서 중단됐다.
+
+승인된 `-CreateSchema` 재실행으로:
+
+```text
+CREATE TABLE IF NOT EXISTS 실행
+→ 기존 S3 Object 유지
+→ 누락된 cs-protocol Column만 ALTER TABLE ADD COLUMNS
+→ CloudFront SELECT 실행
+```
+
+결과:
+
+| 항목 | 결과 |
+|---|---|
+| Experiment ID | `athena-cloudfront-trace-20260807T021410Z` |
+| Query State | `SUCCEEDED` |
+| QueryExecutionId | `f86c0bbe-5c1b-478d-ae08-e64b44dece32` |
+| Data scanned | `343,161 bytes` |
+| Returned rows | `34` |
+| 주요 Column | 정상 파싱 |
+
+확인된 Column:
+
+```text
+date
+time
+source_ip
+method
+path
+status
+edge_request_id
+protocol
+time_taken
+```
+
+`protocol` 값의 `http`·`https`는 HTTP Version이 아니라 CloudFront `cs-protocol` Scheme이다.
+
+Local Evidence:
+
+```text
+C:\Users\Unoh\Documents\aws-topology-evidence\athena-cloudfront-trace-20260807T021410Z
+```
+
+### 5.2 Primary ALB — 완료
+
+결과:
+
+| 항목 | 결과 |
+|---|---|
+| Experiment ID | `athena-alb-window-20260807T022221Z` |
+| Query State | `SUCCEEDED` |
+| Data scanned | `573,530 bytes` |
+| Returned rows | `29` |
+| RegexSerDe 주요 Column | 정상 파싱 |
+
+확인된 Column:
+
+```text
+event_time
+source_ip
+method
+route
+elb_status_code
+target_status_code
+trace_id
+```
+
+`/wp-admin/install.php → 404` 같은 행이 보였지만, CloudFront 뒤 ALB의 `source_ip`를 곧바로 외부 공격자 IP로 단정하지 않는다. 현재는 Schema·Query 동작 증거로만 사용한다.
+
+Local Evidence:
+
+```text
+C:\Users\Unoh\Documents\aws-topology-evidence\athena-alb-window-20260807T022221Z
+```
+
+### 5.3 Primary VPC REJECT — 실행 성공, 결과 확인 전
+
+실행:
+
+```text
+Experiment ID: athena-vpc-reject-20260807T022621Z
+Query Pack: completed
+```
+
+Query Pack Source상 `SUCCEEDED`가 아니면 완료 문구 전에 예외가 발생하므로 SELECT 실행은 성공한 것으로 판정한다.
 
 아직 확인하지 않은 것:
 
-- CloudFront·ALB·VPC REJECT Prefix의 실제 S3 Object
-- 각 Table의 실제 로그 행
-- Column Parsing과 NULL 상태
-- 실제 S3 Object와 Table `LOCATION` 일치
-- Query Scan량
-- 조사용 Dashboard
+- `DataScannedInBytes`
+- 반환 Data Row 수
+- `srcaddr`, `dstaddr`, `dstport`, `protocol`
+- `rejected_flows`, `rejected_packets`
+- IP 마스킹 후 Sample Row
 
-### 5.4 현재 WAF 보호 수준
-
-현재 WAF는 운영 차단 모드가 아니라 **훈련용 관찰 모드**다.
+Local Evidence:
 
 ```text
-Default Action: ALLOW
-Common Rule Set: COUNT Override
-SQLi Rule Set: COUNT Override
-Logging Filter: COUNT·BLOCK만 KEEP
-Authorization·Cookie: REDACTED
+C:\Users\Unoh\Documents\aws-topology-evidence\athena-vpc-reject-20260807T022621Z
 ```
-
-따라서:
-
-```text
-XSS 탐지
-→ Managed Rule Match
-→ COUNT
-→ 최종 ALLOW
-```
-
-는 탐지 실패가 아니다. 잡고도 실습을 위해 통과시킨 상태다.
-
-실제 BLOCK 전환은 현재 작업이 아니라 마지막 보강 단계다.
 
 ---
 
@@ -281,80 +294,86 @@ XSS 탐지
 
 | 지시 | 현재 상태 | 완료에 필요한 것 |
 |---|---|---|
-| S3 로그 분석·시각화 | Athena 연결·Table 목록 확인 | 실제 행 검증, 조사 Panel, Dashboard Export |
+| S3 로그 분석·시각화 | CloudFront·ALB 실제 행 완료, VPC Query 성공 | VPC 행 확인, Grafana Athena Panel·Dashboard Export |
 | EKS 각 Workload의 Pod Identity | 여러 Role·Association Source 존재 | 실제 Pod STS Role, 허용·거부 API, Node Role Negative Test |
-| 리소스별 S3 로그 저장 구분 | Bucket + Source별 Prefix Source 존재 | 각 Prefix의 실제 Object와 Policy·LOCATION 일치 Evidence |
-| 구성 결과를 설명하고 보기 | WAF Grafana·Live Tail·Viewer 성공 | S3·Pod Identity까지 최종 Evidence와 시연 흐름 통합 |
+| 리소스별 S3 로그 저장 구분 | 세 Prefix·최신 Object·Glue LOCATION 확인 | **핵심 완료**. CloudFront Policy 정밀화는 별도 후보 |
+| 구성 결과를 설명하고 보기 | WAF Viewer 완료, S3·Athena Runtime 일부 완료 | Athena Grafana 시각화, Pod Identity Evidence, 최종 시연 흐름 |
 
 전체 판정:
 
 ```text
-완성 가능한 기반: 있음
-근실시간 WAF 관제: Viewer Runtime 완료
-S3 분석: 연결 성공·내용 미검증
-Pod Identity: Source 구성·Runtime 미검증
-4줄 전체 완료: 아직 아님
+근실시간 WAF 관제               완료
+리소스별 S3 저장 구분            완료
+Athena 실제 분석                 3개 중 2개 완료, VPC 결과 확인 전
+Grafana S3/Athena 시각화         미완료
+Pod Identity Runtime             미검증
+4줄 전체 완료                    아직 아님
 ```
 
 ---
 
 ## 7. 바로 다음 한 가지
 
-### S3 Source별 Prefix Runtime 검증
-
-목표는 새 Resource를 만드는 것이 아니라 **현재 Terraform이 지정한 위치에 실제 로그 Object가 저장되고 있는지 확인하는 것**이다.
-
-대상:
-
-```text
-CloudFront
-→ AWSLogs/433048100798/CloudFront/
-
-Primary ALB
-→ alb/primary/AWSLogs/433048100798/elasticloadbalancing/ap-northeast-2/
-
-Primary VPC REJECT
-→ vpc-flow/AWSLogs/433048100798/vpcflowlogs/ap-northeast-2/
-```
-
-첫 단계:
+### VPC REJECT Athena 결과 행·파싱 확인
 
 ```powershell
-# Foundation State에서 실제 Security Log Bucket 이름을 읽는다.
-$bucket = terraform -chdir=foundation output -raw security_log_bucket_name
-$bucket
+$root = 'C:\Users\Unoh\Documents\aws-topology-evidence\athena-vpc-reject-20260807T022621Z'
+
+$summary = Get-Content `
+  "$root\results\athena\athena-run-summary.json" `
+  -Raw | ConvertFrom-Json
+
+$summary.Executions |
+  Select-Object Label, State, DataScannedInBytes, EngineExecutionTimeInMillis, QueryExecutionId |
+  Format-Table -AutoSize
+
+$result = Get-Content `
+  "$root\results\athena\vpc-reject-results.json" `
+  -Raw | ConvertFrom-Json
+
+"Returned data rows: $(@($result.ResultSet.Rows).Count - 1)"
 ```
 
-그다음 각 Prefix에서 실제 Object 존재 여부와 최신 Object 시각을 Read-only로 확인한다.
-
-판정:
+그다음 Sample Row에서 Source·Destination IP를 마스킹한 뒤 다음 Column이 실제 값인지 확인한다.
 
 ```text
-Object 존재 + 예상 Prefix 일치
-→ RuntimeObserved
-
-Object 없음
-→ NotObserved
-→ 즉시 Terraform을 수정하지 않고 해당 로그의 생성 조건부터 확인
+srcaddr
+dstaddr
+dstport
+protocol
+rejected_flows
+rejected_packets
 ```
 
-이 단계에서는 Athena Schema 수정, Pod Identity 수정, WAF BLOCK 전환을 하지 않는다.
+이 Gate를 통과하면 세 Athena Table의 실제 행 검증을 닫고 Grafana Athena Dashboard로 이동한다.
 
 ---
 
-## 8. 그다음 순서
+## 8. 이후 순서
 
-### Step 2 — Athena 실제 로그 분석
+### Step 2 — Grafana Athena 조사 Dashboard
 
 ```text
-실제 행
-Schema·NULL 상태
-제한 시간 Query
-DataScannedInBytes
-조사용 Dashboard
+CloudFront 최근 요청·Status·Top Path
+ALB Route·Status·Trace
+VPC REJECT Top Source·Destination Port
+Time Range 제한
+Dashboard JSON Export
+Screenshot
 ```
 
-### Step 3 — Pod Identity Runtime
+Athena는 실시간 관제 경로가 아니다. 자동 갱신 주기를 짧게 두지 않고 필요할 때 조사·시연한다.
+
+### Step 3 — Grafana WAF Dashboard 마감
+
+```text
+최근 WAF 탐지 Event Table
+최근 COUNT·BLOCK 수
+XSS·SQLi 구분
+Dashboard JSON Export
+```
+
+### Step 4 — Pod Identity Runtime
 
 ```text
 Workload
@@ -364,9 +383,10 @@ Workload
 → sts:GetCallerIdentity
 → 허용 API
 → 비허용 API AccessDenied
+→ Node Role Negative Test
 ```
 
-### Step 4 — WAF 단계적 보강
+### Step 5 — WAF 단계적 보강
 
 ```text
 COUNT 기준선
@@ -379,12 +399,21 @@ COUNT 기준선
 → 문제 시 COUNT Rollback
 ```
 
+### Step 6 — 최종 Evidence 통합
+
+```text
+WAF Viewer·Grafana
+S3 Prefix·Policy·LOCATION
+Athena Query Summary·Rows·Scan량
+Pod Identity Matrix·허용·거부
+최종 시연 순서
+```
+
 ---
 
 ## 9. 지금 하지 않을 것
 
 ```text
-Viewer UI 추가 확장
 WAF 전체 BLOCK 전환
 새 Managed Rule Group 즉시 추가
 Grafana Cloud 재시도
@@ -393,27 +422,13 @@ EventBridge·SNS Alert
 자동 격리·자동 차단
 Source별 S3 Bucket 재설계
 Pod Identity 즉석 수정
-추가 계획 문서 생성
+Viewer 기능 추가
+VPC 결과 확인 전 Dashboard 추정 작성
 ```
 
-현재 Focus가 끝난 뒤 필요성을 다시 평가한다.
-
 ---
 
-## 10. 종료했거나 보류한 길
-
-| 경로 | 상태 | 이유 |
-|---|---|---|
-| Local WAF Live Viewer 구현·기능 검증 | **완료** | XSS·SQLi·UI·종료·지연 Gate 통과 |
-| Grafana Cloud Athena Plugin | 보류 | Data Source 생성 단계의 Plugin 오류 |
-| Amazon Managed Grafana | 핵심 범위 제외 | 특정 Grafana 제품이 필수 아님 |
-| AWS CLI Live Tail `interactive` | 사용 중단 | Windows Event Loop 오류 |
-| S3/Athena를 실시간 관제 화면으로 사용 | 역할 변경 | 전달 지연이 있어 사후 분석 계층에 적합 |
-| WAF 즉시 전면 BLOCK | 보류 | 훈련 환경과 정상 기능을 깨뜨릴 위험 |
-
----
-
-## 11. Evidence 위치
+## 10. Evidence 위치
 
 ### Repository
 
@@ -427,6 +442,14 @@ observability/queries/athena/
 observability/Invoke-AthenaQueryPack.ps1
 ```
 
+### Local Athena Evidence
+
+```text
+C:\Users\Unoh\Documents\aws-topology-evidence\athena-cloudfront-trace-20260807T021410Z
+C:\Users\Unoh\Documents\aws-topology-evidence\athena-alb-window-20260807T022221Z
+C:\Users\Unoh\Documents\aws-topology-evidence\athena-vpc-reject-20260807T022621Z
+```
+
 ### Obsidian
 
 ```text
@@ -434,7 +457,7 @@ observability/Invoke-AthenaQueryPack.ps1
 10_학습 노트/클라우드/Grafana 로컬 Docker에서 CloudWatch WAF 근실시간 관제.md
 ```
 
-공개 Repository와 Screenshot에는 Raw WAF Event의 다음 값을 그대로 남기지 않는다.
+공개 Repository와 Screenshot에는 다음 값을 그대로 남기지 않는다.
 
 ```text
 전체 Client IP
@@ -448,7 +471,7 @@ AWS Credential
 
 ---
 
-## 12. 이 문서 갱신 규칙
+## 11. 갱신 규칙
 
 Checkpoint 하나가 끝났을 때만 이 파일을 갱신한다.
 
