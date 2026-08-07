@@ -1055,17 +1055,16 @@ try {
                 }
 
                 Write-Host (
-                    '[{0}] {1,-5} {2}→{3} ' +
-                    '{4} {5}{6} ({7:N3}s)' -f
-                    $event.timestamp,
-                    $event.type,
-                    $event.evaluation,
-                    $event.finalAction,
-                    $event.method,
-                    $event.host,
-                    $event.uri,
-                    $event.delaySeconds
-                )
+                '[{0}] {1,-5} {2}→{3} {4} {5}{6} ({7:N3}s)' -f
+                $event.timestamp,
+                $event.type,
+                $event.evaluation,
+                $event.finalAction,
+                $event.method,
+                $event.host,
+                $event.uri,
+                $event.delaySeconds
+            )
             }
             catch {
                 Write-Warning (
