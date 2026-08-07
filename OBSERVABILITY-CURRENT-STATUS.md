@@ -2,7 +2,7 @@
 
 > **용도:** 지금 어디까지 왔고, 바로 다음에 무엇을 해야 하는지만 확인하는 현황판  
 > **기준 시점:** 2026-08-07  
-> **현재 Focus:** WAF Live Tail Viewer 마감 검증  
+> **현재 Focus:** S3 Source별 Prefix Runtime 검증  
 > **관련 결정:** [`OBSERVABILITY-IAM-DECISIONS.md`](./OBSERVABILITY-IAM-DECISIONS.md)  
 > **전체 계획:** [`OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](./OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)
 
@@ -25,10 +25,10 @@
 flowchart LR
     A["WAF Event"] --> B["CloudWatch Logs"]
     B --> C["Live Tail"]
-    C --> D["Local WAF Viewer\nRuntime 성공·마감 검증 중"]
+    C --> D["Local WAF Viewer\nRuntime 검증 완료"]
     B --> E["Grafana CloudWatch\n자동 표시 성공"]
 
-    F["CloudFront·ALB·VPC Logs"] --> G["Security Log S3"]
+    F["CloudFront·ALB·VPC Logs"] --> G["Security Log S3\n현재 Focus"]
     G --> H["Athena"]
     H --> I["Grafana Athena\n연결 성공·실제 행 미검증"]
 
@@ -40,14 +40,13 @@ flowchart LR
 ### 현재 순서
 
 ```text
-1. WAF Viewer 마감
-2. S3 Prefix Runtime 검증
-3. Athena 실제 행·조사 시각화
-4. Pod Identity Runtime 검증
-5. WAF 단계적 보강
+1. S3 Prefix Runtime 검증
+2. Athena 실제 행·조사 시각화
+3. Pod Identity Runtime 검증
+4. WAF 단계적 보강
 ```
 
-순서를 바꾸지 않는다. 가장 가까운 길부터 닫는다.
+WAF Live Viewer Workstream은 기능·종료·지연·문서화 Gate를 통과했으므로 현재 순서에서 제거한다. 새 Viewer 기능을 추가하지 않는다.
 
 ---
 
@@ -66,7 +65,7 @@ flowchart LR
 | URL | `https://unoh.click` |
 | Daily-up elapsed | `18.6 minutes` |
 
-현재 Runtime은 WAF·Live Tail·S3·Athena·Pod Identity 검증을 수행할 수 있는 상태다.
+현재 Runtime은 S3·Athena·Pod Identity 검증을 수행할 수 있는 상태다.
 
 > `daily-down.ps1` 실행 후에는 이 섹션을 그대로 신뢰하지 말고 Runtime 상태를 다시 확인한다.
 
@@ -74,41 +73,35 @@ flowchart LR
 
 ## 3. Repository 상태
 
-최근 로컬 확인 결과:
-
-```text
-Branch: main
-Local main = origin/main
-Ahead: 0
-Behind: 0
-Working Tree: clean
-```
-
-WAF Viewer Source:
+WAF Viewer Source와 Runbook:
 
 ```text
 tools/waf-live-viewer/Start-WafLiveViewer.ps1
+tools/waf-live-viewer/README.md
 ```
 
-현재 파일은 Git 추적 대상이며 Remote `main`에도 존재한다.
-
-관련 Viewer Commit:
+최근 Viewer 관련 Remote Commit:
 
 ```text
-ab76388fb01cbc13aacc20c5b15418694d2e17bf
+03c1dc0bfbc0edcce4f7313df76be91518eeb217  waf-wiewer 클리어 기능 수정2
+2458db63826b47ab74f51abe1cddb013b348ae70  fix: correct WAF viewer console formatting
+b9d2c29789a9bc5d99673667f42abde62b4a16cf  docs: add WAF live viewer runbook
 ```
 
-현재 Repository HEAD는 Viewer Commit 이후의 다른 운영 보정 Commit까지 포함할 수 있으므로, 작업 시작 전에는 항상 다음으로 동기화 상태만 확인한다.
+이 문서를 포함한 Remote 변경이 Local보다 앞설 수 있으므로 다음 작업 시작 전에는 동기화 상태를 먼저 확인한다.
 
 ```powershell
-# Local과 origin/main의 앞섬·뒤처짐 및 Working Tree를 확인한다.
-git status -sb
-
-# Remote 참조만 갱신하고 Working Tree는 변경하지 않는다.
+# Remote 참조만 갱신한다.
 git fetch origin
 
-# Fetch 이후 상태를 다시 확인한다.
+# Local과 origin/main의 앞섬·뒤처짐 및 Working Tree를 확인한다.
 git status -sb
+```
+
+Working Tree가 깨끗하고 `behind`만 존재하면:
+
+```powershell
+git pull --ff-only
 ```
 
 ---
@@ -119,13 +112,13 @@ git status -sb
 |---|---:|---:|---:|---|
 | Local Docker Grafana | 있음 | 실행 성공 | Athena·CloudWatch 성공 화면 | **기반 완료** |
 | Grafana CloudWatch WAF | 있음 | XSS·SQLi 자동 표시 | Obsidian Screenshot | **기능 성공 / Dashboard 마감 전** |
-| CloudWatch Live Tail CLI | AWS 기능 | `print-only` 성공 | Raw Event 수신 | **Runtime 성공** |
+| CloudWatch Live Tail CLI | AWS 기능 | `print-only` 성공 | Raw Event 수신 | **Runtime 완료** |
 | AWS CLI `interactive` Live Tail | 해당 없음 | Event Loop 오류 | 오류 확인 | **사용하지 않음** |
-| Local WAF Live Viewer | Commit 완료 | XSS Card 표시 성공 | Viewer Screenshot | **기능 성공 / 검증 마감 전** |
+| Local WAF Live Viewer | Source·README 있음 | XSS·SQLi·UI·종료 검증 | Viewer Screenshot·7회 지연 | **완료** |
+| S3 Source별 Prefix | Terraform 있음 | Object 미확인 | 없음 | **현재 Focus / Runtime 미검증** |
 | S3 → Athena Data Source | 있음 | `Save & test` 성공 | 성공 화면 | **연결 성공** |
 | Athena Table 목록 | DDL 있음 | 3개 확인 | Query 결과 | **Metadata 확인** |
 | Athena 실제 로그 행 | Query Pack 있음 | 미확인 | 없음 | **미검증** |
-| S3 Source별 Prefix | Terraform 있음 | Object 미확인 | 없음 | **Source 구성 / Runtime 미검증** |
 | EKS Pod Identity | Terraform 있음 | 전체 미확인 | 일부 과거 Evidence만 존재 | **Source 구성 / Runtime 미검증** |
 | WAF 차단 보강 | 계획 있음 | 미적용 | 없음 | **계획만 존재** |
 
@@ -151,66 +144,88 @@ git status -sb
 - Raw JSON이 아닌 Field Table Query 실행 성공
 - 체감 전체 표시 지연: 약 `10초`
 
-정확한 최소·최대·평균 지연은 아직 측정하지 않았다.
+Grafana 지연의 최소·최대·평균은 아직 별도 반복 측정하지 않았다.
 
-### 5.2 CloudWatch Live Tail
+### 5.2 CloudWatch Live Tail + Local Viewer
 
-성공한 경로:
-
-```powershell
-aws logs start-live-tail `
-  --profile terra-user `
-  --region us-east-1 `
-  --log-group-identifiers "arn:aws:logs:us-east-1:433048100798:log-group:aws-waf-logs-aws-topology-edge" `
-  --mode print-only
-```
-
-확인값:
-
-- `terra-user`의 Live Tail 권한 정상
-- Terraform·IAM 변경 불필요
-- XSS WAF Event 스트리밍 수신
-- 체감 지연: 약 `5초`
-- 종료: `Ctrl+C`
-
-`--mode interactive`는 Windows AWS CLI에서 다음 오류가 발생했으므로 현재 경로에서 제외한다.
+현재 검증된 경로:
 
 ```text
-There is no current event loop in thread 'MainThread'.
-```
-
-### 5.3 Local WAF Live Viewer
-
-현재 구조:
-
-```text
-AWS CLI start-live-tail --mode print-only
+CloudFront WAF
+→ CloudWatch Logs
+→ aws logs start-live-tail --mode print-only
 → PowerShell JSON Parser
 → 127.0.0.1 Local HTTP Server
 → http://127.0.0.1:8787
 ```
 
-확인된 기능:
+직접 확인:
 
-- XSS Event Card 표시
-- WAF 시각·수신 시각·지연 표시
-- `COUNT → ALLOW` 구분
-- Country·Method·Host·URI·Query 표시
-- Client IP 마스킹
-- Request ID·JA3·JA4·전체 Header·Cookie 미표시
-- Raw Event 자동 저장 안 함
-- localhost 전용 Bind
+```text
+XSS 분류                       성공
+SQLi 분류                      성공
+일반 ALLOW 무표시              확인
+Filter                         성공
+Filter별 Clear                 성공
+Pause / Resume                 성공
+Pause 중 Event 보존            성공
+Ctrl+C 후 aws 자식 Process     미잔존
+Ctrl+C 후 TCP 8787 Listener    미잔존
+```
 
-아직 완료로 판정하지 않는 항목:
+Viewer는 다음 정보만 표시한다.
 
-- SQLi Card 분류
-- 여러 Event 동시 표시
-- Pause·Clear·Filter 동작
-- `Ctrl+C` 후 Live Tail `aws` 자식 Process 정리
-- 지연 5회 이상 측정
-- README 존재 및 재현 절차
+```text
+WAF timestamp
+Local received timestamp
+End-to-end delay
+XSS / SQLi / OTHER
+Managed Rule / Rule Group
+COUNT / BLOCK
+Final ALLOW / BLOCK
+Country
+Masked Client IP
+HTTP Method
+Host
+URI
+URL-decoded Args
+```
 
-### 5.4 S3 + Athena
+다음 값은 기본 화면에 표시하거나 자동 저장하지 않는다.
+
+```text
+전체 Client IP
+Request ID
+JA3·JA4 Fingerprint
+Cookie
+Authorization
+전체 Header
+AWS Credential
+Raw WAF JSON
+```
+
+7회 지연 측정값:
+
+```text
+20, 17, 21, 20, 15, 20, 14초
+최소: 14초
+최대: 21초
+평균: 약 18.1초
+```
+
+초기 `약 5초` 체감값은 단일 관측이었으며, 현재 Baseline은 반복 측정한 `14~21초 / 평균 약 18.1초`를 우선한다.
+
+`Pause`를 5분 이상 유지한 뒤 Resume해도 Event의 지연값은 약 14초로 표시됐다. 따라서 Viewer의 지연값은 화면 표시 대기 시간이 아니라 WAF timestamp와 Local 수신 시각 차이를 계산하고 있음이 확인됐다.
+
+Windows AWS CLI의 `--mode interactive`는 다음 오류로 사용하지 않는다.
+
+```text
+There is no current event loop in thread 'MainThread'.
+```
+
+Viewer는 검증된 `print-only` Mode를 사용한다.
+
+### 5.3 S3 + Athena
 
 확인된 것:
 
@@ -228,13 +243,14 @@ vpc_reject
 
 아직 확인하지 않은 것:
 
+- CloudFront·ALB·VPC REJECT Prefix의 실제 S3 Object
 - 각 Table의 실제 로그 행
 - Column Parsing과 NULL 상태
 - 실제 S3 Object와 Table `LOCATION` 일치
 - Query Scan량
 - 조사용 Dashboard
 
-### 5.5 현재 WAF 보호 수준
+### 5.4 현재 WAF 보호 수준
 
 현재 WAF는 운영 차단 모드가 아니라 **훈련용 관찰 모드**다.
 
@@ -268,13 +284,13 @@ XSS 탐지
 | S3 로그 분석·시각화 | Athena 연결·Table 목록 확인 | 실제 행 검증, 조사 Panel, Dashboard Export |
 | EKS 각 Workload의 Pod Identity | 여러 Role·Association Source 존재 | 실제 Pod STS Role, 허용·거부 API, Node Role Negative Test |
 | 리소스별 S3 로그 저장 구분 | Bucket + Source별 Prefix Source 존재 | 각 Prefix의 실제 Object와 Policy·LOCATION 일치 Evidence |
-| 구성 결과를 설명하고 보기 | WAF Grafana·Live Tail·Viewer 일부 성공 | S3·Pod Identity까지 최종 Evidence와 시연 흐름 통합 |
+| 구성 결과를 설명하고 보기 | WAF Grafana·Live Tail·Viewer 성공 | S3·Pod Identity까지 최종 Evidence와 시연 흐름 통합 |
 
 전체 판정:
 
 ```text
 완성 가능한 기반: 있음
-근실시간 WAF 관제: 기능 성공
+근실시간 WAF 관제: Viewer Runtime 완료
 S3 분석: 연결 성공·내용 미검증
 Pod Identity: Source 구성·Runtime 미검증
 4줄 전체 완료: 아직 아님
@@ -284,63 +300,51 @@ Pod Identity: Source 구성·Runtime 미검증
 
 ## 7. 바로 다음 한 가지
 
-### WAF Viewer 마감 검증
+### S3 Source별 Prefix Runtime 검증
 
-Viewer 실행:
+목표는 새 Resource를 만드는 것이 아니라 **현재 Terraform이 지정한 위치에 실제 로그 Object가 저장되고 있는지 확인하는 것**이다.
 
-```powershell
-# Repository Root에서 PowerShell 7로 Viewer를 실행한다.
-pwsh -File .\tools\waf-live-viewer\Start-WafLiveViewer.ps1
-```
-
-검증 순서:
-
-1. XSS Event가 `XSS`로 표시되는지 재확인
-2. SQLi Event가 `SQLi`로 표시되는지 확인
-3. 일반 요청이 Logging Filter 때문에 나타나지 않는지 확인
-4. Event 여러 건이 최신순으로 표시되는지 확인
-5. `XSS`, `SQLi`, `BLOCK` Filter 확인
-6. Pause·Resume·Clear 확인
-7. 지연을 최소 5회 기록
-8. `Ctrl+C`로 종료
-9. Live Tail 자식 Process가 남지 않았는지 확인
-10. README가 없으면 작성
-
-종료 후 Process 확인:
-
-```powershell
-# start-live-tail 자식 Process가 남았는지만 확인한다.
-Get-CimInstance Win32_Process |
-  Where-Object {
-    $_.Name -eq 'aws.exe' -and
-    $_.CommandLine -match 'start-live-tail'
-  } |
-  Select-Object ProcessId, CommandLine
-```
-
-예상 결과:
+대상:
 
 ```text
-출력 없음
+CloudFront
+→ AWSLogs/433048100798/CloudFront/
+
+Primary ALB
+→ alb/primary/AWSLogs/433048100798/elasticloadbalancing/ap-northeast-2/
+
+Primary VPC REJECT
+→ vpc-flow/AWSLogs/433048100798/vpcflowlogs/ap-northeast-2/
 ```
 
-이 Gate가 끝날 때까지 S3, Pod Identity, WAF BLOCK 작업으로 넘어가지 않는다.
+첫 단계:
+
+```powershell
+# Foundation State에서 실제 Security Log Bucket 이름을 읽는다.
+$bucket = terraform -chdir=foundation output -raw security_log_bucket_name
+$bucket
+```
+
+그다음 각 Prefix에서 실제 Object 존재 여부와 최신 Object 시각을 Read-only로 확인한다.
+
+판정:
+
+```text
+Object 존재 + 예상 Prefix 일치
+→ RuntimeObserved
+
+Object 없음
+→ NotObserved
+→ 즉시 Terraform을 수정하지 않고 해당 로그의 생성 조건부터 확인
+```
+
+이 단계에서는 Athena Schema 수정, Pod Identity 수정, WAF BLOCK 전환을 하지 않는다.
 
 ---
 
 ## 8. 그다음 순서
 
-### Step 2 — S3 Prefix Runtime 검증
-
-```text
-CloudFront Prefix Object
-ALB Prefix Object
-VPC REJECT Prefix Object
-Bucket Policy Write 범위
-Athena LOCATION
-```
-
-### Step 3 — Athena 실제 로그 분석
+### Step 2 — Athena 실제 로그 분석
 
 ```text
 실제 행
@@ -350,7 +354,7 @@ DataScannedInBytes
 조사용 Dashboard
 ```
 
-### Step 4 — Pod Identity Runtime
+### Step 3 — Pod Identity Runtime
 
 ```text
 Workload
@@ -362,7 +366,7 @@ Workload
 → 비허용 API AccessDenied
 ```
 
-### Step 5 — WAF 단계적 보강
+### Step 4 — WAF 단계적 보강
 
 ```text
 COUNT 기준선
@@ -380,6 +384,7 @@ COUNT 기준선
 ## 9. 지금 하지 않을 것
 
 ```text
+Viewer UI 추가 확장
 WAF 전체 BLOCK 전환
 새 Managed Rule Group 즉시 추가
 Grafana Cloud 재시도
@@ -389,10 +394,9 @@ EventBridge·SNS Alert
 Source별 S3 Bucket 재설계
 Pod Identity 즉석 수정
 추가 계획 문서 생성
-Viewer UI 장식 확장
 ```
 
-이 항목은 현재 Focus를 완료한 뒤 필요성을 다시 평가한다.
+현재 Focus가 끝난 뒤 필요성을 다시 평가한다.
 
 ---
 
@@ -400,6 +404,7 @@ Viewer UI 장식 확장
 
 | 경로 | 상태 | 이유 |
 |---|---|---|
+| Local WAF Live Viewer 구현·기능 검증 | **완료** | XSS·SQLi·UI·종료·지연 Gate 통과 |
 | Grafana Cloud Athena Plugin | 보류 | Data Source 생성 단계의 Plugin 오류 |
 | Amazon Managed Grafana | 핵심 범위 제외 | 특정 Grafana 제품이 필수 아님 |
 | AWS CLI Live Tail `interactive` | 사용 중단 | Windows Event Loop 오류 |
@@ -415,7 +420,9 @@ Viewer UI 장식 확장
 ```text
 OBSERVABILITY-IAM-DECISIONS.md
 OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md
+OBSERVABILITY-CURRENT-STATUS.md
 tools/waf-live-viewer/Start-WafLiveViewer.ps1
+tools/waf-live-viewer/README.md
 observability/queries/athena/
 observability/Invoke-AthenaQueryPack.ps1
 ```
