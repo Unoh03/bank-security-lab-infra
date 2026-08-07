@@ -1,0 +1,640 @@
+{
+  "annotations": [
+    {
+      "kind": "AnnotationQuery",
+      "spec": {
+        "builtIn": true,
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "query": {
+          "datasource": {
+            "name": "-- Grafana --"
+          },
+          "group": "grafana",
+          "kind": "DataQuery",
+          "spec": {},
+          "version": "v0"
+        }
+      }
+    }
+  ],
+  "cursorSync": "Off",
+  "editable": true,
+  "elements": {
+    "panel-1": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "efubxj2vag7i8b"
+                    },
+                    "group": "grafana-athena-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "connectionArgs": {
+                        "catalog": "__default",
+                        "database": "__default",
+                        "region": "__default",
+                        "resultReuseEnabled": false,
+                        "resultReuseMaxAgeInMinutes": 60
+                      },
+                      "format": 1,
+                      "rawSQL": "SELECT\r\n    CAST(dstport AS varchar) AS destination_port,\r\n    COUNT(*) AS rejected_flows\r\nFROM aws_topology_security.vpc_reject\r\nWHERE action = 'REJECT'\r\n  AND $__unixEpochFilter(start)\r\nGROUP BY dstport\r\nORDER BY rejected_flows DESC\r\nLIMIT 10;"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 1,
+        "links": [],
+        "title": "VPC REJECT - Top Destination Ports",
+        "vizConfig": {
+          "group": "barchart",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": true,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "fillOpacity": 80,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "lineWidth": 1,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "barRadius": 0,
+              "barWidth": 0.97,
+              "fullHighlight": false,
+              "groupWidth": 0.7,
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "overflow": "ellipsis",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "orientation": "horizontal",
+              "showValue": "always",
+              "stacking": "normal",
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              },
+              "xTickLabelRotation": 0,
+              "xTickLabelSpacing": 0
+            }
+          },
+          "version": "13.1.2"
+        }
+      }
+    },
+    "panel-2": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "efubxj2vag7i8b"
+                    },
+                    "group": "grafana-athena-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "connectionArgs": {
+                        "catalog": "__default",
+                        "database": "__default",
+                        "region": "__default",
+                        "resultReuseEnabled": false,
+                        "resultReuseMaxAgeInMinutes": 60
+                      },
+                      "format": 1,
+                      "rawSQL": "SELECT\r\n    \"cs-uri-stem\" AS path,\r\n    COUNT(*) AS requests\r\nFROM aws_topology_security.cloudfront_access\r\nWHERE \"cs-uri-stem\" IS NOT NULL\r\n  AND concat(date, ' ', time)\r\n      BETWEEN $__rawTimeFrom('yyyy-MM-dd HH:mm:ss')\r\n          AND $__rawTimeTo('yyyy-MM-dd HH:mm:ss')\r\nGROUP BY \"cs-uri-stem\"\r\nORDER BY requests DESC\r\nLIMIT 10;"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 2,
+        "links": [],
+        "title": "CloudFront - Top Requested Paths",
+        "vizConfig": {
+          "group": "piechart",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "fixedColor": "#73BF69",
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "displayLabels": [
+                "percent"
+              ],
+              "legend": {
+                "displayMode": "list",
+                "overflow": "ellipsis",
+                "placement": "right",
+                "showLegend": true
+              },
+              "pieType": "pie",
+              "reduceOptions": {
+                "calcs": [],
+                "fields": "",
+                "values": true
+              },
+              "sort": "desc",
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              }
+            }
+          },
+          "version": "13.1.2"
+        }
+      }
+    },
+    "panel-3": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "efubxj2vag7i8b"
+                    },
+                    "group": "grafana-athena-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "connectionArgs": {
+                        "catalog": "__default",
+                        "database": "__default",
+                        "region": "__default",
+                        "resultReuseEnabled": false,
+                        "resultReuseMaxAgeInMinutes": 60
+                      },
+                      "format": 1,
+                      "rawSQL": "SELECT\r\n    url_extract_path(request_url) AS route,\r\n    COUNT(*) AS requests\r\nFROM aws_topology_security.alb_primary_access\r\nWHERE request_url IS NOT NULL\r\n  AND $__timeFilter(\r\n      time,\r\n      'yyyy-MM-dd''T''HH:mm:ss.SSSSSS''Z'''\r\n  )\r\nGROUP BY url_extract_path(request_url)\r\nORDER BY requests DESC\r\nLIMIT 10;"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 3,
+        "links": [],
+        "title": "ALB - Top Requested Routes",
+        "vizConfig": {
+          "group": "barchart",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "continuous-viridis"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "fillOpacity": 100,
+                  "gradientMode": "hue",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "lineWidth": 1,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "barRadius": 0,
+              "barWidth": 0.9,
+              "fullHighlight": false,
+              "groupWidth": 0.8,
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "overflow": "ellipsis",
+                "placement": "right",
+                "showLegend": true
+              },
+              "orientation": "horizontal",
+              "showValue": "never",
+              "stacking": "none",
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              },
+              "xField": "time",
+              "xTickLabelRotation": 0,
+              "xTickLabelSpacing": 100
+            }
+          },
+          "version": "13.1.2"
+        }
+      }
+    },
+    "panel-4": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "efubxj2vag7i8b"
+                    },
+                    "group": "grafana-athena-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "connectionArgs": {
+                        "catalog": "__default",
+                        "database": "__default",
+                        "region": "__default",
+                        "resultReuseEnabled": false,
+                        "resultReuseMaxAgeInMinutes": 60
+                      },
+                      "format": 1,
+                      "rawSQL": "WITH css_clients AS (\r\n    SELECT DISTINCT \"c-ip\" AS source_ip\r\n    FROM aws_topology_security.cloudfront_access\r\n    WHERE \"cs-uri-stem\" LIKE '/dvwa/css/%'\r\n      AND concat(date, ' ', time)\r\n          BETWEEN $__rawTimeFrom('yyyy-MM-dd HH:mm:ss')\r\n              AND $__rawTimeTo('yyyy-MM-dd HH:mm:ss')\r\n)\r\n\r\nSELECT\r\n    c.date,\r\n    c.time,\r\n    concat(\r\n    split_part(c.\"c-ip\", '.', 1), '.',\r\n    split_part(c.\"c-ip\", '.', 2), '.',\r\n    split_part(c.\"c-ip\", '.', 3), '.xxx'\r\n) AS source_ip,\r\n    c.\"cs-method\" AS method,\r\n    c.\"cs-uri-stem\" AS path,\r\n    c.\"sc-status\" AS status,\r\n    c.\"cs-protocol\" AS protocol,\r\n    c.\"time-taken\" AS time_taken\r\nFROM aws_topology_security.cloudfront_access c\r\nJOIN css_clients s\r\n    ON c.\"c-ip\" = s.source_ip\r\nWHERE concat(c.date, ' ', c.time)\r\n      BETWEEN $__rawTimeFrom('yyyy-MM-dd HH:mm:ss')\r\n          AND $__rawTimeTo('yyyy-MM-dd HH:mm:ss')\r\nORDER BY c.date ASC, c.time ASC\r\nLIMIT 200;"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 4,
+        "links": [],
+        "title": "CloudFront - /dvwa/css/ Request Trace",
+        "vizConfig": {
+          "group": "table",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "align": "auto",
+                  "cellOptions": {
+                    "type": "auto"
+                  },
+                  "footer": {
+                    "reducers": []
+                  },
+                  "inspect": false
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "cellHeight": "sm",
+              "showHeader": true,
+              "sortBy": [
+                {
+                  "desc": false,
+                  "displayName": "time"
+                }
+              ]
+            }
+          },
+          "version": "13.1.2"
+        }
+      }
+    },
+    "panel-5": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "efubxj2vag7i8b"
+                    },
+                    "group": "grafana-athena-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "connectionArgs": {
+                        "catalog": "__default",
+                        "database": "__default",
+                        "region": "__default",
+                        "resultReuseEnabled": false,
+                        "resultReuseMaxAgeInMinutes": 60
+                      },
+                      "format": 1,
+                      "rawSQL": "WITH suspect_clients AS (\r\n    SELECT DISTINCT \"c-ip\" AS source_ip\r\n    FROM aws_topology_security.cloudfront_access\r\n    WHERE \"cs-uri-stem\" = '/wp-admin/install.php'\r\n      AND concat(date, ' ', time)\r\n          BETWEEN $__rawTimeFrom('yyyy-MM-dd HH:mm:ss')\r\n              AND $__rawTimeTo('yyyy-MM-dd HH:mm:ss')\r\n)\r\n\r\nSELECT\r\n    c.date,\r\n    c.time,\r\n    concat(\r\n        split_part(c.\"c-ip\", '.', 1), '.',\r\n        split_part(c.\"c-ip\", '.', 2), '.',\r\n        split_part(c.\"c-ip\", '.', 3), '.xxx'\r\n    ) AS source_ip,\r\n    c.\"cs-method\" AS method,\r\n    c.\"cs-uri-stem\" AS path,\r\n    c.\"sc-status\" AS status,\r\n    c.\"cs-protocol\" AS protocol,\r\n    c.\"time-taken\" AS time_taken\r\nFROM aws_topology_security.cloudfront_access c\r\nJOIN suspect_clients s\r\n    ON c.\"c-ip\" = s.source_ip\r\nWHERE concat(c.date, ' ', c.time)\r\n      BETWEEN $__rawTimeFrom('yyyy-MM-dd HH:mm:ss')\r\n          AND $__rawTimeTo('yyyy-MM-dd HH:mm:ss')\r\nORDER BY c.date ASC, c.time ASC\r\nLIMIT 500;"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 5,
+        "links": [],
+        "title": "CloudFront - /wp-admin/install.php Request Trace",
+        "vizConfig": {
+          "group": "table",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "align": "auto",
+                  "cellOptions": {
+                    "type": "auto"
+                  },
+                  "footer": {
+                    "reducers": []
+                  },
+                  "inspect": false
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "cellHeight": "sm",
+              "showHeader": true,
+              "sortBy": [
+                {
+                  "desc": true,
+                  "displayName": "time"
+                }
+              ]
+            }
+          },
+          "version": "13.1.2"
+        }
+      }
+    }
+  },
+  "layout": {
+    "kind": "GridLayout",
+    "spec": {
+      "items": [
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-1"
+            },
+            "height": 8,
+            "width": 12,
+            "x": 0,
+            "y": 0
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-2"
+            },
+            "height": 8,
+            "width": 12,
+            "x": 12,
+            "y": 0
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-3"
+            },
+            "height": 8,
+            "width": 12,
+            "x": 0,
+            "y": 8
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-4"
+            },
+            "height": 8,
+            "width": 12,
+            "x": 12,
+            "y": 8
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-5"
+            },
+            "height": 8,
+            "width": 12,
+            "x": 0,
+            "y": 16
+          }
+        }
+      ]
+    }
+  },
+  "links": [],
+  "liveNow": false,
+  "preferences": {
+    "layout": {
+      "kind": "GridLayout",
+      "spec": {
+        "items": []
+      }
+    }
+  },
+  "preload": false,
+  "tags": [],
+  "timeSettings": {
+    "autoRefresh": "",
+    "autoRefreshIntervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "2h",
+      "1d"
+    ],
+    "fiscalYearStartMonth": 0,
+    "from": "now-3h",
+    "hideTimepicker": false,
+    "timezone": "browser",
+    "to": "now"
+  },
+  "title": "S3 Security Log Overview",
+  "variables": []
+}
