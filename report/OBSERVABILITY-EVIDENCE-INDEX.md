@@ -2,7 +2,7 @@
 
 > **용도:** 최종 보고서·발표 자료에 재사용할 Observability / S3 / Athena / Grafana 증거를 한곳에서 추적한다.  
 > **기준 시점:** 2026-08-07  
-> **진행 상태:** S3 로그 분리·Athena 3 Source Runtime 검증 완료 / Grafana Athena Dashboard·Drill-down 검증 완료 / JSON Export 전  
+> **진행 상태:** S3 로그 분리·Athena 3 Source·Grafana Athena Overview·Drill-down·JSON Export 완료  
 > **관련 현황:** [`../OBSERVABILITY-CURRENT-STATUS.md`](../OBSERVABILITY-CURRENT-STATUS.md)  
 > **실행 계획:** [`../OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](../OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)
 
@@ -37,7 +37,7 @@ AWS Credential
 
 | 요구사항 | 현재 Evidence | 현재 판정 |
 |---|---|---|
-| 1. S3 로그 분석·Grafana 시각화 | CloudFront·ALB·VPC REJECT Athena Runtime 완료, Grafana 3 Source Overview + Drill-down 성공 | **핵심 완료 / JSON Export 전** |
+| 1. S3 로그 분석·Grafana 시각화 | CloudFront·ALB·VPC REJECT Athena Runtime, Grafana 3 Source Overview, 정상·의심 Drill-down, JSON Export | **완료** |
 | 2. Pod Identity | Source 구성 존재, Runtime STS·허용·거부 Test 전 | **미완료** |
 | 3. 리소스별 S3 로그 저장 구분 | Source별 Prefix·최신 Object·Glue LOCATION 확인 | **핵심 완료** |
 | 4. 구성 결과 확인·시연 | WAF Viewer·S3·Athena·Grafana Drill-down까지 시연 가능 | **진행 중 / Pod Identity 후 통합 마감** |
@@ -53,7 +53,8 @@ C:\Users\Unoh\Documents\aws-topology-evidence\report-assets\observability\
 ├─ 01_waf\
 ├─ 02_s3\
 ├─ 03_athena\
-└─ 04_grafana\
+├─ 04_grafana\
+└─ 05_pod-identity\
 ```
 
 이 디렉터리는 **로컬 보고서 자산 저장소**다. 공개 Git Repository에 그대로 Commit하지 않는다.
@@ -78,8 +79,7 @@ WAF Event
 - 일반 ALLOW Request는 Logging Filter 때문에 Viewer에 나타나지 않음
 - `COUNT → ALLOW` 구분
 - Filter별 Clear
-- Pause / Resume
-- Pause 중 Event 보존
+- Pause / Resume와 Pause 중 Event 보존
 - `Ctrl+C` 종료 후 `aws start-live-tail` 자식 Process 미잔존
 - TCP `8787` Listener 미잔존
 - localhost 전용 Bind
@@ -95,20 +95,20 @@ Sample: 20, 17, 21, 20, 15, 20, 14초
 평균: 약 18.1초
 ```
 
-## 3.2 Source / 재현 문서
+Source / 재현 문서:
 
 ```text
 tools/waf-live-viewer/Start-WafLiveViewer.ps1
 tools/waf-live-viewer/README.md
 ```
 
-## 3.3 보고서 Screenshot 후보
+보고서 Screenshot 후보:
 
-| 권장 파일명 | 내용 | 보고서에서 증명하는 것 |
-|---|---|---|
-| `01_WAF_XSS_COUNT_ALLOW.png` | XSS Event Card 또는 Grafana WAF Event | Managed Rule 탐지 후 COUNT→ALLOW |
-| `02_WAF_SQLi_COUNT_ALLOW.png` | SQLi Event Card | SQLi 분류·Rule 표시 |
-| `03_WAF_Live_Viewer.png` | Viewer 전체 화면 | 근실시간 Event Feed 구현 |
+```text
+01_waf\01_WAF_XSS_COUNT_ALLOW.png
+01_waf\02_WAF_SQLi_COUNT_ALLOW.png
+01_waf\03_WAF_Live_Viewer.png
+```
 
 ---
 
@@ -169,7 +169,7 @@ CloudFront
 → 기능은 정상이나 실제 /CloudFront/ Prefix보다 Policy 범위가 넓음
 ```
 
-CloudFront Policy 범위는 **향후 최소 권한 정밀화 후보**로 기록하고, 현재 S3 로그 분리 Runtime 완료 판정을 뒤집지는 않는다.
+CloudFront Policy 범위는 향후 최소 권한 정밀화 후보로 기록하고, 현재 S3 로그 분리 Runtime 완료 판정을 뒤집지는 않는다.
 
 ---
 
@@ -229,9 +229,9 @@ srcaddr, dstaddr, dstport, protocol,
 rejected_flows, rejected_packets
 ```
 
-`999`는 Query Pack의 결과 취득 상한 `MaxResultRows = 1000`에서 Header 1행을 제외한 값이므로 **전체 결과가 정확히 999개라는 뜻이 아니라 최소 999개의 집계 행이 반환된 것**으로 기록한다.
+`999`는 Query Pack의 결과 취득 상한 `MaxResultRows = 1000`에서 Header 1행을 제외한 값이므로 전체 결과가 정확히 999개라는 뜻이 아니라 **최소 999개의 집계 행이 반환된 것**으로 기록한다.
 
-## 5.4 Athena 보고서용 요약표
+## 5.4 보고서용 요약표
 
 | Source | State | Data scanned | Rows | 주요 Parsing |
 |---|---:|---:|---:|---|
@@ -249,13 +249,20 @@ Dashboard:
 S3 Security Log Overview
 ```
 
-현재 구성된 핵심 Panel:
+Repository Export:
+
+```text
+analytics/dashboard/security-log-investigation.json
+```
+
+최종 Panel:
 
 ```text
 VPC REJECT - Top Destination Ports
 CloudFront - Top Requested Paths
 ALB - Top Requested Routes
 CloudFront - /dvwa/css/ Request Trace
+CloudFront - /wp-admin/install.php Request Trace
 ```
 
 ## 6.1 Dashboard 시간 범위 연동
@@ -275,16 +282,9 @@ ALB
 
 따라서 `Last 1 hour`, `Last 3 hours`, `Last 6 hours` 등 Dashboard 선택 범위와 실제 Athena 분석 범위가 일치한다.
 
-## 6.2 정상 요청 Drill-down 사례 — `/dvwa/css/`
+## 6.2 정상 요청 Drill-down — `/dvwa/css/`
 
-Overview의 CloudFront Top Path에서 다음 요청을 발견했다.
-
-```text
-/dvwa/css/login.css
-/dvwa/css/theme.css
-```
-
-동일 Source의 요청 Timeline을 확인한 결과:
+동일 Source의 요청 Timeline:
 
 ```text
 06:30:40  GET /                    → 302
@@ -301,40 +301,21 @@ Overview의 CloudFront Top Path에서 다음 요청을 발견했다.
 주의:
 
 - CloudFront `time`이 초 단위이므로 같은 초 내부의 정확한 선후관계는 단정하지 않는다.
-- 보고서 화면에서는 `source_ip`를 `x.x.x.xxx` 형태로 마스킹한다.
+- Dashboard SQL에서 Client IPv4의 마지막 Octet을 `.xxx`로 마스킹한다.
 
-권장 Screenshot:
+## 6.3 의심 요청 Drill-down — `/wp-admin/install.php`
 
-```text
-04_grafana\02_CloudFront_DVWA_CSS_Request_Trace_FINAL.png
-```
+확인된 사실:
 
-## 6.3 의심 요청 Drill-down 사례 — `/wp-admin/install.php`
-
-CloudFront 및 ALB Overview에서 현재 DVWA 애플리케이션과 직접 관련성이 낮은 다음 Path가 반복 관찰됐다.
-
-```text
-/wp-admin/install.php
-```
-
-CloudFront 상세 Trace에서 확인한 사실:
-
-- 여러 Source Prefix에서 동일 Path 반복 요청
+- 여러 Source에서 동일 Path 반복 요청
 - `GET /wp-admin/install.php`
 - 다수의 경우 `http → 301` 직후 `https → 404`
 - 요청이 성공한 증거는 없음
-- 같은 Source의 전후 ±60초 Timeline을 추가 조회했으나 다른 관리·설정 Path 순회는 확인되지 않음
-
-관찰 패턴 예시:
-
-```text
-HTTP   GET /wp-admin/install.php → 301
-HTTPS  GET /wp-admin/install.php → 404
-```
+- 같은 Source의 전후 ±60초 Timeline에서 다른 관리·설정 Path 순회는 확인되지 않음
 
 판정:
 
-> 현재 DVWA 서비스와 직접 관련성이 낮은 WordPress 설치 경로에 대한 반복 Probe가 여러 Source에서 확인되었다. HTTP 요청 후 HTTPS Redirect를 따라가 404를 확인하는 패턴이 반복되어 자동화 스캔 후보로 분류할 수 있으나, 동일 Source의 전후 요청에서 `/wp-login.php`, `/xmlrpc.php`, `/.env` 등 다른 관리·설정 경로를 순회한 증거는 확인되지 않았다. 따라서 **다중 경로 정찰 또는 침해 시도 성공으로 확대해석하지 않고, 반복적인 WordPress 설치 경로 Probe / 자동화 스캔 후보 수준으로 보수적으로 판정**한다.
+> 현재 DVWA 서비스와 직접 관련성이 낮은 WordPress 설치 경로에 대한 반복 Probe가 여러 Source에서 확인되었다. HTTP 요청 후 HTTPS Redirect를 따라가 404를 확인하는 패턴이 반복되어 자동화 스캔 후보로 분류할 수 있으나, 다른 관리·설정 경로를 순회한 증거는 확인되지 않았다. 따라서 **다중 경로 정찰 또는 침해 성공으로 확대해석하지 않고, 반복 WordPress 설치 경로 Probe / 자동화 스캔 후보 수준으로 보수적으로 판정**한다.
 
 보고서에 쓰지 말아야 할 표현:
 
@@ -345,44 +326,35 @@ HTTPS  GET /wp-admin/install.php → 404
 다중 경로 스캐닝 확인
 ```
 
-권장 Screenshot:
+## 6.4 JSON Export 검토
+
+확인 사항:
 
 ```text
+Dashboard Title: S3 Security Log Overview
+Panel 수: 5
+Overview Source 매핑: VPC / CloudFront / ALB 정상
+Dashboard 시간 Macro 포함
+Drill-down IP 마스킹 SQL 포함
+Credential 하드코딩 없음
+Raw Client IP 하드코딩 없음
+Request ID 하드코딩 없음
+```
+
+Athena Data Source UID:
+
+```text
+efubxj2vag7i8b
+```
+
+이는 AWS Credential이 아니라 현재 Grafana 인스턴스의 Data Source 식별자다. 다른 Grafana 인스턴스로 Import할 경우 Athena Data Source를 다시 연결해야 할 수 있다.
+
+## 6.5 권장 Screenshot 파일명
+
+```text
+04_grafana\01_S3_Security_Log_Overview_FINAL.png
+04_grafana\02_CloudFront_DVWA_CSS_Request_Trace_FINAL.png
 04_grafana\03_CloudFront_WordPress_Install_Probe_FINAL.png
-```
-
-Screenshot에는 전체 Source IP를 노출하지 않는다.
-
-## 6.4 보고서에서 보여줄 분석 흐름
-
-```text
-Overview Dashboard
-→ 관심 Path 발견
-→ Path 상세 Trace
-→ 동일 Source Timeline
-→ 정상 / 추가 조사 필요 판정
-```
-
-두 사례를 함께 사용하면 다음 차이를 설명할 수 있다.
-
-```text
-/dvwa/css/*
-→ Drill-down 결과 정상 페이지 로딩 패턴
-
-/wp-admin/install.php
-→ 반복 Probe 확인
-→ 추가 Path 순회 미확인
-→ 자동화 스캔 후보로 보수적 판정
-```
-
-이는 Grafana를 단순 시각화 화면이 아니라 **보안 로그의 1차 탐색과 상세 조사 진입점**으로 사용했음을 보여준다.
-
-## 6.5 현재 남은 Grafana 산출물
-
-```text
-Dashboard JSON Export
-최종 Dashboard Screenshot 파일 정리
-Panel SQL 보존
 ```
 
 ---
@@ -420,22 +392,14 @@ Runtime 전달 성공
 5. 주요 Column Parsing 정상 확인
 6. Grafana Athena Dashboard에서 Source별 주요 지표를 시각화
 7. 관심 Path를 Drill-down하여 정상 요청과 반복 Probe를 구분
-8. WAF는 별도 CloudWatch Live Tail / Local Viewer로 근실시간 관제
-9. Pod Identity Runtime Evidence는 후속 단계에서 추가
+8. Dashboard JSON을 Repository에 보존해 재현 가능한 산출물로 마감
+9. WAF는 별도 CloudWatch Live Tail / Local Viewer로 근실시간 관제
+10. Pod Identity Runtime Evidence를 후속 단계에서 추가
 ```
 
 ---
 
 # 9. 다음 Evidence 추가 지점
-
-현재:
-
-```text
-Dashboard JSON Export
-→ 최종 Grafana Screenshot 정리
-```
-
-그다음:
 
 ```text
 Pod Identity Association
@@ -449,9 +413,8 @@ Pod Identity Association
 후속:
 
 ```text
+Grafana WAF Dashboard Export
 WAF protection-test
 → COUNT / BLOCK 비교
 → 정상 기능 Regression
 ```
-
-Pod Identity Evidence는 후속 작업 시 별도 `05_pod-identity` 로컬 폴더를 추가한다.
