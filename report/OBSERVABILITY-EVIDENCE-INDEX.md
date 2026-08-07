@@ -2,7 +2,7 @@
 
 > **용도:** 최종 보고서·발표 자료에 재사용할 Observability / S3 / Athena / Grafana 증거를 한곳에서 추적한다.  
 > **기준 시점:** 2026-08-07  
-> **진행 상태:** S3 로그 분리·Athena 3 Source Runtime 검증 완료 / Grafana Athena Dashboard 구성 중  
+> **진행 상태:** S3 로그 분리·Athena 3 Source Runtime 검증 완료 / Grafana Athena Dashboard·Drill-down 검증 완료 / JSON Export 전  
 > **관련 현황:** [`../OBSERVABILITY-CURRENT-STATUS.md`](../OBSERVABILITY-CURRENT-STATUS.md)  
 > **실행 계획:** [`../OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](../OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)
 
@@ -37,10 +37,10 @@ AWS Credential
 
 | 요구사항 | 현재 Evidence | 현재 판정 |
 |---|---|---|
-| 1. S3 로그 분석·Grafana 시각화 | CloudFront·ALB·VPC REJECT Athena Runtime 성공, Grafana 3 Panel 구성 | **후반 진행 중** |
+| 1. S3 로그 분석·Grafana 시각화 | CloudFront·ALB·VPC REJECT Athena Runtime 완료, Grafana 3 Source Overview + Drill-down 성공 | **핵심 완료 / JSON Export 전** |
 | 2. Pod Identity | Source 구성 존재, Runtime STS·허용·거부 Test 전 | **미완료** |
 | 3. 리소스별 S3 로그 저장 구분 | Source별 Prefix·최신 Object·Glue LOCATION 확인 | **핵심 완료** |
-| 4. 구성 결과 확인·시연 | WAF Viewer·S3·Athena·Grafana 일부 시연 가능 | **진행 중** |
+| 4. 구성 결과 확인·시연 | WAF Viewer·S3·Athena·Grafana Drill-down까지 시연 가능 | **진행 중 / Pod Identity 후 통합 마감** |
 
 ---
 
@@ -57,23 +57,6 @@ C:\Users\Unoh\Documents\aws-topology-evidence\report-assets\observability\
 ```
 
 이 디렉터리는 **로컬 보고서 자산 저장소**다. 공개 Git Repository에 그대로 Commit하지 않는다.
-
-PowerShell 생성 명령:
-
-```powershell
-$reportRoot = "$HOME\Documents\aws-topology-evidence\report-assets\observability"
-
-@(
-    '01_waf',
-    '02_s3',
-    '03_athena',
-    '04_grafana'
-) | ForEach-Object {
-    New-Item -ItemType Directory -Force -Path (Join-Path $reportRoot $_) | Out-Null
-}
-
-$reportRoot
-```
 
 ---
 
@@ -119,21 +102,13 @@ tools/waf-live-viewer/Start-WafLiveViewer.ps1
 tools/waf-live-viewer/README.md
 ```
 
-기존 Obsidian 학습 Note:
-
-```text
-10_학습 노트/클라우드/Grafana 로컬 Docker에서 CloudWatch WAF 근실시간 관제.md
-```
-
 ## 3.3 보고서 Screenshot 후보
 
-| 권장 파일명 | 내용 | 보고서에서 증명하는 것 | 상태 |
-|---|---|---|---|
-| `01_WAF_XSS_COUNT_ALLOW.png` | XSS Event Card 또는 Grafana WAF Event | Managed Rule 탐지 후 COUNT→ALLOW | 기존 Evidence 재사용 후보 |
-| `02_WAF_SQLi_COUNT_ALLOW.png` | SQLi Event Card | SQLi 분류·Rule 표시 | 확보 확인 필요 |
-| `03_WAF_Live_Viewer.png` | Viewer 전체 화면 | 근실시간 Event Feed 구현 | 확보 확인 필요 |
-
-스크린샷에는 전체 IP, Request ID, JA3/JA4, Cookie, Authorization을 노출하지 않는다.
+| 권장 파일명 | 내용 | 보고서에서 증명하는 것 |
+|---|---|---|
+| `01_WAF_XSS_COUNT_ALLOW.png` | XSS Event Card 또는 Grafana WAF Event | Managed Rule 탐지 후 COUNT→ALLOW |
+| `02_WAF_SQLi_COUNT_ALLOW.png` | SQLi Event Card | SQLi 분류·Rule 표시 |
+| `03_WAF_Live_Viewer.png` | Viewer 전체 화면 | 근실시간 Event Feed 구현 |
 
 ---
 
@@ -196,158 +171,65 @@ CloudFront
 
 CloudFront Policy 범위는 **향후 최소 권한 정밀화 후보**로 기록하고, 현재 S3 로그 분리 Runtime 완료 판정을 뒤집지는 않는다.
 
-## 4.4 보고서 Screenshot 후보
-
-S3 Console Screenshot은 세 Prefix가 한 화면에 잘 보이지 않을 수 있으므로, 필요하면 CLI 결과를 표로 옮기는 편이 낫다.
-
-| 권장 파일명 | 내용 | 상태 |
-|---|---|---|
-| `01_S3_CloudFront_Prefix.png` | CloudFront Prefix·Object | 선택 |
-| `02_S3_ALB_Prefix.png` | ALB Prefix·Object | 선택 |
-| `03_S3_VPC_REJECT_Prefix.png` | VPC Flow Prefix·Object | 선택 |
-
-보고서 본문에는 Screenshot 3장을 모두 넣기보다 **Prefix 비교 표 + 대표 Screenshot 1장**을 우선한다.
-
 ---
 
 # 5. Athena 실제 로그 분석 Evidence
 
 ## 5.1 CloudFront
 
-Experiment:
-
 ```text
-athena-cloudfront-trace-20260807T021410Z
+Experiment: athena-cloudfront-trace-20260807T021410Z
+State: SUCCEEDED
+QueryExecutionId: f86c0bbe-5c1b-478d-ae08-e64b44dece32
+Data scanned: 343,161 bytes
+Data rows: 34
 ```
 
-Local Evidence:
+정상 Parsing:
 
 ```text
-C:\Users\Unoh\Documents\aws-topology-evidence\athena-cloudfront-trace-20260807T021410Z
+date, time, source_ip, method, path, status,
+edge_request_id, protocol, time_taken
 ```
 
-결과:
-
-| 항목 | 값 |
-|---|---|
-| State | `SUCCEEDED` |
-| QueryExecutionId | `f86c0bbe-5c1b-478d-ae08-e64b44dece32` |
-| Data scanned | `343,161 bytes` |
-| Data rows | `34` |
-
-정상 Parsing 확인:
-
-```text
-date
-time
-source_ip
-method
-path
-status
-edge_request_id
-protocol
-time_taken
-```
-
-Schema 보정 이력:
-
-```text
-기존 Glue Table에 cs-protocol 누락
-→ 승인된 -CreateSchema 실행
-→ ALTER TABLE ADD COLUMNS (`cs-protocol` string)
-→ 기존 S3 Object 유지
-→ Query 정상 성공
-```
-
-주의:
-
-```text
-cs-protocol = http / https
-```
-
-는 HTTP Version이 아니라 Request Scheme이다.
-
----
+기존 Glue Table에 `cs-protocol`이 없었으며 승인된 `-CreateSchema` 실행으로 Column을 보정한 뒤 정상 Query를 확인했다.
 
 ## 5.2 Primary ALB
 
-Experiment:
-
 ```text
-athena-alb-window-20260807T022221Z
+Experiment: athena-alb-window-20260807T022221Z
+State: SUCCEEDED
+Data scanned: 573,530 bytes
+Data rows: 29
 ```
 
-Local Evidence:
+정상 Parsing:
 
 ```text
-C:\Users\Unoh\Documents\aws-topology-evidence\athena-alb-window-20260807T022221Z
+event_time, source_ip, method, route,
+elb_status_code, target_status_code, trace_id
 ```
-
-결과:
-
-| 항목 | 값 |
-|---|---|
-| State | `SUCCEEDED` |
-| Data scanned | `573,530 bytes` |
-| Data rows | `29` |
-
-정상 Parsing 확인:
-
-```text
-event_time
-source_ip
-method
-route
-elb_status_code
-target_status_code
-trace_id
-```
-
-주의:
 
 CloudFront 뒤 ALB의 `source_ip`는 곧바로 외부 원본 Client IP로 해석하지 않는다.
 
----
-
 ## 5.3 Primary VPC REJECT
 
-Experiment:
-
 ```text
-athena-vpc-reject-20260807T022621Z
+Experiment: athena-vpc-reject-20260807T022621Z
+State: SUCCEEDED
+QueryExecutionId: af6b95f6-5a2f-4512-ad77-cadadda84105
+Data scanned: 3,608,387 bytes
+반환 확인: 999행 이상
 ```
 
-Local Evidence:
+정상 Parsing:
 
 ```text
-C:\Users\Unoh\Documents\aws-topology-evidence\athena-vpc-reject-20260807T022621Z
+srcaddr, dstaddr, dstport, protocol,
+rejected_flows, rejected_packets
 ```
 
-결과:
-
-| 항목 | 값 |
-|---|---|
-| State | `SUCCEEDED` |
-| QueryExecutionId | `af6b95f6-5a2f-4512-ad77-cadadda84105` |
-| Data scanned | `3,608,387 bytes` |
-| 반환 확인 | **999행 이상** |
-
-정상 Parsing 확인:
-
-```text
-srcaddr
-dstaddr
-dstport
-protocol
-rejected_flows
-rejected_packets
-```
-
-샘플에서 `protocol = 6`인 TCP REJECT가 여러 Destination Port에 집계되는 것을 확인했다.
-
-`999`는 전체 결과가 정확히 999개라는 뜻이 아니다. Query Pack의 결과 취득 상한 `MaxResultRows = 1000`에서 Header 1행을 제외해 **최소 999개의 집계 행이 반환된 것**으로 기록한다.
-
----
+`999`는 Query Pack의 결과 취득 상한 `MaxResultRows = 1000`에서 Header 1행을 제외한 값이므로 **전체 결과가 정확히 999개라는 뜻이 아니라 최소 999개의 집계 행이 반환된 것**으로 기록한다.
 
 ## 5.4 Athena 보고서용 요약표
 
@@ -356,8 +238,6 @@ rejected_packets
 | CloudFront | SUCCEEDED | 343,161 B | 34 | 정상 |
 | ALB | SUCCEEDED | 573,530 B | 29 | 정상 |
 | VPC REJECT | SUCCEEDED | 3,608,387 B | 999+ | 정상 |
-
-보고서에서는 이 표 하나와 Grafana Screenshot을 연결하면 `S3 → Athena → 시각화` 흐름을 간결하게 설명할 수 있다.
 
 ---
 
@@ -369,97 +249,145 @@ Dashboard:
 S3 Security Log Overview
 ```
 
-현재 구성된 Panel:
+현재 구성된 핵심 Panel:
 
 ```text
 VPC REJECT - Top Destination Ports
 CloudFront - Top Requested Paths
 ALB - Top Requested Routes
+CloudFront - /dvwa/css/ Request Trace
 ```
 
-## 6.1 현재 확인된 의미
+## 6.1 Dashboard 시간 범위 연동
 
-### VPC REJECT - Top Destination Ports
+세 Overview Panel 모두 Grafana Dashboard의 시간 선택기를 실제 Athena Query에 반영한다.
 
 ```text
-VPC Flow Log
-→ S3
-→ Athena vpc_reject
-→ Destination Port별 REJECT 집계
-→ Grafana Horizontal Bar Chart
+VPC REJECT
+→ $__unixEpochFilter(start)
+
+CloudFront
+→ date + time 문자열을 Dashboard raw time 범위와 비교
+
+ALB
+→ ISO-8601 time Column을 Dashboard 시간 범위와 비교
 ```
 
-현재 Dashboard의 시간 선택기와 일치시키기 위해 다음 조건을 적용했다.
+따라서 `Last 1 hour`, `Last 3 hours`, `Last 6 hours` 등 Dashboard 선택 범위와 실제 Athena 분석 범위가 일치한다.
 
-```sql
-AND $__unixEpochFilter(start)
-```
+## 6.2 정상 요청 Drill-down 사례 — `/dvwa/css/`
 
-따라서 현재 Panel은 Dashboard가 `Last 6 hours`일 때 **최근 6시간 VPC REJECT**만 집계한다.
-
-### CloudFront - Top Requested Paths
+Overview의 CloudFront Top Path에서 다음 요청을 발견했다.
 
 ```text
-CloudFront Standard Log
-→ S3
-→ Athena cloudfront_access
-→ Path별 요청 수
-→ Grafana Horizontal Bar Chart
+/dvwa/css/login.css
+/dvwa/css/theme.css
 ```
 
-### ALB - Top Requested Routes
+동일 Source의 요청 Timeline을 확인한 결과:
 
 ```text
-ALB Access Log
-→ S3
-→ Athena alb_primary_access
-→ Route별 요청 수
-→ Grafana Horizontal Bar Chart
+06:30:40  GET /                    → 302
+06:30:40  GET /login.php           → 200
+06:30:41  GET /favicon.ico         → 200
+06:30:41  GET /dvwa/css/login.css  → 200
+06:30:41  GET /dvwa/css/theme.css  → 200
 ```
 
-## 6.2 현재 중요한 미완료
+판정:
 
-현재 Dashboard Screenshot을 최종 보고서에 바로 쓰기 전 다음을 마감한다.
+> 동일 Source에서 로그인 페이지와 정적 리소스 요청이 약 1초 내 연속 발생했으므로, `/dvwa/css/` 요청은 독립적인 공격 행위보다는 로그인 페이지 렌더링에 수반된 정상 정적 리소스 요청일 가능성이 높은 것으로 판단했다.
+
+주의:
+
+- CloudFront `time`이 초 단위이므로 같은 초 내부의 정확한 선후관계는 단정하지 않는다.
+- 보고서 화면에서는 `source_ip`를 `x.x.x.xxx` 형태로 마스킹한다.
+
+권장 Screenshot:
 
 ```text
-VPC Panel      → Dashboard 시간 범위 연동 완료
-CloudFront     → Dashboard 시간 범위 연동 필요
-ALB            → Dashboard 시간 범위 연동 필요
-Dashboard JSON Export 필요
-최종 Screenshot 필요
+04_grafana\02_CloudFront_DVWA_CSS_Request_Trace_FINAL.png
 ```
 
-즉 현재 3-Panel 화면은 **중간 Evidence**로는 유효하지만, 최종 보고서 Screenshot은 CloudFront·ALB 시간 필터까지 맞춘 뒤 다시 캡처한다.
+## 6.3 의심 요청 Drill-down 사례 — `/wp-admin/install.php`
 
-## 6.3 Screenshot 파일명
-
-현재 3-Panel 중간 화면:
+CloudFront 및 ALB Overview에서 현재 DVWA 애플리케이션과 직접 관련성이 낮은 다음 Path가 반복 관찰됐다.
 
 ```text
-04_grafana\01_S3_Security_Log_Overview_3panels_INTERIM.png
+/wp-admin/install.php
 ```
 
-최종 시간 범위 연동 후:
+CloudFront 상세 Trace에서 확인한 사실:
+
+- 여러 Source Prefix에서 동일 Path 반복 요청
+- `GET /wp-admin/install.php`
+- 다수의 경우 `http → 301` 직후 `https → 404`
+- 요청이 성공한 증거는 없음
+- 같은 Source의 전후 ±60초 Timeline을 추가 조회했으나 다른 관리·설정 Path 순회는 확인되지 않음
+
+관찰 패턴 예시:
 
 ```text
-04_grafana\02_S3_Security_Log_Overview_FINAL.png
+HTTP   GET /wp-admin/install.php → 301
+HTTPS  GET /wp-admin/install.php → 404
 ```
 
-필요하면 Panel별 확대 Screenshot:
+판정:
+
+> 현재 DVWA 서비스와 직접 관련성이 낮은 WordPress 설치 경로에 대한 반복 Probe가 여러 Source에서 확인되었다. HTTP 요청 후 HTTPS Redirect를 따라가 404를 확인하는 패턴이 반복되어 자동화 스캔 후보로 분류할 수 있으나, 동일 Source의 전후 요청에서 `/wp-login.php`, `/xmlrpc.php`, `/.env` 등 다른 관리·설정 경로를 순회한 증거는 확인되지 않았다. 따라서 **다중 경로 정찰 또는 침해 시도 성공으로 확대해석하지 않고, 반복적인 WordPress 설치 경로 Probe / 자동화 스캔 후보 수준으로 보수적으로 판정**한다.
+
+보고서에 쓰지 말아야 할 표현:
 
 ```text
-04_grafana\03_VPC_REJECT_Top_Destination_Ports.png
-04_grafana\04_CloudFront_Top_Requested_Paths.png
-04_grafana\05_ALB_Top_Requested_Routes.png
+공격 성공
+침해 성공
+공격자 확정
+다중 경로 스캐닝 확인
 ```
 
-보고서에는 전체 Dashboard Screenshot 1장을 기본으로 하고, 특정 분석을 설명할 때만 Panel 확대 이미지를 추가한다.
+권장 Screenshot:
+
+```text
+04_grafana\03_CloudFront_WordPress_Install_Probe_FINAL.png
+```
+
+Screenshot에는 전체 Source IP를 노출하지 않는다.
+
+## 6.4 보고서에서 보여줄 분석 흐름
+
+```text
+Overview Dashboard
+→ 관심 Path 발견
+→ Path 상세 Trace
+→ 동일 Source Timeline
+→ 정상 / 추가 조사 필요 판정
+```
+
+두 사례를 함께 사용하면 다음 차이를 설명할 수 있다.
+
+```text
+/dvwa/css/*
+→ Drill-down 결과 정상 페이지 로딩 패턴
+
+/wp-admin/install.php
+→ 반복 Probe 확인
+→ 추가 Path 순회 미확인
+→ 자동화 스캔 후보로 보수적 판정
+```
+
+이는 Grafana를 단순 시각화 화면이 아니라 **보안 로그의 1차 탐색과 상세 조사 진입점**으로 사용했음을 보여준다.
+
+## 6.5 현재 남은 Grafana 산출물
+
+```text
+Dashboard JSON Export
+최종 Dashboard Screenshot 파일 정리
+Panel SQL 보존
+```
 
 ---
 
 # 7. Screenshot 캡처 규칙
-
-스크린샷은 단순히 화면이 보인다는 이유로 저장하지 않는다.
 
 각 Screenshot에는 다음 중 하나의 의미가 있어야 한다.
 
@@ -467,7 +395,7 @@ Dashboard JSON Export 필요
 구성 성공
 Runtime 전달 성공
 탐지·분석 성공
-조치 전·후 비교
+정상/의심 판정 근거
 권한 허용·거부 증명
 최종 시연 화면
 ```
@@ -478,8 +406,7 @@ Runtime 전달 성공
 - Request ID / Edge Request ID가 불필요하면 숨김
 - Cookie / Authorization / Header 미노출
 - AWS Access Key·Credential 미노출
-- Browser 탭·주소창에 불필요한 민감정보가 없는지 확인
-- 보고서에서 무엇을 증명하는 Screenshot인지 파일명으로 구분
+- Browser 탭·주소창의 불필요한 민감정보 확인
 
 ---
 
@@ -492,33 +419,36 @@ Runtime 전달 성공
 4. CloudFront 34행, ALB 29행, VPC REJECT 999행 이상을 실제 Query
 5. 주요 Column Parsing 정상 확인
 6. Grafana Athena Dashboard에서 Source별 주요 지표를 시각화
-7. WAF는 별도 CloudWatch Live Tail / Local Viewer로 근실시간 관제
-8. Pod Identity Runtime Evidence는 후속 단계에서 추가
+7. 관심 Path를 Drill-down하여 정상 요청과 반복 Probe를 구분
+8. WAF는 별도 CloudWatch Live Tail / Local Viewer로 근실시간 관제
+9. Pod Identity Runtime Evidence는 후속 단계에서 추가
 ```
-
-이 흐름을 사용하면 `근실시간 관제`와 `S3 사후 분석`의 역할을 혼동하지 않고 설명할 수 있다.
 
 ---
 
 # 9. 다음 Evidence 추가 지점
 
-다음부터는 새 Evidence가 생길 때 이 문서의 해당 섹션만 추가한다.
+현재:
 
 ```text
-현재:
-Grafana CloudFront / ALB 시간 범위 연동
-→ Dashboard JSON Export
-→ 최종 Dashboard Screenshot
+Dashboard JSON Export
+→ 최종 Grafana Screenshot 정리
+```
 
 그다음:
+
+```text
 Pod Identity Association
 → Pod ServiceAccount
 → sts:GetCallerIdentity
 → 허용 API
 → 비허용 API AccessDenied
 → Node Role Negative Test
+```
 
 후속:
+
+```text
 WAF protection-test
 → COUNT / BLOCK 비교
 → 정상 기능 Regression
