@@ -510,7 +510,7 @@ code {
 
 <script>
 let paused = false;
-let clearedBefore = 0;
+const hiddenSequences = new Set();
 let filter = 'ALL';
 let start = Date.now();
 let latest = [];
@@ -559,7 +559,7 @@ function render() {
     }
 
     const all = latest.filter(
-        event => event.sequence > clearedBefore
+        event => !hiddenSequences.has(event.sequence)
     );
 
     $('total').textContent = all.length;
@@ -756,8 +756,24 @@ $('pause').onclick = () => {
 };
 
 $('clear').onclick = () => {
-    clearedBefore =
-        latest[0]?.sequence || 0;
+    let targets = latest.filter(
+        event => !hiddenSequences.has(event.sequence)
+    );
+
+    if (filter === 'BLOCK') {
+        targets = targets.filter(
+            event => event.finalAction === 'BLOCK'
+        );
+    }
+    else if (filter !== 'ALL') {
+        targets = targets.filter(
+            event => event.type === filter
+        );
+    }
+
+    for (const event of targets) {
+        hiddenSequences.add(event.sequence);
+    }
 
     render();
 };
