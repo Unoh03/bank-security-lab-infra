@@ -2,7 +2,7 @@
 
 > **용도:** 지금 어디까지 왔고, 바로 다음에 무엇을 해야 하는지만 확인하는 현황판  
 > **기준 시점:** 2026-08-07  
-> **현재 Focus:** Grafana Athena Dashboard JSON Export → Pod Identity Runtime 검증  
+> **현재 Focus:** EKS Pod Identity Inventory·Runtime 검증  
 > **관련 결정:** [`OBSERVABILITY-IAM-DECISIONS.md`](./OBSERVABILITY-IAM-DECISIONS.md)  
 > **전체 계획:** [`OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](./OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)  
 > **보고서 Evidence:** [`report/OBSERVABILITY-EVIDENCE-INDEX.md`](./report/OBSERVABILITY-EVIDENCE-INDEX.md)
@@ -30,23 +30,25 @@ flowchart LR
     F["CloudFront·ALB·VPC Logs"] --> G["Security Log S3\nPrefix Runtime 완료"]
     G --> H["Athena\n3 Source 실제 행 완료"]
     H --> I["Grafana Athena\nOverview + Drill-down 완료"]
-    I --> J["Dashboard JSON Export\n현재 Focus"]
+    I --> J["Dashboard JSON\nRepository 저장 완료"]
 
     K["EKS ServiceAccount"] --> L["Pod Identity Association"]
     L --> M["IAM Role"]
-    M --> N["Pod Runtime 권한\n미검증"]
+    M --> N["Pod Runtime 권한\n현재 Focus"]
 ```
 
 ### 현재 순서
 
 ```text
-1. S3 Security Log Overview JSON Export
-2. 최종 Grafana Screenshot / Panel SQL 정리
-3. Grafana WAF Dashboard 마감·Export
-4. Pod Identity Runtime 검증
+1. Pod Identity AWS·Kubernetes Inventory
+2. Workload별 STS Identity·허용 API·거부 API 검증
+3. Association 없는 ServiceAccount의 Node Role Negative Test
+4. Grafana WAF Dashboard 마감·Export
 5. WAF 단계적 보강
 6. 최종 Evidence 통합
 ```
+
+S3 Source별 저장, Athena 실제 분석, Grafana Athena 시각화는 닫았다. 새 Athena Panel을 추가하거나 같은 Dashboard를 계속 다듬지 않는다.
 
 ---
 
@@ -79,11 +81,11 @@ flowchart LR
 | CloudFront Athena | 34행 / 343,161 B / 주요 Column 정상 | **완료** |
 | ALB Athena | 29행 / 573,530 B / 주요 Column 정상 | **완료** |
 | VPC REJECT Athena | 999행 이상 / 3,608,387 B / 주요 Column 정상 | **완료** |
-| Grafana Athena Overview | VPC·CloudFront·ALB Panel 실제 값 표시 | **핵심 완료** |
+| Grafana Athena Overview | VPC·CloudFront·ALB Panel 실제 값 표시 | **완료** |
 | Grafana 시간 범위 연동 | Overview 3 Panel Dashboard 시간 선택기 반영 | **완료** |
 | Grafana Drill-down | `/dvwa/css/` 정상 패턴, `/wp-admin/install.php` 반복 Probe 분석 | **완료** |
-| Grafana Athena JSON Export | 미실행 | **현재 Focus** |
-| EKS Pod Identity | Source 정의 존재, Runtime 미검증 | **미완료** |
+| Grafana Athena JSON Export | Repository에 Runtime Export 저장 | **완료** |
+| EKS Pod Identity | Source 정의 존재, Runtime 미검증 | **현재 Focus** |
 | WAF Hardening | 계획만 존재 | **후속** |
 
 ---
@@ -134,24 +136,35 @@ Dashboard:
 S3 Security Log Overview
 ```
 
-현재 핵심 Panel:
+Repository Export:
+
+```text
+analytics/dashboard/security-log-investigation.json
+```
+
+최종 Panel:
 
 ```text
 VPC REJECT - Top Destination Ports
 CloudFront - Top Requested Paths
 ALB - Top Requested Routes
 CloudFront - /dvwa/css/ Request Trace
+CloudFront - /wp-admin/install.php Request Trace
 ```
 
-Overview 3 Panel은 Dashboard 시간 선택기와 실제 Athena Query 범위가 일치한다.
+검증 사항:
+
+- CloudFront·ALB·VPC Overview가 각각 올바른 Athena Table을 조회한다.
+- Overview 3 Panel은 Dashboard 시간 선택기를 실제 Query 범위에 반영한다.
+- Drill-down SQL은 Client IPv4의 마지막 Octet을 `.xxx`로 마스킹한다.
+- Credential, Raw Client IP, Request ID를 JSON에 하드코딩하지 않았다.
+- Athena Data Source UID `efubxj2vag7i8b`는 보안정보가 아니지만 다른 Grafana에 Import할 때 재연결이 필요할 수 있다.
 
 ### 4.5 Drill-down 판정
 
 #### `/dvwa/css/`
 
 동일 Source의 `/`, `/login.php`, favicon, CSS 요청이 약 1초 내 연속 발생했다.
-
-판정:
 
 ```text
 정상 페이지 렌더링에 수반된 정적 리소스 요청 가능성 높음
@@ -168,8 +181,6 @@ HTTPS GET /wp-admin/install.php → 404
 
 동일 Source 전후 ±60초에서 다른 관리·설정 Path 순회는 확인되지 않았다.
 
-판정:
-
 ```text
 반복 WordPress 설치 경로 Probe / 자동화 스캔 후보
 다중 경로 정찰·공격 성공으로는 확대해석하지 않음
@@ -181,7 +192,7 @@ HTTPS GET /wp-admin/install.php → 404
 
 | 지시 | 현재 상태 | 남은 것 |
 |---|---|---|
-| S3 로그 분석·Grafana 시각화 | 세 Source Athena + Grafana Overview + Drill-down 완료 | JSON Export·최종 Screenshot 정리 |
+| S3 로그 분석·Grafana 시각화 | 세 Source Athena + Grafana Overview + Drill-down + JSON Export | **완료** |
 | EKS 각 Workload Pod Identity | Source 구성 존재 | Runtime STS·허용·거부·Node Role Negative Test |
 | 리소스별 S3 로그 저장 구분 | 세 Prefix·최신 Object·Glue LOCATION 확인 | **핵심 완료** |
 | 구성 결과 설명·시연 | WAF Viewer·S3·Athena·Grafana Drill-down 가능 | Pod Identity 후 최종 통합 |
@@ -192,7 +203,7 @@ HTTPS GET /wp-admin/install.php → 404
 근실시간 WAF 관제               완료
 리소스별 S3 저장 구분            완료
 Athena 실제 분석                 완료
-Grafana S3/Athena 시각화         핵심 완료 / Export 전
+Grafana S3/Athena 시각화         완료
 Pod Identity Runtime             미검증
 4줄 전체 완료                    아직 아님
 ```
@@ -201,39 +212,43 @@ Pod Identity Runtime             미검증
 
 ## 6. 바로 다음 한 가지
 
-### Grafana Athena Dashboard JSON Export
+### Pod Identity Inventory
 
-대상 Dashboard:
-
-```text
-S3 Security Log Overview
-```
-
-Export 후 Repository 산출물 후보:
+먼저 변경 없이 다음 대응 관계를 Runtime에서 수집한다.
 
 ```text
-analytics/dashboard/security-log-investigation.json
+Cluster
+→ Namespace
+→ Workload
+→ ServiceAccount
+→ Pod Identity Association
+→ IAM Role ARN
 ```
 
-완료 Gate:
+예상 대상:
 
 ```text
-Dashboard JSON Export 성공
-Overview 3 Panel SQL 포함
-Drill-down Panel SQL 포함
-Data Source UID 외 민감정보 미포함 확인
-최종 Screenshot 파일명 확정
+AWS Load Balancer Controller
+ExternalDNS
+EFS CSI Controller
+Web S3 Workload
+Fluent Bit
+Karpenter
 ```
 
-이 Gate를 닫으면 S3/Athena/Grafana Workstream을 종료하고 Pod Identity로 이동한다.
+Inventory가 Source와 일치하는지 확인한 뒤에만 STS·허용·거부 Test 방법을 확정한다. 즉석으로 Role·Policy·Association을 수정하지 않는다.
 
 ---
 
 ## 7. 이후 순서
 
 ```text
-Grafana WAF Dashboard 마감·Export
-→ Pod Identity Inventory·Runtime
+Pod Identity Inventory
+→ Workload별 STS Identity
+→ 대표 허용 API
+→ 비허용 API AccessDenied
+→ Node Role Negative Test
+→ Grafana WAF Dashboard Export
 → WAF 단계적 보강
 → 최종 Evidence 통합
 ```
@@ -262,6 +277,7 @@ OBSERVABILITY-IAM-DECISIONS.md
 OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md
 OBSERVABILITY-CURRENT-STATUS.md
 report/OBSERVABILITY-EVIDENCE-INDEX.md
+analytics/dashboard/security-log-investigation.json
 tools/waf-live-viewer/
 observability/queries/athena/
 ```
