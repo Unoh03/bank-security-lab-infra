@@ -165,6 +165,39 @@ function Invoke-NativeCapture {
     return ($output | Out-String).Trim()
 }
 
+function Test-AwsCliNonRetryableIdentityFailure {
+    [CmdletBinding()]
+    param([AllowEmptyString()][string]$Message)
+
+    if ([string]::IsNullOrWhiteSpace($Message)) {
+        return $false
+    }
+
+    foreach ($pattern in @(
+        '\bAccessDenied(?:Exception)?\b',
+        '\bUnauthorizedOperation\b',
+        '\bExpiredToken(?:Exception)?\b',
+        '\bInvalidClientTokenId\b',
+        '\bUnrecognizedClientException\b',
+        '\bInvalidAccessKeyId\b',
+        '\bSignatureDoesNotMatch\b',
+        '\bAuthFailure\b',
+        '\bNoCredentialsError\b',
+        '\bProfileNotFound\b',
+        'Unable to locate credentials',
+        'Partial credentials found',
+        'config profile .+ could not be found',
+        'SSO session .+ expired',
+        'Error when retrieving token from sso'
+    )) {
+        if ($Message -match "(?i)$pattern") {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function Invoke-NativePassthrough {
     param(
         [Parameter(Mandatory)][string]$FilePath,

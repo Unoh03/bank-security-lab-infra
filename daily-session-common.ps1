@@ -301,31 +301,158 @@ function Set-DailySessionStateStatus {
     return $state
 }
 
+function Test-TerraformCommandLineTargetsRoot {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()][string]$CommandLine,
+        [Parameter(Mandatory)][string]$TerraformRoot
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+        return $false
+    }
+
+    $root = [System.IO.Path]::GetFullPath($TerraformRoot).TrimEnd('\', '/')
+    foreach ($candidate in @($root, $root.Replace('\', '/'))) {
+        $pattern = [regex]::Escape($candidate) + '(?:[\\/]|(?=["''\s]|$))'
+        if ([regex]::IsMatch(
+            $CommandLine,
+            $pattern,
+            [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+        )) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Get-TerraformCommandLineChdir {
+    [CmdletBinding()]
+    param([AllowEmptyString()][string]$CommandLine)
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+        return ''
+    }
+
+    $match = [regex]::Match(
+        $CommandLine,
+        '(?i)(?:^|\s)(?:"-chdir=(?<wrapped>[^"]+)"|-chdir="(?<quoted>[^"]+)"|-chdir=(?<bare>[^\s"]+))'
+    )
+    if (-not $match.Success) {
+        return ''
+    }
+
+    $value = foreach ($groupName in @('wrapped', 'quoted', 'bare')) {
+        if ($match.Groups[$groupName].Success) {
+            $match.Groups[$groupName].Value
+            break
+        }
+    }
+    if (-not $value -or -not [System.IO.Path]::IsPathRooted($value)) {
+        return ''
+    }
+
+    try {
+        return [System.IO.Path]::GetFullPath($value)
+    } catch {
+        return ''
+    }
+}
+
+function Get-DailySessionTerraformProcessInventory {
+    [CmdletBinding()]
+    param()
+
+    try {
+        return @(Get-CimInstance `
+            -ClassName Win32_Process `
+            -Filter "Name = 'terraform.exe'" `
+            -ErrorAction Stop)
+    } catch {
+        return @(Get-Process -Name terraform -ErrorAction SilentlyContinue)
+    }
+}
+
 function Get-DailySessionTerraformActivity {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$TerraformRoot)
+    param(
+        [Parameter(Mandatory)][string]$TerraformRoot,
+        [AllowNull()][object[]]$ProcessInventory
+    )
 
     $root = [System.IO.Path]::GetFullPath($TerraformRoot)
-    $processes = @(Get-Process -Name terraform -ErrorAction SilentlyContinue)
+    $processes = if ($PSBoundParameters.ContainsKey('ProcessInventory')) {
+        @($ProcessInventory)
+    } else {
+        @(Get-DailySessionTerraformProcessInventory)
+    }
+    $relatedProcessIds = New-Object System.Collections.Generic.List[int]
+    $unscopedProcessIds = New-Object System.Collections.Generic.List[int]
+    $unrelatedProcessIds = New-Object System.Collections.Generic.List[int]
+    foreach ($process in $processes) {
+        $idProperty = $process.PSObject.Properties['ProcessId']
+        if ($null -eq $idProperty) {
+            $idProperty = $process.PSObject.Properties['Id']
+        }
+        if ($null -eq $idProperty) {
+            continue
+        }
+        $processId = [int]$idProperty.Value
+        $commandLineProperty = $process.PSObject.Properties['CommandLine']
+        $commandLine = if ($null -eq $commandLineProperty) {
+            ''
+        } else {
+            [string]$commandLineProperty.Value
+        }
+        if (Test-TerraformCommandLineTargetsRoot `
+            -CommandLine $commandLine `
+            -TerraformRoot $root) {
+            $relatedProcessIds.Add($processId)
+        } else {
+            $processRoot = Get-TerraformCommandLineChdir -CommandLine $commandLine
+            if ($processRoot) {
+                $unrelatedProcessIds.Add($processId)
+            } else {
+                # Windows does not expose a reliable process working directory here.
+                # Fail closed unless an explicit absolute -chdir proves another root.
+                $unscopedProcessIds.Add($processId)
+            }
+        }
+    }
     $lockPaths = New-Object System.Collections.Generic.List[string]
     $lockPath = Join-Path $root '.terraform.tfstate.lock.info'
     if (Test-Path -LiteralPath $lockPath -PathType Leaf) {
         $lockPaths.Add($lockPath)
     }
+    $blockingProcessIds = @(
+        @($relatedProcessIds | ForEach-Object { $_ }) +
+        @($unscopedProcessIds | ForEach-Object { $_ })
+    )
     return [pscustomobject]@{
-        ProcessIds = @($processes | ForEach-Object { [int]$_.Id })
-        LockPaths  = @($lockPaths | ForEach-Object { $_ })
-        IsBusy     = ($processes.Count -gt 0 -or $lockPaths.Count -gt 0)
+        ProcessIds         = $blockingProcessIds
+        RootProcessIds     = @($relatedProcessIds | ForEach-Object { $_ })
+        UnscopedProcessIds = @($unscopedProcessIds | ForEach-Object { $_ })
+        UnrelatedProcessIds = @($unrelatedProcessIds | ForEach-Object { $_ })
+        LockPaths          = @($lockPaths | ForEach-Object { $_ })
+        IsBusy             = ($blockingProcessIds.Count -gt 0 -or $lockPaths.Count -gt 0)
     }
 }
 
 function Assert-DailySessionTerraformIdle {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$TerraformRoot)
+    param(
+        [Parameter(Mandatory)][string]$TerraformRoot,
+        [ValidateRange(0, 5000)][int]$StabilizationDelayMilliseconds = 250
+    )
 
     $activity = Get-DailySessionTerraformActivity -TerraformRoot $TerraformRoot
+    if ($StabilizationDelayMilliseconds -gt 0) {
+        Start-Sleep -Milliseconds $StabilizationDelayMilliseconds
+        $activity = Get-DailySessionTerraformActivity -TerraformRoot $TerraformRoot
+    }
     if ($activity.IsBusy) {
-        throw "Another Terraform operation or state lock exists. process_count=$(@($activity.ProcessIds).Count), lock_count=$(@($activity.LockPaths).Count)"
+        throw "Another Terraform operation or state lock exists. process_count=$(@($activity.ProcessIds).Count), unscoped_process_count=$(@($activity.UnscopedProcessIds).Count), lock_count=$(@($activity.LockPaths).Count)"
     }
     return $activity
 }

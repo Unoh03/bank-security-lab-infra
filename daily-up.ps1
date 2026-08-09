@@ -300,11 +300,13 @@ function Wait-SsmAssociationSuccess {
                 throw "EKS add-on association failed: $AssociationId"
             }
         } catch {
+            $errorMessage = [string]$_.Exception.Message
             if ($attempt -eq $MaxAttempts -or
-                $_.Exception.Message -like 'EKS add-on association failed:*') {
+                $errorMessage -like 'EKS add-on association failed:*' -or
+                (Test-AwsCliNonRetryableIdentityFailure -Message $errorMessage)) {
                 throw
             }
-            $lastStatus = $_.Exception.Message
+            $lastStatus = $errorMessage
         }
 
         if ($attempt % 6 -eq 0) {
