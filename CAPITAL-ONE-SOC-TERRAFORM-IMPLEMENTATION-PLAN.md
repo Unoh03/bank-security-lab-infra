@@ -3,6 +3,7 @@
 > **상태:** Draft v0.6 — Foundation·Daily Apply 및 T4 공격 전 Runtime 검증, 실제 공격·자동 대응 미실행
 > **기준 시점:** 2026-08-12
 > **현재 단계:** T4 PREPARED — 통제된 공격 실행 전
+> **번호 구분:** 이 문서의 `T0~T6`는 Terraform 구현 단계다. 상위 계획의 `Gate 0~8`은 시연 Evidence 단계이며 같은 번호끼리 같은 작업이 아니다.
 > **상위 계획:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)
 > **기존 관측성 현황:** [`OBSERVABILITY-CURRENT-STATUS.md`](./OBSERVABILITY-CURRENT-STATUS.md)
 
@@ -673,8 +674,9 @@ Gate:
 - 비용 영향이 큰 Daily Runtime은 서울에만 존재한다. 서울에는 EKS 1·RDS 1·NAT 1·
   ALB 1과 Bastion·Managed System Node·Karpenter Node EC2 3대가 있고, 도쿄에는 해당
   리소스와 Valkey·EFS가 0개다. CloudFront·WAF 등 Global/Foundation 비용은 별도다.
-- Active Daily Session과 Watchdog Scheduled Task가 등록됐다. Hard Deadline은
-  2026-08-12 16:41 KST다.
+- Active Daily Session과 Watchdog Scheduled Task가 등록됐다. 현재 세션만
+  Soft Deadline 21:00·Hard Deadline 22:00 KST·Retry Until 자정으로 연장했다.
+  Scheduled Task의 다음 실행도 22:00이며 Source 기본 6시간 제한은 변경하지 않았다.
 - Foundation과 Daily 모두 같은 입력의 Post-Apply Fresh Plan이 `0 change`였다.
 - 실제 Credential 탈취·S3 객체 요청·CloudTrail Event·Alarm 전환·자동 Containment는
   아직 실행하거나 검증하지 않았다.

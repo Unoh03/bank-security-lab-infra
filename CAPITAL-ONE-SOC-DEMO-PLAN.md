@@ -5,6 +5,7 @@
 > **현재 절차 Gate:** Gate 0 — 시나리오 명세·Evidence·비밀정보 정리
 > **현재 Runtime 상태:** T4 PREPARED — `minimal + capital-one-lab`, 공격 실행 전
 > **Terraform 진행:** T1·T2 Source, T3 Plan-only, Foundation·Daily Apply와 Post-Apply 0-change 검증 완료
+> **번호 구분:** `T0~T6`는 Terraform 구현 순서이고 `Gate 0~8`은 시연 Evidence 검증 순서다. 같은 번호끼리 같은 작업이 아니다.
 > **기존 구현 현황:** [`OBSERVABILITY-CURRENT-STATUS.md`](./OBSERVABILITY-CURRENT-STATUS.md)
 > **기존 관측성 계획:** [`OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](./OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)
 > **Terraform 실행 계획:** [`CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md`](./CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md)
@@ -768,5 +769,7 @@ Infrastructure Bootstrap은 끝났다. 다음 작업은 공격을 바로 던지�
 
 현재 Runtime은 DVWA Pod가 실제 `optional/2` Karpenter Node에 있고, `validation/*`
 전용 Role Policy·Alarm `OK`·Argo CD `Synced / Healthy`까지 확인됐다. 이것은 공격 준비
-완료 증거이지 공격·탐지·대응 완료 증거가 아니다. Watchdog Hard Deadline은
-2026-08-12 16:41 KST이며, 작업을 중단하면 `daily-down.ps1`로 Daily Runtime을 종료한다.
+완료 증거이지 공격·탐지·대응 완료 증거가 아니다. 현재 Active Session의 Watchdog
+Hard Deadline은 2026-08-12 22:00 KST로 연장됐고 실패 재시도 창은 자정까지다.
+Source의 기본 6시간 제한은 변경하지 않았다. 작업을 중단하면 예약 시각을 기다리지
+말고 `daily-down.ps1`로 Daily Runtime을 종료한다.
