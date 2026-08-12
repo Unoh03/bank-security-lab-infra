@@ -3,6 +3,7 @@
 > **용도:** 정상 대조군 검증의 결과·시행착오·개선사항을 최종 보고서에서 재사용한다.
 > **기준 시점:** 2026-08-12
 > **검증 대상:** 정상 운영자의 고정 S3 `GetObject`는 기록되지만 Karpenter Node Role 탐지 Alarm은 울리지 않는가
+> **Gate 상태:** 종료 — 정탐·정상 대조군·Alert Runtime 필드·Post-Apply 0-change 확인
 > **공개 경계:** 원본 Bundle의 Account ID·Bucket·ARN·IP·Request ID는 이 문서에 옮기지 않는다.
 
 ---
@@ -177,9 +178,43 @@ object=validation/*
 verdict=success
 ```
 
-2026-08-12 Plan Snapshot에서는 Alarm Description 1개 in-place update, Create·Delete 0을
-확인했다. 이 Snapshot은 변경 범위 Evidence일 뿐 재개 후 실행 대상으로 간주하지 않는다.
-Apply 직전에 Fresh Plan을 다시 만들고 동일 범위인지 확인한 뒤 명시적 승인을 받아야 한다.
+2026-08-12 최초 Plan Snapshot은 변경 범위 Evidence로만 사용하고 실행하지 않았다.
+Commit `f2ab2dd35941df2f7d2395d6b13396470d538250`와 당시 State로 Fresh Plan을
+다시 만든 뒤 다음을 확인했다.
+
+```text
+변경 Resource: aws_cloudwatch_metric_alarm.capital_one_validation_getobject[0]
+Action: update
+변경 Attribute: alarm_description만
+Create / Delete / Replace: 0 / 0 / 0
+Terraform Check: 10 / 10 pass
+검토·Apply한 Plan SHA-256:
+A7521453C68C792DF938881FFE07765AFAA78B17EF4D33793F2C8E640AECF6E9
+```
+
+Plan의 `resource_drift`에는 ACM `renewal_eligibility`의 실제 상태 갱신과
+Metric Filter·Alarm의 `null`/빈 Map 정규화가 따로 보였다. 이 세 항목은
+`resource_changes`의 실행 동작으로 승격되지 않았고, 실제 Apply 동작은 위 Alarm
+Description 한 건뿐이었다.
+
+검토한 Saved Plan을 Apply한 뒤 AWS Runtime을 다시 읽었다.
+
+```text
+Alarm configuration updated: 2026-08-12T05:15:00.954Z
+Description 여섯 필드: 모두 존재
+SNS Alarm Action / OK Action: 각 1개, ActionsEnabled=true
+Alarm State: OK
+Terraform State와 AWS Runtime Description: 일치
+```
+
+같은 입력의 Post-Apply Fresh Plan은 2026-08-12T05:16:23Z에
+`create=0, update=0, delete=0, replace=0`과 Check 10/10 통과를 확인했다.
+Post-Apply Plan SHA-256은
+`84DD0449F692030C8357D2C2173D55981D884FE40EFC5DDCD363AA1ECA4E04A6`이다.
+Plan 파일은 민감한 상태 정보를 포함할 수 있는 Git 제외 Local Artifact이며, 후속
+0-change Plan 생성 때 덮어썼다. 따라서 Pre-Apply Plan Binary 자체가 Repository
+Evidence로 보존됐다고 주장하지 않고, Hash·Sanitized 판독 결과·Terraform State·AWS
+Runtime을 함께 근거로 사용한다.
 
 ---
 
@@ -193,6 +228,9 @@ Apply 직전에 Fresh Plan을 다시 만들고 동일 범위인지 확인한 뒤
 대표 탐지 Rule은 공격 Role 접근에서 전환되고 정상 운영자 접근에서는 전환되지 않았다.
 로그 전달 지연과 Event 발생 시간을 분리해 검증했다.
 실패한 조회를 반복 공격·반복 접근으로 해결하지 않고 Resume 가능한 절차를 만들었다.
+Alert 메시지의 `StateChangeTime`과 Description의 Role·행위·Severity를 AWS
+Runtime에서 확인했다.
+적용 뒤 같은 입력의 Terraform Plan이 0 change임을 확인했다.
 ```
 
 사용하면 안 됨:
@@ -202,11 +240,10 @@ Apply 직전에 Fresh Plan을 다시 만들고 동일 범위인지 확인한 뒤
 CloudTrail은 항상 5분 안에 도착한다.
 10분 안에 Event가 없으면 공격 또는 접근이 없었다.
 Refactor 이후 Runtime 재실행까지 완료했다.
-Alert Description 보강이 AWS Runtime에 적용됐다.
 ```
 
-마지막 두 항목은 각각 Runtime 재실행과 명시적 승인 후 Terraform Apply가 아직 없기
-때문이다.
+Refactor 이후 Negative Control을 다시 실행하지 않았으므로 마지막 항목은 계속 사용하면
+안 된다. Alert Description의 AWS Runtime 적용은 이번 Gate 종료에서 별도로 검증했다.
 
 ---
 

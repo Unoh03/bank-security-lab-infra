@@ -1,8 +1,8 @@
 # Capital One SOC 시연 Terraform 단계별 실행 계획
 
-> **상태:** Draft v0.9 — T4 정탐·정상 대조군 검증, Alert 필드 Source·Plan 완료·Apply 전
+> **상태:** Draft v1.0 — T4 정탐·정상 대조군·Alert 필드 Runtime 검증 완료
 > **기준 시점:** 2026-08-12
-> **현재 단계:** T4 DETECTOR TESTED — Alarm Description 1개 Apply 승인 전
+> **현재 단계:** T4 DETECTOR TESTED — Gate 3 종료, Gate 4 제품 선택 전
 > **번호 구분:** 이 문서의 `T0~T6`는 Terraform 구현 단계다. 상위 계획의 `Gate 0~8`은 시연 Evidence 단계이며 같은 번호끼리 같은 작업이 아니다.
 > **상위 계획:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)
 > **기존 관측성 현황:** [`OBSERVABILITY-CURRENT-STATUS.md`](./OBSERVABILITY-CURRENT-STATUS.md)
@@ -719,8 +719,13 @@ Gate:
 - 내부 Bundle의 Client Record는 Bucket·Caller ARN·Credential을 저장하지 않았고,
   CloudTrail Query 1행과 SHA-256 50개를 확인했다.
 - Alert Description Source에 `scenario=CAPITAL-ONE`, `severity=HIGH`,
-  `action=s3:GetObject`, Actor·Object·Verdict를 추가했다. Fresh Foundation Plan은
-  해당 Alarm Description 1개 in-place update뿐이며 Create·Delete는 없다. Apply 전이다.
+  `action=s3:GetObject`, Actor·Object·Verdict를 추가했다.
+- 기존 Saved Plan은 실행하지 않았다. Commit `f2ab2dd`와 현재 State로 만든 Fresh
+  Foundation Plan에서 해당 Alarm Description 1개 in-place update, Create·Delete·Replace
+  0건과 Terraform Check 10/10 통과를 확인한 뒤 검토한 Plan만 Apply했다.
+- AWS `describe-alarms`에서 여섯 Description 필드, SNS Alarm·OK Action, 현재
+  `OK` 상태를 확인했다. Terraform State와 AWS 실제 Description이 일치했고, 같은
+  입력의 Post-Apply Fresh Plan도 `0 change`였다.
 
 ### T5 — Terraform 영구 복구
 
@@ -882,12 +887,14 @@ Terraform 부분은 다음이 모두 충족돼야 완료다.
 
 ## 10. 다음 작업
 
-Foundation·Daily Apply, 공격 정탐, Gate 2 Coverage, 정상 GetObject 대조군까지 끝났다.
-Alert Description 보강 Source와 2026-08-12 Plan Snapshot도 완료됐다. 재개 후에는 해당
-Saved Plan을 그대로 쓰지 않고 Foundation Fresh Plan을 다시 만든다.
-`aws_cloudwatch_metric_alarm.capital_one_validation_getobject[0]` Description 1개 Update,
-Create·Delete 0인지 재확인하고 명시적 승인 뒤에만 Apply한다. Apply 후
-`describe-alarms`로 Runtime Description을 확인한 뒤 중앙 관제 제품 한 개를 결정한다.
+Foundation·Daily Apply, 공격 정탐, Gate 2 Coverage, 정상 GetObject 대조군, Alert
+Description Runtime 적용과 Post-Apply 0-change까지 끝났다. Gate 3을 위해 같은 공격이나
+GetObject를 다시 실행할 필요는 없다.
+
+다음은 Gate 4의 중앙 관제 제품 한 개를 결정하는 일이다. 제품과 Event 입력 계약을
+정하기 전에는 SIEM용 IAM·EventBridge Target을 추측해 Terraform에 추가하지 않는다.
+제품을 선택한 뒤 필요한 AWS 읽기·전달 권한을 Source로 만들고 Plan 범위를 다시
+검토한다.
 
 Containment 구현 전에는 Alarm이 실제 `OK`로 복귀했는지 확인하고 새 TAKE를 사용한다.
 취약 Runtime의 영구 복구는 최종 촬영 확인 전에는 수행하지 않되, 통제권 상실·자리

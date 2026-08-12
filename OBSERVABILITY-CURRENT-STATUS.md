@@ -2,7 +2,7 @@
 
 > **용도:** 지금 어디까지 왔고, 바로 다음에 무엇을 해야 하는지만 확인하는 현황판  
 > **기준 시점:** 2026-08-12
-> **현재 Focus:** Capital One Alert Description 1개 Apply 승인 전
+> **현재 Focus:** Gate 4 중앙 관제 제품 한 개 선택
 > **관련 결정:** [`OBSERVABILITY-IAM-DECISIONS.md`](./OBSERVABILITY-IAM-DECISIONS.md)  
 > **전체 계획:** [`OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](./OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)  
 > **보고서 Evidence:** [`report/OBSERVABILITY-EVIDENCE-INDEX.md`](./report/OBSERVABILITY-EVIDENCE-INDEX.md)
@@ -42,7 +42,7 @@ flowchart LR
 ```text
 1. Gate 2 Coverage 판정 완료
 2. 정상 GetObject Negative Control 완료
-3. Alert Description Source·Fresh Plan 완료, Apply 전
+3. Gate 3 Alert Description Apply·Runtime·Post-Apply 0-change 완료
 4. 중앙 관제 제품 한 개 선택
 ```
 
@@ -87,7 +87,7 @@ S3 Source별 저장, Athena 실제 분석, Grafana Athena 시각화는 닫았다
 | Capital One 확정 탐지 | CloudTrail GetObject 1행·Metric Filter·새 Alarm 전환 | **완료** |
 | Capital One 로그 Coverage | WAF·DVWA·IMDS 공백·CloudTrail·GuardDuty 0건 판정 | **Gate 2 완료** |
 | Capital One 정상 대조군 | 정상 GetObject 1행·Alarm OK·상태 시각 불변 | **완료** |
-| Capital One Alert 필드 | Severity·Action·Actor·Object·Verdict Source, 1-update Plan | **Apply 전** |
+| Capital One Alert 필드 | 시간·Severity·Action·Actor·Object·Verdict Runtime 확인, Post-Apply 0-change | **완료** |
 | EKS Pod Identity | Source 정의 존재, Runtime 미검증 | **별도 미완료** |
 | WAF Hardening | 계획만 존재 | **후속** |
 
@@ -218,7 +218,7 @@ Pod Identity Runtime             미검증
 
 ## 6. 바로 다음 한 가지
 
-### Capital One Gate 3 Alert Description Apply 승인
+### Gate 4 중앙 관제 제품 한 개 선택
 
 Baseline `capital-one-20260812T025054Z`는 다음 경로까지 실제 Runtime에서 닫혔다.
 
@@ -254,20 +254,28 @@ DVWA Command Injection
 → Bundle SHA-256 50개 일치
 ```
 
-현재 Source는 Alarm Description에 Scenario·Severity·Action·Actor·Object·Verdict를
-추가했다. 2026-08-12 Plan Snapshot은 Alarm Description 1개 in-place update만 있고
-Create·Delete는 없었다. **아직 Apply하지 않았으므로 현재 Runtime 메시지에는
-Severity가 없다.** 재개 후에는 Snapshot을 그대로 Apply하지 않고 Fresh Plan을 다시
-만들어 동일 범위인지 확인한다.
+Gate 3 Alert 필드 보강도 2026-08-12에 끝났다.
+
+```text
+기존 Saved Plan: 실행하지 않음
+Fresh Plan: Alarm Description 1개 in-place update
+Create / Delete / Replace: 0 / 0 / 0
+Terraform Check: 10 / 10 pass
+Apply 뒤 AWS describe-alarms: 여섯 Description 필드·SNS Action·OK 상태 확인
+Terraform State와 AWS Runtime Description: 일치
+Post-Apply Fresh Plan: 0 change
+```
+
+따라서 Gate 3을 위해 공격이나 정상 GetObject를 반복하지 않는다. 다음 결정은
+Wazuh 또는 Elastic Security 중 현재 Runtime에 한 제품을 선택하고, CloudWatch Alarm
+State Change Event의 입력 형식·최소 권한·Alert 완료 조건을 확정하는 것이다.
 
 ---
 
 ## 7. 이후 순서
 
 ```text
-Foundation Fresh Plan 재생성·1개 Update 재확인
-→ 명시적 승인 뒤 Alert Description Apply·Runtime 확인
-→ 중앙 관제 제품 1개 선택
+중앙 관제 제품 1개 선택
 → SIEM Alert
 → SOAR Dry Run
 → GitOps Containment·재공격 실패

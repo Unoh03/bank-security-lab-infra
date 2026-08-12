@@ -1,10 +1,10 @@
 # Capital One 기반 보안 관제·자동 대응 시연 계획
 
-> **상태:** Draft v0.8 — Gate 3 정상 대조군 검증, Alert 필드 Source·Plan 완료·Apply 전
+> **상태:** Draft v0.9 — Gate 3 종료, Gate 4 중앙 관제 제품 선택 전
 > **기준 시점:** 2026-08-12
-> **현재 절차 Gate:** Gate 3 — Alert description 1건 Apply 승인 전
+> **현재 절차 Gate:** Gate 4 — SIEM·중앙 관제 제품 한 개 선택 전
 > **현재 Runtime 상태:** T4 BASELINE OBSERVED — `minimal + capital-one-lab`, 자동 Containment 실행 전
-> **Terraform 진행:** T1·T2 Source, T3 Plan-only, Foundation·Daily Apply와 Post-Apply 0-change 검증 완료
+> **Terraform 진행:** T1·T2 Source, T3 Plan-only, T4 탐지·대조군·Alert 필드 Runtime 검증 완료
 > **번호 구분:** `T0~T6`는 Terraform 구현 순서이고 `Gate 0~8`은 시연 Evidence 검증 순서다. 같은 번호끼리 같은 작업이 아니다.
 > **기존 구현 현황:** [`OBSERVABILITY-CURRENT-STATUS.md`](./OBSERVABILITY-CURRENT-STATUS.md)
 > **기존 관측성 계획:** [`OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](./OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)
@@ -75,8 +75,8 @@ Gate 8  근본 원인 복구와 팀 전체 연습
 ```
 
 Gate는 별개의 기능 목록이 아니라 앞 단계의 결과를 확인하고 다음 단계로 넘어가기
-위한 중간 완료 조건이다. 현재는 새 제품을 설치하기 전에 Gate 0~2에서 공격 재현과
-실제 로그 존재 여부를 먼저 확인한다.
+위한 중간 완료 조건이다. Gate 0~3에서 공격 재현, 로그 Coverage, 정탐·정상 대조군,
+Alert 필드 Runtime 검증까지 닫았다. 다음은 Gate 4의 중앙 관제 제품 선택이다.
 
 ### 0.5 빠른 차단과 영구 대응의 차이
 
@@ -527,7 +527,7 @@ GuardDuty Finding과 WAF·Application Event는 발생하면 조사 Timeline을 �
 - [x] Rule 조건과 제외 조건 문서화
 - [x] 정상 접근으로 오탐 Test
 - [x] 공격 접근으로 정탐 Test
-- [ ] Alert에 시간·Role·행위·Severity 포함 — Source·Fresh Plan 완료, Runtime Apply 전
+- [x] Alert에 시간·Role·행위·Severity 포함 — `StateChangeTime` + Runtime Description 확인
 
 Runtime 정탐 결과는 Metric Filter의 새 `ALARM` 전환과 같은 시간창의 CloudTrail
 `GetObject` 1행으로 확인했다. 첫 Evidence Query가 0행이었던 원인은 공격이나 AWS
@@ -562,8 +562,7 @@ Delivery Grace, `event_time` 재필터, 제한 재시도를 그대로 사용한�
 현재 Invocation과 세 단계의 소요시간을 남긴다.
 
 현재 SNS Alarm 메시지는 기본 Schema의 `StateChangeTime`과 `AlarmDescription`을 사용한다.
-실제 Runtime Description에는 GetObject와 Node Role은 있지만 Severity가 없다. Source는
-다음 고정 필드를 Description에 넣도록 보강했다.
+Source와 AWS Runtime의 Description에는 다음 고정 필드가 들어 있다.
 
 ```text
 scenario=CAPITAL-ONE
@@ -574,13 +573,15 @@ object=validation/*
 verdict=success
 ```
 
-2026-08-12에 만든 Foundation Plan Snapshot은 해당 Alarm의 `alarm_description`
-**1개 in-place update**만 표시하고 Create·Delete는 0건이었다. 이는 변경 범위 Evidence일
-뿐 재개 뒤 그대로 실행할 Plan이 아니다. Apply 직전 Source·State 기준으로 Fresh Plan을
-다시 생성하고 같은 범위인지 확인한다. 아직 Apply하지 않았으므로 Runtime Alert가
-보강됐다고 주장하지 않는다. SIEM 단계에서는 CloudWatch Alarm State Change Event를
-EventBridge로 받아 정규 JSON으로 변환하며, 지금 SNS 경로에 별도 Target을 더해 중복
-이메일·SMS를 만들지 않는다.
+기존 Plan Snapshot은 실행하지 않았다. 2026-08-12 Source·State 기준 Fresh Plan을 다시
+만들어 해당 Alarm의 `alarm_description` **1개 in-place update**, Create·Delete·Replace
+0건과 Terraform Check 10/10 통과를 확인한 뒤 승인된 Plan만 Apply했다. AWS
+`describe-alarms`에서 여섯 필드, SNS Action, 현재 `OK` 상태를 확인했고 Terraform
+State와 실제 Description도 일치했다. 같은 입력의 Post-Apply Fresh Plan은
+`create=0, update=0, delete=0, replace=0`이다.
+
+SIEM 단계에서는 CloudWatch Alarm State Change Event를 EventBridge로 받아 정규 JSON으로
+변환하며, 지금 SNS 경로에 별도 Target을 더해 중복 이메일·SMS를 만들지 않는다.
 
 ### Gate 4 — SIEM·중앙 관제 계층
 
@@ -846,16 +847,15 @@ Argo CD가 담당한 것과 Terraform이 담당한 것은 무엇인가
 
 ## 11. 지금 바로 할 한 가지
 
-Baseline·Gate 2·정상 접근 Negative Control까지 끝났다. 다음은 같은 공격이나 정상
-GetObject를 반복하는 단계가 아니라, 재개 시점에 Foundation Fresh Plan을 다시 만들고
-Alarm Description 1개 update인지 사람이 확인해 Apply할지 결정하는 단계다.
+Gate 3까지 끝났다. 다음은 같은 공격이나 정상 GetObject를 반복하는 단계가 아니라,
+Gate 4에서 중앙 관제 제품 한 개를 선택하고 CloudWatch Alarm State Change Event를
+어떤 입력 형태로 전달할지 확정하는 단계다.
 
 ```text
-기존 Plan Snapshot: Alarm Description 1개 update, Create/Delete 0
-→ Apply 직전 Fresh Plan 재생성·동일 범위 확인
-→ 명시적 승인 뒤에만 Foundation Apply
-→ describe-alarms로 새 Description Runtime 확인
-→ 그 뒤 중앙 관제 제품 한 개 선택
+Gate 3: 정탐 + 정상 대조군 + Alert Runtime 필드 + Post-Apply 0-change 완료
+→ Wazuh와 Elastic Security를 현재 요구사항으로 비교
+→ 한 제품만 선택
+→ AWS Event 입력·최소 권한·Alert 화면의 완료 조건 확정
 ```
 
 현재 확인된 범위는 `Command Injection → IMDS → Node Role Credential → 고정 가짜 S3

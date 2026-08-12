@@ -2,7 +2,7 @@
 
 > **용도:** 최종 보고서·발표 자료에 재사용할 Observability / S3 / Athena / Grafana 증거를 한곳에서 추적한다.  
 > **기준 시점:** 2026-08-12
-> **진행 상태:** 기존 Observability Evidence + Capital One 정탐·Gate 2·정상 대조군 검증 완료
+> **진행 상태:** 기존 Observability Evidence + Capital One Gate 3 Runtime 검증 완료
 > **관련 현황:** [`../OBSERVABILITY-CURRENT-STATUS.md`](../OBSERVABILITY-CURRENT-STATUS.md)  
 > **실행 계획:** [`../OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](../OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)
 
@@ -482,7 +482,28 @@ GetObject 실패가 아니라 Query 파일 인코딩과 전달 지연 Scan Windo
 [`CAPITAL-ONE-GATE3-VALIDATION-LESSONS.md`](./CAPITAL-ONE-GATE3-VALIDATION-LESSONS.md)에
 분리해 정리했다.
 
-## 9.3 기존 Pod Identity 후속
+## 9.3 Capital One Gate 3 Alert Runtime 적용
+
+Sanitized 변경·검증 기록:
+
+```text
+Source commit: f2ab2dd35941df2f7d2395d6b13396470d538250
+Fresh Plan: Alarm Description 1개 update, Create/Delete/Replace 0
+검토·Apply Plan SHA-256:
+A7521453C68C792DF938881FFE07765AFAA78B17EF4D33793F2C8E640AECF6E9
+AWS Alarm configuration updated: 2026-08-12T05:15:00.954Z
+AWS Runtime: 여섯 Description 필드·SNS Action·OK 상태
+Terraform State와 AWS Runtime Description: 일치
+Post-Apply Fresh Plan: 0 change, Check 10/10 pass
+```
+
+Pre-Apply Plan Binary는 Git 제외 Local Artifact였고 Post-Apply Plan 생성 때 덮어썼다.
+따라서 Binary 보존을 주장하지 않는다. 공개 가능한 Hash·Sanitized 판독 결과와
+지속되는 Terraform State·AWS Runtime을 함께 근거로 사용한다. 상세 해석은
+[`CAPITAL-ONE-GATE3-VALIDATION-LESSONS.md`](./CAPITAL-ONE-GATE3-VALIDATION-LESSONS.md)를
+따른다.
+
+## 9.4 기존 Pod Identity 후속
 
 ```text
 Pod Identity Association
