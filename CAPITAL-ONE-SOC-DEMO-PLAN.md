@@ -1,8 +1,8 @@
 # Capital One 기반 보안 관제·자동 대응 시연 계획
 
-> **상태:** Draft v0.6 — 공격·CloudTrail·확정 Alarm 검증 완료, SIEM·SOAR·GitHub 자동화 미검증
+> **상태:** Draft v0.7 — Gate 2 공격 로그 Coverage 확정, SIEM·SOAR·GitHub 자동화 미검증
 > **기준 시점:** 2026-08-12
-> **현재 절차 Gate:** Gate 2 — S3 CloudTrail 확인 완료, 나머지 공격 로그 Coverage 확인 중
+> **현재 절차 Gate:** Gate 3 — 정상 GetObject 오탐 Test·Alert 필드 보강 전
 > **현재 Runtime 상태:** T4 BASELINE OBSERVED — `minimal + capital-one-lab`, 자동 Containment 실행 전
 > **Terraform 진행:** T1·T2 Source, T3 Plan-only, Foundation·Daily Apply와 Post-Apply 0-change 검증 완료
 > **번호 구분:** `T0~T6`는 Terraform 구현 순서이고 `Gate 0~8`은 시연 Evidence 검증 순서다. 같은 번호끼리 같은 작업이 아니다.
@@ -474,19 +474,33 @@ CloudTrail: GetObject 1행, Role·Object·성공·시간창·조사 필드 일�
 
 목적: 공격 단계별로 무엇이 보이고 무엇이 안 보이는지 확정한다.
 
-| 공격 단계 | 후보 Source | 확인할 내용 |
-|---|---|---|
-| DVWA 공격 요청 | WAF·ALB·DVWA Log | 요청 시각·경로·Source·Rule Match |
-| Pod의 IMDS 접근 | Application·Runtime·Network 후보 | 현재 구성에서 실제 관측 가능한지 |
-| Node Role 외부 사용 | CloudTrail·GuardDuty | Role·Source IP·User Agent·Finding |
-| S3 객체 읽기 | CloudTrail S3 Data Event | `GetObject`·Role·Prefix·성공/거부 |
+2026-08-12 Baseline `capital-one-20260812T025054Z` 판정:
+
+| 공격 단계 | 실제 Evidence | 판정 | 같은 사건을 묶는 기준·한계 |
+|---|---|---|---|
+| CloudFront → WAF | WAF Event 2건 | **관측됨** | Runner의 두 CloudFront Request ID와 정확히 일치. `POST /vulnerabilities/exec/`, `EC2MetaDataSSRF_Body` Label, `COUNT`·`ALLOW` 확인 |
+| WAF → DVWA | Apache Access 2건 | **부분 관측** | 같은 시간창·Method·Path·건수로 연결. 두 요청 모두 HTTP 200이지만 WAF와 공유하는 Request ID는 현재 로그에 없음 |
+| DVWA 명령 실행 | BANK Audit | **미수집** | Login 성공 Event만 구조화됨. `exec` Route는 Command Body·실행 결과·IMDS 응답을 Audit Log에 남기지 않음 |
+| Pod → IMDS | Runner 결과 + VPC Flow Logs | **결과 관측 / 네트워크 미수집** | Role·Credential 응답 성공은 Runner가 확인. VPC Flow Logs에는 0건이며, AWS가 `169.254.169.254` 메타데이터 트래픽을 수집 제외함 |
+| Node Role → S3 | CloudTrail S3 Data Event 1행 | **관측됨** | 실행 시간창·Assumed Role·고정 Object Key·성공·Source IP·User Agent·Request ID로 연결 |
+| GuardDuty | Detector API + EventBridge Log Group | **탐지 없음** | TAKE 시작 약 49분 뒤 재확인: Finding 0건·전달 Event 0건. `S3_DATA_EVENTS` Protection이 꺼져 있어 대표 탐지기로 사용하지 않음 |
+| 확정 경보 | Metric Filter → Alarm | **탐지됨** | 위 CloudTrail 1행이 Rule 조건과 일치하고 같은 TAKE에서 Alarm이 새 `ALARM`으로 전환 |
+
+VPC Flow Logs의 IMDS 제외 근거는 AWS 공식 문서의
+[Flow log limitations](https://docs.aws.amazon.com/vpc/latest/userguide/flow-logs-limitations.html)이다.
+따라서 이 구간의 0건은 공격이 없었다는 뜻이 아니라 **현재 수집 방식으로는 직접 볼 수
+없는 구간**이라는 뜻이다.
+
+`TAKE_ID`는 우리 Runner와 Evidence Bundle을 묶는 외부 식별자이며 AWS Event 자체에
+자동 삽입되지 않는다. 현재 가장 강한 연결은 WAF의 CloudFront Request ID 두 개와
+CloudTrail의 시간·Role·고정 Key·성공 조건이다.
 
 완료 조건:
 
 - [x] `enable_project_s3_data_events` 실제 Runtime 값 확인
 - [x] 외부 사용 시점 CloudTrail Event 확인
-- [ ] GuardDuty Finding 발생 여부 확인
-- [ ] 보이지 않는 구간을 ‘미탐’ 또는 ‘미수집’으로 명시
+- [x] GuardDuty Finding 발생 여부 확인 — TAKE 시작 이후 0건
+- [x] 보이지 않는 구간을 ‘미탐’ 또는 ‘미수집’으로 명시
 - [x] 동일 사건을 묶는 최소 Field 선정
 
 ### Gate 3 — 확정 탐지 경로 Runtime 검증
@@ -785,20 +799,21 @@ Argo CD가 담당한 것과 Terraform이 담당한 것은 무엇인가
 
 ## 11. 지금 바로 할 한 가지
 
-Baseline과 확정 탐지는 끝났다. 공격을 다시 실행하거나 Terraform을 다시 Apply하지
-않고, 같은 TAKE의 Gate 2 Coverage Matrix를 먼저 완성한다.
+Baseline·확정 탐지·Gate 2 Coverage 판정까지 끝났다. 다음은 Terraform을 다시 Apply하거나
+같은 공격을 반복하는 단계가 아니라, Gate 3의 **정상 GetObject 오탐 Test와 Alert 필드
+보강**이다.
 
 ```text
-WAF·DVWA에서 Command Injection 요청 흔적 확인
-→ Pod→IMDS 구간이 현재 로그에서 보이는지/안 보이는지 판정
-→ GuardDuty 실제 Finding 발생 여부 확인
-→ CloudTrail 확정 1행과 최소 상관 Field 정리
-→ Gate 3의 정상 GetObject 오탐 Test와 Alert 필드 보강
+Alarm이 실제 OK로 복귀한 뒤 정상 운영자 Identity로 고정 가짜 Object를 한 번 읽기
+→ Node Role 조건이 불일치하므로 대표 Rule이 ALARM으로 전환되지 않는지 확인
+→ Alert Payload에 시간·Role·행위·Severity가 있는지 확인·보강
 → 그 뒤 중앙 관제 제품 한 개 선택
 ```
 
 현재 확인된 범위는 `Command Injection → IMDS → Node Role Credential → 고정 가짜 S3
-GetObject → CloudTrail → Metric Filter → Alarm`이다. SIEM 화면, SOAR, GitHub 변경,
-Argo CD Containment, 재공격 실패는 아직 구현하거나 검증하지 않았다. Active Session의
+GetObject → CloudTrail → Metric Filter → Alarm`과 같은 TAKE의 WAF·DVWA·GuardDuty
+Coverage 판정이다. Pod→IMDS 직접 네트워크 로그는 현재 방식으로 수집되지 않는다.
+SIEM 화면, SOAR, GitHub 변경, Argo CD Containment, 재공격 실패는 아직 구현하거나
+검증하지 않았다. Active Session의
 Watchdog Hard Deadline은 2026-08-12 22:00 KST, 실패 재시도 창은 자정까지다. 작업을
 중단하면 예약 시각을 기다리지 말고 `daily-down.ps1`로 Daily Runtime을 종료한다.

@@ -2,7 +2,7 @@
 
 > **용도:** 지금 어디까지 왔고, 바로 다음에 무엇을 해야 하는지만 확인하는 현황판  
 > **기준 시점:** 2026-08-12
-> **현재 Focus:** Capital One Baseline 이후 Gate 2 로그 Coverage 확정
+> **현재 Focus:** Capital One Gate 3 정상 GetObject 오탐 Test·Alert 필드 보강
 > **관련 결정:** [`OBSERVABILITY-IAM-DECISIONS.md`](./OBSERVABILITY-IAM-DECISIONS.md)  
 > **전체 계획:** [`OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](./OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)  
 > **보고서 Evidence:** [`report/OBSERVABILITY-EVIDENCE-INDEX.md`](./report/OBSERVABILITY-EVIDENCE-INDEX.md)
@@ -34,18 +34,15 @@ flowchart LR
 
     K["EKS ServiceAccount"] --> L["Pod Identity Association"]
     L --> M["IAM Role"]
-    M --> N["Pod Runtime 권한\n현재 Focus"]
+    M --> N["Pod Runtime 권한\n별도 미완료"]
 ```
 
 ### 현재 순서
 
 ```text
-1. 같은 TAKE의 WAF·DVWA 공격 요청 흔적 확인
-2. Pod→IMDS 구간의 현재 수집 여부 판정
-3. GuardDuty 실제 Finding 발생 여부 확인
-4. CloudTrail 1행과 최소 상관 Field 정리
-5. 정상 GetObject 오탐 Test·Alert Field 보강
-6. 중앙 관제 제품 한 개 선택
+1. Gate 2 Coverage 판정 완료
+2. 정상 GetObject 오탐 Test·Alert Field 보강
+3. 중앙 관제 제품 한 개 선택
 ```
 
 S3 Source별 저장, Athena 실제 분석, Grafana Athena 시각화는 닫았다. 새 Athena Panel을 추가하거나 같은 Dashboard를 계속 다듬지 않는다.
@@ -87,6 +84,7 @@ S3 Source별 저장, Athena 실제 분석, Grafana Athena 시각화는 닫았다
 | Grafana Athena JSON Export | Repository에 Runtime Export 저장 | **완료** |
 | Capital One 공격 Baseline | Command Injection→IMDS→Node Role→고정 가짜 S3 읽기 | **1회 성공** |
 | Capital One 확정 탐지 | CloudTrail GetObject 1행·Metric Filter·새 Alarm 전환 | **완료** |
+| Capital One 로그 Coverage | WAF·DVWA·IMDS 공백·CloudTrail·GuardDuty 0건 판정 | **Gate 2 완료** |
 | EKS Pod Identity | Source 정의 존재, Runtime 미검증 | **별도 미완료** |
 | WAF Hardening | 계획만 존재 | **후속** |
 
@@ -217,7 +215,7 @@ Pod Identity Runtime             미검증
 
 ## 6. 바로 다음 한 가지
 
-### Capital One Gate 2 Coverage Matrix
+### Capital One Gate 3 정상 오탐 Test·Alert 필드
 
 Baseline `capital-one-20260812T025054Z`는 다음 경로까지 실제 Runtime에서 닫혔다.
 
@@ -231,18 +229,28 @@ DVWA Command Injection
 → 새 CloudWatch Alarm 전환
 ```
 
-다음은 공격이나 Terraform을 다시 실행하는 작업이 아니다. 같은 TAKE의 기존 로그로
-WAF·DVWA 요청, Pod→IMDS 구간, GuardDuty를 조회하고 각 구간을 `관측됨 / 미수집 /
-탐지 없음 / 미검증`으로 구분한다. 그 뒤에만 정상 GetObject 오탐 Test를 별도
-승인된 요청으로 수행한다.
+같은 TAKE의 Coverage 판정:
+
+| 구간 | 판정 | 핵심 근거 |
+|---|---|---|
+| CloudFront → WAF | 관측됨 | WAF 2건과 Runner의 두 Edge Request ID 정확히 일치 |
+| WAF → DVWA | 부분 관측 | Apache `POST /vulnerabilities/exec/` 2건·HTTP 200, 공유 Request ID 없음 |
+| DVWA 명령 실행 | 미수집 | 구조화 Audit에 Command Body·결과·IMDS 응답 없음 |
+| Pod → IMDS | 결과 관측 / 네트워크 미수집 | Runner 성공, VPC Flow Logs는 AWS 제한상 IMDS 제외 |
+| Node Role → S3 | 관측됨 | CloudTrail `GetObject` 1행·Role·Key·성공·시간창 일치 |
+| GuardDuty | 탐지 없음 | TAKE 시작 약 49분 뒤 Finding 0건·전달 Event 0건, S3 Protection 비활성 |
+| Custom Rule | 탐지됨 | Metric Filter와 새 Alarm 전환 |
+
+다음은 Terraform 재Apply나 같은 공격 반복이 아니다. 정상 접근 한 번이 대표 Rule을
+울리지 않는지 확인하고, Alert에 시간·Role·행위·Severity가 충분히 들어가는지
+점검·보강한다.
 
 ---
 
 ## 7. 이후 순서
 
 ```text
-Capital One Gate 2 Coverage
-→ 정상 GetObject 오탐 Test·Alert Field 보강
+정상 GetObject 오탐 Test·Alert Field 보강
 → 중앙 관제 제품 1개 선택
 → SIEM Alert
 → SOAR Dry Run

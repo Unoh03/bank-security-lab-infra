@@ -2,7 +2,7 @@
 
 > **용도:** 최종 보고서·발표 자료에 재사용할 Observability / S3 / Athena / Grafana 증거를 한곳에서 추적한다.  
 > **기준 시점:** 2026-08-12
-> **진행 상태:** 기존 Observability Evidence + Capital One Baseline·CloudTrail·Alarm Runtime 검증 완료
+> **진행 상태:** 기존 Observability Evidence + Capital One Baseline·탐지·Gate 2 Coverage 검증 완료
 > **관련 현황:** [`../OBSERVABILITY-CURRENT-STATUS.md`](../OBSERVABILITY-CURRENT-STATUS.md)  
 > **실행 계획:** [`../OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](../OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)
 
@@ -422,6 +422,10 @@ Credential 값 비노출 상태에서 고정 가짜 CSV 5행 읽기 성공
 준비·다운로드 SHA-256 일치
 같은 TAKE로 새 CloudWatch Alarm 전환
 CloudTrail GetObject 1행의 Role·Object·성공·시간창 일치
+WAF 2건과 Runner의 두 CloudFront Request ID 정확히 일치
+DVWA Apache에 같은 시간창의 exec POST 2건·HTTP 200
+Pod→IMDS 직접 VPC Flow Log는 AWS 제한상 수집되지 않음
+GuardDuty는 TAKE 시작 약 49분 뒤 Finding 0건·EventBridge 전달 Event 0건
 ```
 
 이 Bundle은 CloudTrail의 ARN·Bucket·Source IP·Request ID 같은 조사 필드를 포함하는
@@ -433,12 +437,18 @@ Credential 관련 값을 다시 마스킹해 별도로 만든다.
 
 ```text
 실제 SSRF
-WAF·DVWA·Pod→IMDS 전체 Coverage
-GuardDuty 실제 Finding
+DVWA Command Body·명령 실행 결과·IMDS 응답의 애플리케이션 로그
+Pod→IMDS의 직접 네트워크 로그
+GuardDuty Finding 발생
 SIEM·SOAR
 GitHub·Argo Containment
 재공격 실패·Terraform 영구 복구
 ```
+
+Gate 2 판정에서 `미수집`과 `탐지 없음`을 구분한다. Pod→IMDS는 공격 결과가 Runner에서
+확인됐지만 VPC Flow Logs가 IMDS 주소를 원래 수집하지 않아 직접 로그가 없는 경우다.
+GuardDuty는 Detector를 직접 조회했지만 같은 TAKE 이후 Finding 자체가 0건인 경우다.
+둘 다 CloudTrail Custom Rule의 정탐 성공을 뒤집지 않는다.
 
 ## 9.2 기존 Pod Identity 후속
 

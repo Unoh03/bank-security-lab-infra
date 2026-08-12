@@ -1,8 +1,8 @@
 # Capital One SOC 시연 Terraform 단계별 실행 계획
 
-> **상태:** Draft v0.7 — T4 공격·CloudTrail·Alarm Baseline 검증, 자동 대응 미실행
+> **상태:** Draft v0.8 — T4 Baseline·Gate 2 로그 Coverage 검증, 자동 대응 미실행
 > **기준 시점:** 2026-08-12
-> **현재 단계:** T4 BASELINE OBSERVED — 자동 Containment·재공격 검증 전
+> **현재 단계:** T4 BASELINE OBSERVED / Gate 2 완료 — 정상 오탐 Test 전
 > **번호 구분:** 이 문서의 `T0~T6`는 Terraform 구현 단계다. 상위 계획의 `Gate 0~8`은 시연 Evidence 단계이며 같은 번호끼리 같은 작업이 아니다.
 > **상위 계획:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)
 > **기존 관측성 현황:** [`OBSERVABILITY-CURRENT-STATUS.md`](./OBSERVABILITY-CURRENT-STATUS.md)
@@ -108,9 +108,9 @@ Runtime을 내리거나 승인된 `hardened` 복구를 수행한다.
 | GuardDuty Finding 보존 | EventBridge → CloudWatch Logs | 구현됨 |
 | GuardDuty 알림 | EventBridge → SNS | 구현됨 |
 | GuardDuty S3 Protection | `S3_DATA_EVENTS` | 명시적 `DISABLED` |
-| Karpenter NodeClass | Helm Chart와 SSM Template | Profile별 `metadataOptions` Source 구현·Runtime 미검증 |
-| Karpenter Node Role 실습 권한 | `validation/*` 전용 Policy | `capital-one-lab`에서만 생성·Runtime 미검증 |
-| Capital One 확정 탐지 | CloudTrail Metric Filter → Alarm → SNS | Source 구현·기본 `false`·Runtime 미검증 |
+| Karpenter NodeClass | Helm Chart와 SSM Template | Profile별 `metadataOptions` Source 구현·실습 Runtime 검증 |
+| Karpenter Node Role 실습 권한 | `validation/*` 전용 Policy | `capital-one-lab` Runtime·허용/거부 범위 검증 |
+| Capital One 확정 탐지 | CloudTrail Metric Filter → Alarm → SNS | Source 구현·기본 `false`·실습 Runtime 정탐 검증 |
 
 ### 1.2 현재 계획서와 Source의 불일치
 
@@ -130,7 +130,9 @@ security_scenario_profile = "capital-one-lab" # 명시적 실습
 
 ### 1.3 Source만으로 확정할 수 없는 Runtime
 
-다음 항목은 AWS·Kubernetes에서 다시 확인하기 전까지 미검증이다.
+다음은 과거 조원 실습 당시 자료만으로는 확정할 수 없던 항목이다. 2026-08-12의 새
+통제 Baseline은 별도 Runtime Evidence로 확인했으며 과거 실행의 증거를 소급해
+대체하지 않는다.
 
 ```text
 실제 EC2NodeClass의 metadataOptions
@@ -694,6 +696,17 @@ Gate:
   CAPITAL-ONE에만 최소 1행·제한 재조회를 적용해 최종 Bundle 1행을 확인했다.
 - 자동 Containment·GitHub Commit·Argo Rollout·재공격 실패·수동 Reset은 아직
   실행하거나 검증하지 않았다.
+- 같은 TAKE의 WAF Event 2건은 Runner가 저장한 두 CloudFront Request ID와 정확히
+  일치했고, `POST /vulnerabilities/exec/` Body에 `EC2MetaDataSSRF_Body` Label이 붙었지만
+  Managed Rule은 `COUNT`라 요청은 `ALLOW`됐다.
+- DVWA Apache Access에는 같은 시간창의 `POST /vulnerabilities/exec/` 2건과 HTTP 200이
+  남았다. BANK 구조화 Audit에는 Login 성공만 있고 Command Body·실행 결과·IMDS 응답은
+  남지 않아 애플리케이션 실행 단계는 미수집이다.
+- VPC Flow Logs에는 `169.254.169.254`가 0건이다. AWS 공식 제한상 IMDS 트래픽은
+  VPC Flow Logs 수집 대상이 아니므로, 이는 공격 부재가 아니라 직접 관측 공백이다.
+- TAKE 시작 약 49분 뒤 GuardDuty API와 EventBridge 보존 Log Group을 다시 조회했으나
+  실제 Finding과 전달 Event는 모두 0건이었다. `S3_DATA_EVENTS` Protection은 계속
+  `DISABLED`이고, 이번 대표 탐지는 CloudTrail Custom Rule이다.
 
 ### T5 — Terraform 영구 복구
 
@@ -855,10 +868,10 @@ Terraform 부분은 다음이 모두 충족돼야 완료다.
 
 ## 10. 다음 작업
 
-Foundation·Daily Apply와 Baseline 공격·CloudTrail·Alarm 검증까지 끝났다. 다음은
-Terraform을 다시 Apply하는 단계가 아니다. 같은 TAKE에서 WAF·DVWA·IMDS·GuardDuty의
-Coverage와 미수집 구간을 확정하고, 정상 GetObject가 대표 Rule에서 제외되는지
-검증한다. 그 뒤 중앙 관제 제품 한 개와 Alert Payload를 결정한다.
+Foundation·Daily Apply, Baseline 공격, CloudTrail·Alarm, 같은 TAKE의 WAF·DVWA·IMDS·
+GuardDuty Coverage 판정까지 끝났다. 다음은 Terraform을 다시 Apply하는 단계가 아니다.
+정상 GetObject가 대표 Rule에서 제외되는지 한 번 검증하고 Alert Payload의 시간·Role·
+행위·Severity 필드를 보강한다. 그 뒤 중앙 관제 제품 한 개를 결정한다.
 
 Containment 구현 전에는 Alarm이 실제 `OK`로 복귀했는지 확인하고 새 TAKE를 사용한다.
 취약 Runtime의 영구 복구는 최종 촬영 확인 전에는 수행하지 않되, 통제권 상실·자리
