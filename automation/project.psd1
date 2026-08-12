@@ -164,6 +164,9 @@
                 EventTimeField       = 'event_time'
                 MaxPollAttempts      = 60
                 PollDelaySeconds     = 5
+                MinimumRows          = 1
+                MaxDeliveryAttempts  = 6
+                DeliveryRetryDelaySeconds = 10
             }
             @{
                 Name               = 't1-waf-http-https'

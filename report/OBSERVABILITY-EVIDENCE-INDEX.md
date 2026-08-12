@@ -1,8 +1,8 @@
 # Observability Report Evidence Index
 
 > **용도:** 최종 보고서·발표 자료에 재사용할 Observability / S3 / Athena / Grafana 증거를 한곳에서 추적한다.  
-> **기준 시점:** 2026-08-07  
-> **진행 상태:** S3 로그 분리·Athena 3 Source·Grafana Athena Overview·Drill-down·JSON Export 완료  
+> **기준 시점:** 2026-08-12
+> **진행 상태:** 기존 Observability Evidence + Capital One Baseline·CloudTrail·Alarm Runtime 검증 완료
 > **관련 현황:** [`../OBSERVABILITY-CURRENT-STATUS.md`](../OBSERVABILITY-CURRENT-STATUS.md)  
 > **실행 계획:** [`../OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](../OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)
 
@@ -54,7 +54,8 @@ C:\Users\Unoh\Documents\aws-topology-evidence\report-assets\observability\
 ├─ 02_s3\
 ├─ 03_athena\
 ├─ 04_grafana\
-└─ 05_pod-identity\
+├─ 05_pod-identity\
+└─ 06_capital-one\
 ```
 
 이 디렉터리는 **로컬 보고서 자산 저장소**다. 공개 Git Repository에 그대로 Commit하지 않는다.
@@ -400,6 +401,46 @@ Runtime 전달 성공
 ---
 
 # 9. 다음 Evidence 추가 지점
+
+## 9.1 Capital One Baseline — 내부 조사 Bundle
+
+```text
+C:\Users\Unoh\Documents\aws-topology-evidence\capital-one-20260812T025054Z\
+├─ source\client\capital-one-baseline.json
+├─ results\cloudwatch\capital-one-validation-getobject.json
+├─ manifest.json
+├─ manifest.json.sha256
+└─ SHA256SUMS.txt
+```
+
+확인된 Claim:
+
+```text
+Command Injection은 SSRF 대체 진입점
+IMDS 예상 Primary Karpenter Node Role 일치
+Credential 값 비노출 상태에서 고정 가짜 CSV 5행 읽기 성공
+준비·다운로드 SHA-256 일치
+같은 TAKE로 새 CloudWatch Alarm 전환
+CloudTrail GetObject 1행의 Role·Object·성공·시간창 일치
+```
+
+이 Bundle은 CloudTrail의 ARN·Bucket·Source IP·Request ID 같은 조사 필드를 포함하는
+내부 Evidence다. 공개 Repository나 발표 자료에 그대로 넣지 않는다. 보고서용
+`06_capital-one` 자산은 이 Claim을 유지하면서 Account ID·Bucket·IP·Request ID·
+Credential 관련 값을 다시 마스킹해 별도로 만든다.
+
+아직 이 Bundle이 증명하지 않는 것:
+
+```text
+실제 SSRF
+WAF·DVWA·Pod→IMDS 전체 Coverage
+GuardDuty 실제 Finding
+SIEM·SOAR
+GitHub·Argo Containment
+재공격 실패·Terraform 영구 복구
+```
+
+## 9.2 기존 Pod Identity 후속
 
 ```text
 Pod Identity Association

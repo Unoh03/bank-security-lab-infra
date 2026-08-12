@@ -95,6 +95,45 @@ Alarm은 기존 Security Alert SNS Topic으로 전달한다. CloudTrail 전달 �
 실행 직후 경보가 없다고 실패로 단정하지 않는다. Evidence Query는 성공뿐 아니라
 복구 뒤 `AccessDenied`도 보존한다.
 
+#### 고정 가짜 데이터와 공격 Baseline
+
+먼저 Preview에서 Account 일치, Profile, 고정 Key, 행 수와 SHA-256만 확인한다.
+Bucket 이름과 Credential은 출력하지 않는다.
+
+```powershell
+.\observability\scenarios\Prepare-CapitalOneDemoData.ps1
+```
+
+승인된 실습 Runtime에서만 고정 가짜 CSV 한 개를 준비한다.
+
+```powershell
+.\observability\scenarios\Prepare-CapitalOneDemoData.ps1 `
+  -ConfirmRun 'PREPARE CAPITAL ONE DATA'
+```
+
+공격 Runner도 먼저 확인문 없이 실행해 모든 Preflight를 통과시키고 멈춘다.
+
+```powershell
+.\observability\scenarios\Invoke-CapitalOneBaseline.ps1
+```
+
+Preview와 정적 Test를 확인한 뒤에만 실제 Baseline을 한 번 실행한다.
+
+```powershell
+.\observability\scenarios\Invoke-CapitalOneBaseline.ps1 `
+  -ConfirmRun 'RUN CAPITAL ONE BASELINE'
+```
+
+Runner는 Terraform의 현재 Application URL과 Primary Bucket만 사용한다. DVWA
+Command Injection은 실제 Capital One의 SSRF를 대신하는 교육용 진입점이다. 임시
+Node Role Credential은 메모리에서만 사용하고 환경변수를 `finally`에서 복구한다.
+기존 브라우저 admin Session은 Runner의 새 로그인으로 무효화될 수 있다.
+
+성공 출력에 표시된 `ExperimentId`, UTC 시작·종료 시각을 그대로 다음 Evidence
+명령에 사용한다. CWLI는 Windows PowerShell 5.1의 인용 손실을 피하려고 UTF-8
+`file://` 입력으로 전달된다. CAPITAL-ONE Query는 최소 1행을 요구하고 인덱싱 지연에
+대해 최대 6회만 다시 조회한다.
+
 ```powershell
 .\daily-down.ps1 `
   -EvidenceOnly `
@@ -104,6 +143,18 @@ Alarm은 기존 Security Alert SNS Topic으로 전달한다. CloudTrail 전달 �
   -EvidenceStartUtc '<UTC_START>' `
   -EvidenceEndUtc '<UTC_END>' `
   -EvidenceDeliveryGraceMinutes 10
+```
+
+완료 Bundle에서 다음 조건을 값 공개 없이 확인한다.
+
+```text
+ServiceRowCount=1
++ MinimumRowsMet=true
++ eventName=GetObject
++ 예상 Primary Karpenter Node Role
++ validation/capital-one-demo.csv
++ errorCode 없음
++ event_time이 TAKE 시간창 안
 ```
 
 S3 Data Event와 Custom Metric은 비용이 발생할 수 있다. 실습 종료 후 두 Switch를

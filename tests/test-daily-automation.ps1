@@ -513,7 +513,13 @@ $collectorEvidenceRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
 )
 $windowStart = [datetime]'2026-07-31T00:00:00Z'
 $windowEnd = [datetime]'2026-07-31T01:00:00Z'
-$queryState = @{ Polls = 0; EndTime = 0 }
+$queryState = @{
+    Polls = 0
+    EndTime = 0
+    QueryArgument = ''
+    QueryFileExists = $false
+    QueryTextPreserved = $false
+}
 $fakeInvoker = {
     param($FilePath, $ArgumentList, $AllowFailure)
 
@@ -579,6 +585,19 @@ $fakeInvoker = {
         'logs start-query' {
             $endIndex = [array]::IndexOf($ArgumentList, '--end-time')
             $queryState.EndTime = [long]$ArgumentList[$endIndex + 1]
+            $queryIndex = [array]::IndexOf($ArgumentList, '--query-string')
+            $queryState.QueryArgument = [string]$ArgumentList[$queryIndex + 1]
+            if ($queryState.QueryArgument.StartsWith('file://')) {
+                $queryArgumentPath = $queryState.QueryArgument.Substring(7)
+                $queryState.QueryFileExists = Test-Path `
+                    -LiteralPath $queryArgumentPath `
+                    -PathType Leaf
+                if ($queryState.QueryFileExists) {
+                    $queryState.QueryTextPreserved = (
+                        Get-Content -LiteralPath $queryArgumentPath -Raw
+                    ) -match 'event_type\s*=\s*"auth\.login\.failed"'
+                }
+            }
             return (@{ queryId = 'query-123' } | ConvertTo-Json)
         }
         'logs get-query-results' {
@@ -735,7 +754,10 @@ try {
             [string]$_.Name -ceq 'test-query' -and
             [string]$_.Status -ceq 'Succeeded'
         }).Count -ne 1 -or
-        $queryState.Polls -ne 2) {
+        $queryState.Polls -ne 2 -or
+        $queryState.QueryArgument -notlike 'file://*' -or
+        -not $queryState.QueryFileExists -or
+        -not $queryState.QueryTextPreserved) {
         throw 'CloudWatch Logs Insights query execution was not recorded or bounded as expected.'
     }
     if ([int]$manifest.Window.EventTailSeconds -ne 2 -or
@@ -794,6 +816,96 @@ try {
         [string]$emptyResult[0].Status -cne 'Succeeded' -or
         [int]$emptyResult[0].Items -ne 0) {
         throw 'A zero-row CloudWatch Logs Insights query was not preserved as successful evidence.'
+    }
+
+    $delayedQueryState = @{ Starts = 0 }
+    $delayedQueryConfig = @{
+        Evidence = @{
+            RootDefault = $collectorEvidenceRoot
+            HashAlgorithm = 'SHA256'
+            QueryPackRoot = 'observability\queries'
+            Collectors = @()
+            Queries = @(
+                @{
+                    Name = 'delayed-query'
+                    Type = 'CloudWatchLogsInsights'
+                    ScenarioIds = @('DELAYED-01')
+                    QueryFile = 'cloudwatch\01_repeated_login_failures.cwli'
+                    LogGroup = '/aws/cloudtrail/{ProjectName}-security'
+                    Region = 'Primary'
+                    Required = $true
+                    DeliveryGraceMinutes = 5
+                    EventTimeField = 'eventTime'
+                    MaxPollAttempts = 1
+                    PollDelaySeconds = 0
+                    MinimumRows = 1
+                    MaxDeliveryAttempts = 2
+                    DeliveryRetryDelaySeconds = 0
+                }
+            )
+        }
+    }
+    $delayedQueryInvoker = {
+        param($FilePath, $ArgumentList, $AllowFailure)
+        $signature = @($ArgumentList[0], $ArgumentList[1]) -join ' '
+        switch ($signature) {
+            'logs start-query' {
+                $delayedQueryState.Starts++
+                return (@{
+                    queryId = "delayed-query-$($delayedQueryState.Starts)"
+                } | ConvertTo-Json)
+            }
+            'logs get-query-results' {
+                if ($delayedQueryState.Starts -eq 1) {
+                    return (@{
+                        status = 'Complete'
+                        results = @()
+                    } | ConvertTo-Json -Depth 6)
+                }
+                return (@{
+                    status = 'Complete'
+                    statistics = @{ recordsMatched = 1; recordsScanned = 1 }
+                    results = @(
+                        @(
+                            @{ field = 'eventTime'; value = '2026-07-31T00:30:00Z' },
+                            @{ field = 'event_type'; value = 'delayed-arrival' }
+                        )
+                    )
+                } | ConvertTo-Json -Depth 8)
+            }
+            default {
+                throw "Unexpected delayed-query command: $signature"
+            }
+        }
+    }.GetNewClosure()
+    $delayedQueryBundle = Invoke-SecurityEvidenceCollection `
+        -Config $delayedQueryConfig `
+        -Context $collectorContext `
+        -EvidenceRoot $collectorEvidenceRoot `
+        -ExperimentId 'delayed-query-result' `
+        -ScenarioId 'DELAYED-01' `
+        -StartTimeUtc $windowStart `
+        -EndTimeUtc $windowEnd `
+        -RequireEvidence `
+        -RunQueries `
+        -Invoker $delayedQueryInvoker
+    $delayedResultPath = Join-Path `
+        $delayedQueryBundle.BundleRoot `
+        'results\cloudwatch\delayed-query.json'
+    $delayedResultDocument = Get-Content `
+        -LiteralPath $delayedResultPath `
+        -Raw |
+        ConvertFrom-Json
+    $delayedManifestResult = @($delayedQueryBundle.Results | Where-Object {
+        [string]$_.Name -ceq 'delayed-query'
+    })
+    if ($delayedQueryState.Starts -ne 2 -or
+        [int]$delayedResultDocument.DeliveryAttempts -ne 2 -or
+        -not [bool]$delayedResultDocument.MinimumRowsMet -or
+        @($delayedResultDocument.Rows).Count -ne 1 -or
+        $delayedManifestResult.Count -ne 1 -or
+        [string]$delayedManifestResult[0].Status -cne 'Succeeded') {
+        throw 'CloudWatch delivery retry did not re-run an initially empty minimum-row query.'
     }
 
     $failingConfig = @{

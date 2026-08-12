@@ -122,7 +122,9 @@ $capitalOneQueries = @($config.Evidence.Queries | Where-Object {
 if ($capitalOneQueries.Count -ne 1 -or
     [string]$capitalOneQueries[0].Name -cne 'capital-one-validation-getobject' -or
     -not [bool]$capitalOneQueries[0].Required -or
-    [string]$capitalOneQueries[0].EventTimeField -cne 'event_time') {
+    [string]$capitalOneQueries[0].EventTimeField -cne 'event_time' -or
+    [int]$capitalOneQueries[0].MinimumRows -ne 1 -or
+    [int]$capitalOneQueries[0].MaxDeliveryAttempts -lt 2) {
     throw 'CAPITAL-ONE must map exactly one required event-time-aware CloudTrail query.'
 }
 foreach ($field in @(

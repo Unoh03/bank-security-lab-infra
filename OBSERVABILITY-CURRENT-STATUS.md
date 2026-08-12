@@ -1,8 +1,8 @@
 # Observability Current Status
 
 > **용도:** 지금 어디까지 왔고, 바로 다음에 무엇을 해야 하는지만 확인하는 현황판  
-> **기준 시점:** 2026-08-07  
-> **현재 Focus:** EKS Pod Identity Inventory·Runtime 검증  
+> **기준 시점:** 2026-08-12
+> **현재 Focus:** Capital One Baseline 이후 Gate 2 로그 Coverage 확정
 > **관련 결정:** [`OBSERVABILITY-IAM-DECISIONS.md`](./OBSERVABILITY-IAM-DECISIONS.md)  
 > **전체 계획:** [`OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](./OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)  
 > **보고서 Evidence:** [`report/OBSERVABILITY-EVIDENCE-INDEX.md`](./report/OBSERVABILITY-EVIDENCE-INDEX.md)
@@ -40,12 +40,12 @@ flowchart LR
 ### 현재 순서
 
 ```text
-1. Pod Identity AWS·Kubernetes Inventory
-2. Workload별 STS Identity·허용 API·거부 API 검증
-3. Association 없는 ServiceAccount의 Node Role Negative Test
-4. Grafana WAF Dashboard 마감·Export
-5. WAF 단계적 보강
-6. 최종 Evidence 통합
+1. 같은 TAKE의 WAF·DVWA 공격 요청 흔적 확인
+2. Pod→IMDS 구간의 현재 수집 여부 판정
+3. GuardDuty 실제 Finding 발생 여부 확인
+4. CloudTrail 1행과 최소 상관 Field 정리
+5. 정상 GetObject 오탐 Test·Alert Field 보강
+6. 중앙 관제 제품 한 개 선택
 ```
 
 S3 Source별 저장, Athena 실제 분석, Grafana Athena 시각화는 닫았다. 새 Athena Panel을 추가하거나 같은 Dashboard를 계속 다듬지 않는다.
@@ -85,8 +85,13 @@ S3 Source별 저장, Athena 실제 분석, Grafana Athena 시각화는 닫았다
 | Grafana 시간 범위 연동 | Overview 3 Panel Dashboard 시간 선택기 반영 | **완료** |
 | Grafana Drill-down | `/dvwa/css/` 정상 패턴, `/wp-admin/install.php` 반복 Probe 분석 | **완료** |
 | Grafana Athena JSON Export | Repository에 Runtime Export 저장 | **완료** |
-| EKS Pod Identity | Source 정의 존재, Runtime 미검증 | **현재 Focus** |
+| Capital One 공격 Baseline | Command Injection→IMDS→Node Role→고정 가짜 S3 읽기 | **1회 성공** |
+| Capital One 확정 탐지 | CloudTrail GetObject 1행·Metric Filter·새 Alarm 전환 | **완료** |
+| EKS Pod Identity | Source 정의 존재, Runtime 미검증 | **별도 미완료** |
 | WAF Hardening | 계획만 존재 | **후속** |
+
+`EKS Pod Identity`는 별도 미완료 Workstream이다. 현재 Focus 문구는 Capital One
+대표 시나리오를 먼저 끝낸다는 실행 우선순위이며, Pod Identity 완료를 뜻하지 않는다.
 
 ---
 
@@ -212,45 +217,38 @@ Pod Identity Runtime             미검증
 
 ## 6. 바로 다음 한 가지
 
-### Pod Identity Inventory
+### Capital One Gate 2 Coverage Matrix
 
-먼저 변경 없이 다음 대응 관계를 Runtime에서 수집한다.
-
-```text
-Cluster
-→ Namespace
-→ Workload
-→ ServiceAccount
-→ Pod Identity Association
-→ IAM Role ARN
-```
-
-예상 대상:
+Baseline `capital-one-20260812T025054Z`는 다음 경로까지 실제 Runtime에서 닫혔다.
 
 ```text
-AWS Load Balancer Controller
-ExternalDNS
-EFS CSI Controller
-Web S3 Workload
-Fluent Bit
-Karpenter
+DVWA Command Injection
+→ Primary Karpenter Node IMDS Role 발견
+→ 임시 Node Role Credential 획득(값 비노출)
+→ validation/capital-one-demo.csv 가짜 5행 읽기·SHA-256 일치
+→ CloudTrail GetObject 1행
+→ Metric Filter
+→ 새 CloudWatch Alarm 전환
 ```
 
-Inventory가 Source와 일치하는지 확인한 뒤에만 STS·허용·거부 Test 방법을 확정한다. 즉석으로 Role·Policy·Association을 수정하지 않는다.
+다음은 공격이나 Terraform을 다시 실행하는 작업이 아니다. 같은 TAKE의 기존 로그로
+WAF·DVWA 요청, Pod→IMDS 구간, GuardDuty를 조회하고 각 구간을 `관측됨 / 미수집 /
+탐지 없음 / 미검증`으로 구분한다. 그 뒤에만 정상 GetObject 오탐 Test를 별도
+승인된 요청으로 수행한다.
 
 ---
 
 ## 7. 이후 순서
 
 ```text
-Pod Identity Inventory
-→ Workload별 STS Identity
-→ 대표 허용 API
-→ 비허용 API AccessDenied
-→ Node Role Negative Test
-→ Grafana WAF Dashboard Export
-→ WAF 단계적 보강
-→ 최종 Evidence 통합
+Capital One Gate 2 Coverage
+→ 정상 GetObject 오탐 Test·Alert Field 보강
+→ 중앙 관제 제품 1개 선택
+→ SIEM Alert
+→ SOAR Dry Run
+→ GitOps Containment·재공격 실패
+→ Terraform hardened 영구 복구
+→ 기존 Pod Identity Workstream 재개
 ```
 
 ---

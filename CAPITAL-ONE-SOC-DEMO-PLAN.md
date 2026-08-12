@@ -1,9 +1,9 @@
 # Capital One 기반 보안 관제·자동 대응 시연 계획
 
-> **상태:** Draft v0.5 — T4 공격 전 Runtime 준비 완료, 실제 공격·SIEM·SOAR·GitHub 자동화 미검증
+> **상태:** Draft v0.6 — 공격·CloudTrail·확정 Alarm 검증 완료, SIEM·SOAR·GitHub 자동화 미검증
 > **기준 시점:** 2026-08-12
-> **현재 절차 Gate:** Gate 0 — 시나리오 명세·Evidence·비밀정보 정리
-> **현재 Runtime 상태:** T4 PREPARED — `minimal + capital-one-lab`, 공격 실행 전
+> **현재 절차 Gate:** Gate 2 — S3 CloudTrail 확인 완료, 나머지 공격 로그 Coverage 확인 중
+> **현재 Runtime 상태:** T4 BASELINE OBSERVED — `minimal + capital-one-lab`, 자동 Containment 실행 전
 > **Terraform 진행:** T1·T2 Source, T3 Plan-only, Foundation·Daily Apply와 Post-Apply 0-change 검증 완료
 > **번호 구분:** `T0~T6`는 Terraform 구현 순서이고 `Gate 0~8`은 시연 Evidence 검증 순서다. 같은 번호끼리 같은 작업이 아니다.
 > **기존 구현 현황:** [`OBSERVABILITY-CURRENT-STATUS.md`](./OBSERVABILITY-CURRENT-STATUS.md)
@@ -152,8 +152,8 @@ Capital One 사고 기반 EKS 노드 IAM 자격증명 탈취·자동 대응 시�
 다음 항목이 모두 Runtime Evidence로 확인돼야 완료다.
 
 - [ ] 통제된 취약 설정에서 동일 공격을 반복할 수 있다.
-- [ ] 노드 역할 임시 자격증명으로 가짜 S3 자료 접근이 성공한다.
-- [ ] 공격과 직접 연결되는 원본 로그가 보존된다.
+- [x] 노드 역할 임시 자격증명으로 가짜 S3 자료 접근이 성공한다.
+- [x] 공격과 직접 연결되는 원본 로그가 보존된다.
 - [ ] SIEM 또는 중앙 탐지 계층에서 경보가 발생한다.
 - [ ] 경보 근거와 공격 Timeline을 사람이 설명할 수 있다.
 - [ ] 자동 대응이 사전에 정한 GitHub Workflow만 실행한다.
@@ -410,12 +410,22 @@ Source Diff
 목적: 공격 성공 자료를 공개 가능한 실습 Evidence로 만든다.
 
 - [ ] 시나리오 명칭에서 ‘동일 사고 재현’ 표현 제거
-- [ ] Command Injection을 대체 진입점으로 명시
-- [ ] IMDS 주소를 `169.254.169.254` link-local로 보정
+- [x] Command Injection을 대체 진입점으로 명시
+- [x] IMDS 주소를 `169.254.169.254` link-local로 보정
 - [ ] `Access Key로 SSH 가능` 표현 제거
 - [ ] Session Token·Access Key·Account ID·버킷명 공개본 마스킹
 - [ ] 취약 설정과 복구 설정을 정확히 기록
-- [ ] 가짜 개인정보만 사용했음을 명시
+- [x] 가짜 개인정보만 사용했음을 명시
+
+남은 위생 작업:
+
+- 조원이 제공한 과거 Notion Export Markdown에 세션 토큰 형태의 원문이 포함돼 있다.
+  원본 ZIP과 Screenshot은 공개 Evidence로 사용하지 않고, 값을 제거한 별도 공개본을
+  만들어야 한다.
+- 새 Runner의 client JSON에는 Credential 원문·Account ID·Bucket 이름을 남기지
+  않았다. 내부 조사용 Bundle은 CloudTrail 상관분석을 위해 ARN·Bucket·Source IP·
+  Request ID를 보존하므로 공개본이 아니다. 별도 공개본에서 다시 마스킹해야 하며,
+  이것이 과거 자료까지 자동으로 정제했다는 뜻도 아니다.
 
 완료 Evidence:
 
@@ -440,11 +450,25 @@ Vulnerable Profile 확인
 
 완료 조건:
 
-- [ ] 임의 Target을 허용하지 않는 제한된 실행 절차
-- [ ] 시작·종료 UTC Timestamp 기록
-- [ ] 실제 Credential 원문 미저장
-- [ ] 실습 후 환경변수 Credential 제거
-- [ ] 공격 실패 시에도 환경을 원복할 수 있음
+- [x] 임의 Target을 허용하지 않는 제한된 실행 절차
+- [x] 시작·종료 UTC Timestamp 기록
+- [x] 실제 Credential 원문 미저장
+- [x] 실습 후 환경변수 Credential 제거
+- [x] 공격 실패 시에도 환경을 원복할 수 있음
+
+2026-08-12 Baseline Evidence:
+
+```text
+ExperimentId / TAKE_ID: capital-one-20260812T025054Z
+IMDS Role: 예상 Primary Karpenter Node Role과 일치
+Credential: 획득 성공, 값은 출력·파일 저장하지 않음
+S3: validation/capital-one-demo.csv 가짜 5행 읽기·SHA-256 일치
+Alarm: 같은 실행 뒤 새 ALARM 전환
+CloudTrail: GetObject 1행, Role·Object·성공·시간창·조사 필드 일치
+```
+
+이 실행은 한 번의 안정된 Baseline이다. Alarm `OK` 복귀와 새 TAKE로 반복 실행하기
+전까지 ‘반복 촬영 검증 완료’로 확대하지 않는다.
 
 ### Gate 2 — 공격 로그 Coverage
 
@@ -459,11 +483,11 @@ Vulnerable Profile 확인
 
 완료 조건:
 
-- [ ] `enable_project_s3_data_events` 실제 Runtime 값 확인
-- [ ] 외부 사용 시점 CloudTrail Event 확인
+- [x] `enable_project_s3_data_events` 실제 Runtime 값 확인
+- [x] 외부 사용 시점 CloudTrail Event 확인
 - [ ] GuardDuty Finding 발생 여부 확인
 - [ ] 보이지 않는 구간을 ‘미탐’ 또는 ‘미수집’으로 명시
-- [ ] 동일 사건을 묶는 최소 Field 선정
+- [x] 동일 사건을 묶는 최소 Field 선정
 
 ### Gate 3 — 확정 탐지 경로 Runtime 검증
 
@@ -485,11 +509,17 @@ GuardDuty Finding과 WAF·Application Event는 발생하면 조사 Timeline을 �
 
 완료 조건:
 
-- [ ] 탐지 Rule 입력 Source 확정
-- [ ] Rule 조건과 제외 조건 문서화
+- [x] 탐지 Rule 입력 Source 확정
+- [x] Rule 조건과 제외 조건 문서화
 - [ ] 정상 접근으로 오탐 Test
-- [ ] 공격 접근으로 정탐 Test
+- [x] 공격 접근으로 정탐 Test
 - [ ] Alert에 시간·Role·행위·Severity 포함
+
+Runtime 정탐 결과는 Metric Filter의 새 `ALARM` 전환과 같은 시간창의 CloudTrail
+`GetObject` 1행으로 확인했다. 첫 Evidence Query가 0행이었던 원인은 공격이나 AWS
+로그 부재가 아니라 Windows PowerShell 5.1의 native argument 인용 손실이었다.
+Collector가 CWLI를 UTF-8 `file://`로 전달하도록 고쳤고, CAPITAL-ONE에만 최소 1행과
+제한된 전달 재조회를 적용한 뒤 Bundle을 다시 생성해 1행을 확인했다.
 
 ### Gate 4 — SIEM·중앙 관제 계층
 
@@ -741,7 +771,7 @@ Argo CD가 담당한 것과 Terraform이 담당한 것은 무엇인가
 
 | 결정 | 후보 | 결정 시점 |
 |---|---|---|
-| 대표 탐지 신호 | **CloudTrail GetObject Custom Rule 확정** | T2 Source 완료·T4 Runtime 검증 |
+| 대표 탐지 신호 | **CloudTrail GetObject Custom Rule 확정·Runtime 정탐 검증** | 2026-08-12 완료 |
 | 중앙 관제 제품 | Wazuh / Elastic Security | Source 연동 검토 후 |
 | SOAR 제품 | Shuffle 우선 검토 / 다른 Workflow 도구 | Gate 4 종료 |
 | GitHub 호출 방식 | `workflow_dispatch` / `repository_dispatch` | 권한 설계 후 |
@@ -755,21 +785,20 @@ Argo CD가 담당한 것과 Terraform이 담당한 것은 무엇인가
 
 ## 11. 지금 바로 할 한 가지
 
-Infrastructure Bootstrap은 끝났다. 다음 작업은 공격을 바로 던지는 것이 아니라 Gate 0의
-공개 Evidence 규칙과 Gate 1의 제한 실행 절차를 먼저 확정하는 것이다.
+Baseline과 확정 탐지는 끝났다. 공격을 다시 실행하거나 Terraform을 다시 Apply하지
+않고, 같은 TAKE의 Gate 2 Coverage Matrix를 먼저 완성한다.
 
 ```text
-가짜 validation 객체 준비
-→ Target·명령을 고정한 공격 Runner
-→ Credential 원문을 출력·저장하지 않는 Evidence 방식
-→ 시작·종료 UTC와 TAKE_ID 기록
-→ 실패 시 Credential 환경변수 제거·원복 절차
-→ 그 뒤에만 Gate 1 Baseline 공격 실행
+WAF·DVWA에서 Command Injection 요청 흔적 확인
+→ Pod→IMDS 구간이 현재 로그에서 보이는지/안 보이는지 판정
+→ GuardDuty 실제 Finding 발생 여부 확인
+→ CloudTrail 확정 1행과 최소 상관 Field 정리
+→ Gate 3의 정상 GetObject 오탐 Test와 Alert 필드 보강
+→ 그 뒤 중앙 관제 제품 한 개 선택
 ```
 
-현재 Runtime은 DVWA Pod가 실제 `optional/2` Karpenter Node에 있고, `validation/*`
-전용 Role Policy·Alarm `OK`·Argo CD `Synced / Healthy`까지 확인됐다. 이것은 공격 준비
-완료 증거이지 공격·탐지·대응 완료 증거가 아니다. 현재 Active Session의 Watchdog
-Hard Deadline은 2026-08-12 22:00 KST로 연장됐고 실패 재시도 창은 자정까지다.
-Source의 기본 6시간 제한은 변경하지 않았다. 작업을 중단하면 예약 시각을 기다리지
-말고 `daily-down.ps1`로 Daily Runtime을 종료한다.
+현재 확인된 범위는 `Command Injection → IMDS → Node Role Credential → 고정 가짜 S3
+GetObject → CloudTrail → Metric Filter → Alarm`이다. SIEM 화면, SOAR, GitHub 변경,
+Argo CD Containment, 재공격 실패는 아직 구현하거나 검증하지 않았다. Active Session의
+Watchdog Hard Deadline은 2026-08-12 22:00 KST, 실패 재시도 창은 자정까지다. 작업을
+중단하면 예약 시각을 기다리지 말고 `daily-down.ps1`로 Daily Runtime을 종료한다.

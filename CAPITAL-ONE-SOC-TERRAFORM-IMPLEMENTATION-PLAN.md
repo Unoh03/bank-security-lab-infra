@@ -1,8 +1,8 @@
 # Capital One SOC 시연 Terraform 단계별 실행 계획
 
-> **상태:** Draft v0.6 — Foundation·Daily Apply 및 T4 공격 전 Runtime 검증, 실제 공격·자동 대응 미실행
+> **상태:** Draft v0.7 — T4 공격·CloudTrail·Alarm Baseline 검증, 자동 대응 미실행
 > **기준 시점:** 2026-08-12
-> **현재 단계:** T4 PREPARED — 통제된 공격 실행 전
+> **현재 단계:** T4 BASELINE OBSERVED — 자동 Containment·재공격 검증 전
 > **번호 구분:** 이 문서의 `T0~T6`는 Terraform 구현 단계다. 상위 계획의 `Gate 0~8`은 시연 Evidence 단계이며 같은 번호끼리 같은 작업이 아니다.
 > **상위 계획:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)
 > **기존 관측성 현황:** [`OBSERVABILITY-CURRENT-STATUS.md`](./OBSERVABILITY-CURRENT-STATUS.md)
@@ -647,8 +647,8 @@ Gate:
 - [x] 새 Node의 실제 MetadataOptions가 실습 목표와 일치한다.
 - [x] Node Role은 `validation/*`만 읽을 수 있다.
 - [x] 같은 Bucket의 다른 Prefix와 다른 Bucket은 IAM 평가에서 `implicitDeny`다.
-- [ ] Credential 원문 없이 공격 성공을 증명한다.
-- [ ] 공격 종료 UTC 시각을 기록한다.
+- [x] Credential 원문 없이 공격 성공을 증명한다.
+- [x] 공격 종료 UTC 시각을 기록한다.
 - [ ] Containment Commit·Argo Revision·새 Pod·동일 Payload 실패를 같은 TAKE로 연결한다.
 - [ ] 수동 Reset 후 새 Pod·새 세션·Alarm OK로 두 번째 TAKE를 준비할 수 있다.
 - [ ] Reset이 IAM·IMDS·기존 탈취 Credential을 복구하지 않음을 설명한다.
@@ -678,8 +678,22 @@ Gate:
   Soft Deadline 21:00·Hard Deadline 22:00 KST·Retry Until 자정으로 연장했다.
   Scheduled Task의 다음 실행도 22:00이며 Source 기본 6시간 제한은 변경하지 않았다.
 - Foundation과 Daily 모두 같은 입력의 Post-Apply Fresh Plan이 `0 change`였다.
-- 실제 Credential 탈취·S3 객체 요청·CloudTrail Event·Alarm 전환·자동 Containment는
-  아직 실행하거나 검증하지 않았다.
+- `Prepare-CapitalOneDemoData.ps1`로 `FAKE_TRAINING_DATA` 5행의 고정
+  `validation/capital-one-demo.csv`를 준비하고 SHA-256을 Metadata와 대조했다.
+- `Invoke-CapitalOneBaseline.ps1`은 임의 URL·Bucket·Object·Command를 받지 않고,
+  Active Session·`minimal + capital-one-lab`·IMDS `optional/2`·제한 Node Role·
+  Data Event·Alarm `OK`를 확인한 뒤에만 실행됐다.
+- Baseline `capital-one-20260812T025054Z`에서 IMDS Role 발견, 임시 Credential 획득,
+  외부 STS Role 일치, 고정 가짜 S3 5행 읽기와 SHA-256 일치를 확인했다. Credential
+  값은 출력·파일 저장하지 않았고 Process 환경변수는 `finally`에서 복구했다.
+- 같은 실행 뒤 Capital One Alarm이 새 `ALARM`으로 전환됐다. CloudTrail Query 1행은
+  `GetObject`, 예상 Node Role, 고정 Object Key, 성공 상태와 실행 UTC 시간창이 모두
+  일치했다.
+- Windows PowerShell 5.1이 inline CWLI의 따옴표를 AWS CLI 전달 중 잃어 첫 Bundle이
+  0행이 되는 문제를 찾았다. Collector를 UTF-8 `file://` 전달로 수정하고,
+  CAPITAL-ONE에만 최소 1행·제한 재조회를 적용해 최종 Bundle 1행을 확인했다.
+- 자동 Containment·GitHub Commit·Argo Rollout·재공격 실패·수동 Reset은 아직
+  실행하거나 검증하지 않았다.
 
 ### T5 — Terraform 영구 복구
 
@@ -822,11 +836,11 @@ Gate 4의 SIEM, Gate 5의 SOAR, Gate 6·7의 GitHub·Argo 구현은 별도 작�
 
 Terraform 부분은 다음이 모두 충족돼야 완료다.
 
-- [ ] 기본 Source가 `hardened`다.
-- [ ] 취약 Profile은 명시적 확인문 없이는 실행되지 않는다.
-- [ ] 취약화 범위가 Primary Node와 `validation/*` 읽기로 제한된다.
+- [x] 기본 Source가 `hardened`다.
+- [x] 취약 Profile은 명시적 확인문 없이는 실행되지 않는다.
+- [x] 취약화 범위가 Primary Node와 `validation/*` 읽기로 제한된다.
 - [ ] SSM·Helm 두 Karpenter 경로가 같은 Metadata를 만든다.
-- [ ] 공격과 직접 연결된 CloudTrail Event 또는 실제 GuardDuty Finding이 있다.
+- [x] 공격과 직접 연결된 CloudTrail Event 또는 실제 GuardDuty Finding이 있다.
 - [ ] SIEM에 필요한 AWS 권한이 최소 범위이고 장기 Access Key를 Terraform으로 만들지 않는다.
 - [ ] 수동 Reset은 DVWA 한 값만 되돌리고 Terraform·IAM·IMDS를 변경하지 않는다.
 - [ ] Reset 후 새 세션·Alarm OK·새 TAKE로 재촬영을 시작할 수 있다.
@@ -841,12 +855,16 @@ Terraform 부분은 다음이 모두 충족돼야 완료다.
 
 ## 10. 다음 작업
 
-T3 사전 Runtime Plan 검토까지 끝났다. 다음 단계는 사용자가 위 요약과 현재 State를
-확인한 뒤, Foundation 관측 Plan과 Daily `capital-one-lab` Plan의 Apply 여부를
-결정하는 것이다. Saved Plan은 State나 Source가 바뀌면 폐기하고 Fresh Plan으로 다시
-검토한다. 취약 Runtime을 만든 뒤에는 별도의 Fresh Plan으로 `hardened` 복구를
-검토한다. 같은 촬영 시간창의 재시도는 Terraform이 아니라 별도의 수동 DVWA Reset
-Workflow로 수행하며, 명시적 사용자 승인 전에는 어떤 Plan도 Apply하지 않는다.
+Foundation·Daily Apply와 Baseline 공격·CloudTrail·Alarm 검증까지 끝났다. 다음은
+Terraform을 다시 Apply하는 단계가 아니다. 같은 TAKE에서 WAF·DVWA·IMDS·GuardDuty의
+Coverage와 미수집 구간을 확정하고, 정상 GetObject가 대표 Rule에서 제외되는지
+검증한다. 그 뒤 중앙 관제 제품 한 개와 Alert Payload를 결정한다.
+
+Containment 구현 전에는 Alarm이 실제 `OK`로 복귀했는지 확인하고 새 TAKE를 사용한다.
+취약 Runtime의 영구 복구는 최종 촬영 확인 전에는 수행하지 않되, 통제권 상실·자리
+비움·Watchdog Deadline에는 영상 편의보다 Daily Down 또는 긴급 hardened 복구를
+우선한다. Saved Plan은 State나 Source가 바뀌면 폐기하고 Fresh Plan으로 다시 검토하며,
+명시적 사용자 승인 전에는 어떤 Plan도 Apply하지 않는다.
 
 ---
 

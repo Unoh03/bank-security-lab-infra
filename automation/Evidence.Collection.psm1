@@ -604,6 +604,15 @@ function Invoke-EvidenceCloudWatchInsightsQuery {
     ) ([string]$Config.Evidence.QueryPackRoot)
     $queryPath = Join-Path $queryPackRoot ([string]$Query.QueryFile)
     $queryText = Get-EvidenceCloudWatchQueryText -Path $queryPath
+    # Windows PowerShell 5.1 can strip embedded quotes while rebuilding a
+    # native command line. Pass CWLI through a UTF-8 file so string literals
+    # reach AWS CLI unchanged on both 5.1 and modern PowerShell.
+    $safeQueryName = ([string]$Query.Name) -replace '[^A-Za-z0-9._-]', '-'
+    $queryArgumentPath = Join-Path (Join-Path $BundleRoot '_tmp') (
+        "cwli-$safeQueryName-$([guid]::NewGuid().ToString('N')).txt"
+    )
+    Write-EvidenceUtf8NoBom -Path $queryArgumentPath -Content $queryText
+    $queryStringArgument = "file://$queryArgumentPath"
     $logGroup = Resolve-EvidenceTemplate `
         -Value ([string]$Query.LogGroup) `
         -Tokens $Context.Tokens
@@ -618,33 +627,6 @@ function Invoke-EvidenceCloudWatchInsightsQuery {
         $scanEndTimeUtc = $EndTimeUtc.AddMinutes($deliveryGraceMinutes)
     }
 
-    $startJson = Invoke-EvidenceBoundedRetry -MaxAttempts 3 -DelaySeconds 2 -Operation {
-        Invoke-EvidenceNative `
-            -FilePath 'aws' `
-            -ArgumentList @(
-                'logs', 'start-query',
-                '--query-language', 'CWLI',
-                '--log-group-name', $logGroup,
-                '--start-time', ([DateTimeOffset]$StartTimeUtc).ToUnixTimeSeconds().ToString(),
-                '--end-time', ([DateTimeOffset]$scanEndTimeUtc).ToUnixTimeSeconds().ToString(),
-                '--query-string', $queryText,
-                '--limit', '10000',
-                '--profile', [string]$Context.AwsProfile,
-                '--region', $region,
-                '--output', 'json'
-            ) `
-            -Invoker $Invoker
-    }
-    $start = $startJson | ConvertFrom-Json
-    $queryId = if ($start.PSObject.Properties.Name -contains 'queryId') {
-        [string]$start.queryId
-    } else {
-        ''
-    }
-    if (-not $queryId) {
-        throw "CloudWatch Logs Insights did not return a queryId: $($Query.Name)"
-    }
-
     $maxPollAttempts = if ($Query.ContainsKey('MaxPollAttempts')) {
         [int]$Query.MaxPollAttempts
     } else {
@@ -655,63 +637,137 @@ function Invoke-EvidenceCloudWatchInsightsQuery {
     } else {
         2
     }
-    $response = $null
-    for ($attempt = 1; $attempt -le $maxPollAttempts; $attempt++) {
-        $resultJson = Invoke-EvidenceNative `
-            -FilePath 'aws' `
-            -ArgumentList @(
-                'logs', 'get-query-results',
-                '--query-id', $queryId,
-                '--profile', [string]$Context.AwsProfile,
-                '--region', $region,
-                '--output', 'json'
-            ) `
-            -Invoker $Invoker
-        $response = $resultJson | ConvertFrom-Json
-        $status = [string]$response.status
-        if ($status -ceq 'Complete') {
-            break
-        }
-        if ($status -notin @('Scheduled', 'Running')) {
-            throw "CloudWatch Logs Insights query '$($Query.Name)' ended with status '$status'."
-        }
-        if ($attempt -lt $maxPollAttempts -and $pollDelaySeconds -gt 0) {
-            Start-Sleep -Seconds $pollDelaySeconds
-        }
-    }
-    if ($null -eq $response -or [string]$response.status -cne 'Complete') {
-        throw "CloudWatch Logs Insights query '$($Query.Name)' did not complete within the bounded polling window."
-    }
-
-    # PowerShell unwraps empty and single-item pipeline output. Force an array
-    # so zero-result queries remain successful evidence instead of failing on
-    # a missing Count property.
-    $rows = @(ConvertFrom-EvidenceCloudWatchQueryRows -Rows $response.results)
-    $serviceRowCount = $rows.Count
     $eventTimeField = if ($Query.ContainsKey('EventTimeField')) {
         [string]$Query.EventTimeField
     } else {
         ''
     }
-    if ($eventTimeField) {
-        $rows = @($rows | Where-Object {
-            $property = $_.PSObject.Properties[$eventTimeField]
-            if ($null -eq $property -or -not [string]$property.Value) {
-                return $false
+    $minimumRows = if ($Query.ContainsKey('MinimumRows')) {
+        [int]$Query.MinimumRows
+    } else {
+        0
+    }
+    $maxDeliveryAttempts = if ($Query.ContainsKey('MaxDeliveryAttempts')) {
+        [int]$Query.MaxDeliveryAttempts
+    } else {
+        1
+    }
+    $deliveryRetryDelaySeconds = if ($Query.ContainsKey('DeliveryRetryDelaySeconds')) {
+        [int]$Query.DeliveryRetryDelaySeconds
+    } else {
+        0
+    }
+    if ($minimumRows -lt 0 -or $minimumRows -gt 10000) {
+        throw "Evidence query MinimumRows must be between 0 and 10000: $($Query.Name)"
+    }
+    if ($maxDeliveryAttempts -lt 1 -or $maxDeliveryAttempts -gt 30) {
+        throw "Evidence query MaxDeliveryAttempts must be between 1 and 30: $($Query.Name)"
+    }
+    if ($deliveryRetryDelaySeconds -lt 0 -or $deliveryRetryDelaySeconds -gt 60) {
+        throw "Evidence query DeliveryRetryDelaySeconds must be between 0 and 60: $($Query.Name)"
+    }
+
+    $queryId = ''
+    $response = $null
+    $rows = @()
+    $serviceRowCount = 0
+    $deliveryAttempts = 0
+    for (
+        $deliveryAttempt = 1;
+        $deliveryAttempt -le $maxDeliveryAttempts;
+        $deliveryAttempt++
+    ) {
+        $deliveryAttempts = $deliveryAttempt
+        $startJson = Invoke-EvidenceBoundedRetry `
+            -MaxAttempts 3 `
+            -DelaySeconds 2 `
+            -Operation {
+                Invoke-EvidenceNative `
+                    -FilePath 'aws' `
+                    -ArgumentList @(
+                        'logs', 'start-query',
+                        '--query-language', 'CWLI',
+                        '--log-group-name', $logGroup,
+                        '--start-time', ([DateTimeOffset]$StartTimeUtc).ToUnixTimeSeconds().ToString(),
+                        '--end-time', ([DateTimeOffset]$scanEndTimeUtc).ToUnixTimeSeconds().ToString(),
+                        '--query-string', $queryStringArgument,
+                        '--limit', '10000',
+                        '--profile', [string]$Context.AwsProfile,
+                        '--region', $region,
+                        '--output', 'json'
+                    ) `
+                    -Invoker $Invoker
             }
-            try {
-                $eventTime = [datetimeoffset]::Parse(
-                    [string]$property.Value,
-                    [Globalization.CultureInfo]::InvariantCulture,
-                    [Globalization.DateTimeStyles]::AssumeUniversal
-                ).UtcDateTime
-                return $eventTime -ge $StartTimeUtc -and $eventTime -le $EndTimeUtc
-            } catch {
-                return $false
+        $start = $startJson | ConvertFrom-Json
+        $queryId = if ($start.PSObject.Properties.Name -contains 'queryId') {
+            [string]$start.queryId
+        } else {
+            ''
+        }
+        if (-not $queryId) {
+            throw "CloudWatch Logs Insights did not return a queryId: $($Query.Name)"
+        }
+
+        $response = $null
+        for ($attempt = 1; $attempt -le $maxPollAttempts; $attempt++) {
+            $resultJson = Invoke-EvidenceNative `
+                -FilePath 'aws' `
+                -ArgumentList @(
+                    'logs', 'get-query-results',
+                    '--query-id', $queryId,
+                    '--profile', [string]$Context.AwsProfile,
+                    '--region', $region,
+                    '--output', 'json'
+                ) `
+                -Invoker $Invoker
+            $response = $resultJson | ConvertFrom-Json
+            $status = [string]$response.status
+            if ($status -ceq 'Complete') {
+                break
             }
-        })
+            if ($status -notin @('Scheduled', 'Running')) {
+                throw "CloudWatch Logs Insights query '$($Query.Name)' ended with status '$status'."
+            }
+            if ($attempt -lt $maxPollAttempts -and $pollDelaySeconds -gt 0) {
+                Start-Sleep -Seconds $pollDelaySeconds
+            }
+        }
+        if ($null -eq $response -or [string]$response.status -cne 'Complete') {
+            throw "CloudWatch Logs Insights query '$($Query.Name)' did not complete within the bounded polling window."
+        }
+
+        # PowerShell unwraps empty and single-item pipeline output. Force an
+        # array so a zero-result query remains valid when no minimum is set.
+        $rows = @(ConvertFrom-EvidenceCloudWatchQueryRows -Rows $response.results)
+        $serviceRowCount = $rows.Count
+        if ($eventTimeField) {
+            $rows = @($rows | Where-Object {
+                $property = $_.PSObject.Properties[$eventTimeField]
+                if ($null -eq $property -or -not [string]$property.Value) {
+                    return $false
+                }
+                try {
+                    $eventTime = [datetimeoffset]::Parse(
+                        [string]$property.Value,
+                        [Globalization.CultureInfo]::InvariantCulture,
+                        [Globalization.DateTimeStyles]::AssumeUniversal
+                    ).UtcDateTime
+                    return $eventTime -ge $StartTimeUtc -and $eventTime -le $EndTimeUtc
+                } catch {
+                    return $false
+                }
+            })
+        }
+        if ($rows.Count -ge $minimumRows) {
+            break
+        }
+        if ($deliveryAttempt -lt $maxDeliveryAttempts -and
+            $deliveryRetryDelaySeconds -gt 0) {
+            Start-Sleep -Seconds $deliveryRetryDelaySeconds
+        }
     }
     $rowCount = $rows.Count
+    $minimumRowsMet = $rowCount -ge $minimumRows
     $outputRoot = Join-Path (Join-Path $BundleRoot 'results') 'cloudwatch'
     New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
     $outputPath = Join-Path $outputRoot "$($Query.Name).json"
@@ -726,6 +782,9 @@ function Invoke-EvidenceCloudWatchInsightsQuery {
         EndTimeUtc = $EndTimeUtc.ToString('o')
         ScanEndTimeUtc = $scanEndTimeUtc.ToString('o')
         EventTimeField = $eventTimeField
+        MinimumRows = $minimumRows
+        MinimumRowsMet = $minimumRowsMet
+        DeliveryAttempts = $deliveryAttempts
         ServiceRowCount = $serviceRowCount
         Status = [string]$response.status
         Statistics = if ($response.PSObject.Properties.Name -contains 'statistics') {
@@ -744,8 +803,11 @@ function Invoke-EvidenceCloudWatchInsightsQuery {
     return [pscustomobject]@{
         Name = [string]$Query.Name
         Type = 'CloudWatchLogsInsights'
-        Status = 'Succeeded'
-        Detail = "Query complete; rows=$rowCount; serviceRows=$serviceRowCount"
+        Status = if ($minimumRowsMet) { 'Succeeded' } else { 'Incomplete' }
+        Detail = (
+            "Query complete; rows=$rowCount; serviceRows=$serviceRowCount; " +
+            "deliveryAttempts=$deliveryAttempts; minimumRows=$minimumRows"
+        )
         Items = $rowCount
         Destination = $outputPath
     }

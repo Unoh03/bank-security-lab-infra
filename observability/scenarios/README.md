@@ -83,7 +83,39 @@ Reference:
 이 ID는 `capital-one-lab` Profile에서 재현할 대표 시나리오다. 기존 IAM-01은
 Pod Identity 권한 검증이므로 서로 같은 공격으로 설명하지 않는다.
 
-현재 T2에는 공격 Script를 추가하지 않는다. 다음 입력·탐지 계약만 고정한다.
+다음 두 Script가 Target과 데이터를 고정한다.
+
+- `Prepare-CapitalOneDemoData.ps1`: Primary Application Bucket의
+  `validation/capital-one-demo.csv` 한 객체만 만든다. 모든 행은
+  `FAKE_TRAINING_DATA`로 표시되고 Bucket 이름은 출력·Evidence에 남기지 않는다.
+- `Invoke-CapitalOneBaseline.ps1`: Terraform의 `application_url`에서만 DVWA
+  Command Injection을 실행한다. URL·Bucket·Object Key·Command·Payload를 외부
+  입력으로 받지 않는다.
+
+Preview와 실제 실행은 각각 분리돼 있다.
+
+```powershell
+.\observability\scenarios\Prepare-CapitalOneDemoData.ps1
+.\observability\scenarios\Prepare-CapitalOneDemoData.ps1 `
+  -ConfirmRun 'PREPARE CAPITAL ONE DATA'
+
+.\observability\scenarios\Invoke-CapitalOneBaseline.ps1
+.\observability\scenarios\Invoke-CapitalOneBaseline.ps1 `
+  -ConfirmRun 'RUN CAPITAL ONE BASELINE'
+```
+
+실제 Runner는 `minimal + capital-one-lab`, Active Daily Session, Primary IMDS
+`optional/2`, 제한 Node Role Policy, Pod Identity 비활성, S3 Data Event,
+Alarm `OK`, 이전 AWS Credential 환경변수 없음부터 확인한다. DVWA 기본 실습 계정으로
+새 로그인하므로 기존 브라우저의 admin Session은 무효화될 수 있다.
+
+임시 Node Role Credential은 PowerShell Process 메모리에서만 AWS CLI에 전달하고
+`finally`에서 원래 환경변수 상태로 복구한다. Response Body, Access Key, Secret,
+Session Token, Account ID, Bucket 이름은 출력하거나 JSON에 기록하지 않는다. 남기는
+값은 UTC 구간, TAKE, Role 일치 여부, 고정 가짜 CSV의 행 수·SHA-256, Alarm 전환과
+CloudFront Response ID뿐이다.
+
+입력·탐지 계약은 다음과 같다.
 
 ```text
 CloudTrail S3 Data Event
@@ -98,8 +130,23 @@ CloudTrail S3 Data Event
 ```
 
 `13_capital_one_validation_getobject.cwli`는 성공 Event뿐 아니라 복구 뒤의
-`AccessDenied`도 같은 열로 조회한다. 실제 공격 Script와 Credential 비노출
-Evidence는 T4 통제 Runtime에서 구현·검증한다.
+`AccessDenied`도 같은 열로 조회한다. Windows PowerShell 5.1의 native argument
+인용 손실을 피하기 위해 Evidence Collector는 CWLI를 UTF-8 임시 파일의 `file://`
+인수로 전달한다. CAPITAL-ONE Query는 최소 1행을 요구하고, 로그 인덱싱 지연에
+대해서만 제한된 재조회를 수행한다. 0행이 정상인 다른 Query에는 이 조건을 적용하지
+않는다.
+
+2026-08-12 Runtime Baseline `capital-one-20260812T025054Z`에서 다음을 확인했다.
+
+- IMDS가 예상 Primary Karpenter Node Role을 반환했다.
+- Credential 원문 없이 고정 가짜 CSV 5행을 읽고 준비 시 SHA-256과 일치시켰다.
+- 같은 실행으로 Capital One Alarm이 새 `ALARM` 상태로 전환됐다.
+- CloudTrail Query 1행에서 `GetObject`, 예상 Role, 고정 Object Key, 성공 상태,
+  실행 시간창과 조사 필드가 모두 일치했다.
+
+이 결과는 Command Injection을 대체 진입점으로 사용한 공격 경로와 확정 탐지까지의
+증거다. SSRF 자체, SIEM, SOAR, GitHub Containment, Argo 재배포, 재공격 실패는 아직
+증명하지 않는다.
 
 ## T1 — temporary HTTP observation and HTTPS restoration
 
