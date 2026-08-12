@@ -97,6 +97,21 @@ output "runtime_profile" {
   value       = var.runtime_profile
 }
 
+output "security_scenario_profile" {
+  description = "Security scenario profile applied to the current Daily state."
+  value       = var.security_scenario_profile
+}
+
+output "security_scenario_features" {
+  description = "Non-sensitive expected security controls for the selected scenario."
+  value = {
+    primary_metadata_options        = local.primary_karpenter_metadata_options
+    primary_validation_read_enabled = local.capital_one_lab_enabled
+    dr_metadata_options             = local.hardened_karpenter_metadata_options
+    dr_validation_read_enabled      = false
+  }
+}
+
 output "runtime_features" {
   description = "Explicit optional Daily Runtime feature selection."
   value = {

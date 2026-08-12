@@ -78,6 +78,29 @@ Reference:
 
 - <https://docs.aws.amazon.com/eks/latest/userguide/pod-id-how-it-works.html>
 
+## CAPITAL-ONE — Karpenter Node Role validation read
+
+이 ID는 `capital-one-lab` Profile에서 재현할 대표 시나리오다. 기존 IAM-01은
+Pod Identity 권한 검증이므로 서로 같은 공격으로 설명하지 않는다.
+
+현재 T2에는 공격 Script를 추가하지 않는다. 다음 입력·탐지 계약만 고정한다.
+
+```text
+CloudTrail S3 Data Event
++ eventName=GetObject
++ Primary Karpenter Node Role
++ object key=validation/*
++ errorCode 없음
+→ CapitalOneValidationGetObject Metric
+→ 1분 합계 1건 이상
+→ CloudWatch Alarm
+→ 기존 Security Alert SNS Topic
+```
+
+`13_capital_one_validation_getobject.cwli`는 성공 Event뿐 아니라 복구 뒤의
+`AccessDenied`도 같은 열로 조회한다. 실제 공격 Script와 Credential 비노출
+Evidence는 T4 통제 Runtime에서 구현·검증한다.
+
 ## T1 — temporary HTTP observation and HTTPS restoration
 
 `Invoke-T1.ps1` is the only approved exception to the normal Daily wrapper

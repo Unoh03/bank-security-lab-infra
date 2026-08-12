@@ -222,6 +222,16 @@ variable "runtime_profile" {
     error_message = "runtime_profile must be one of: minimal, dr-test, full."
   }
 }
+variable "security_scenario_profile" {
+  description = "Security posture for the Daily Runtime. hardened is the safe default; capital-one-lab enables only the approved Primary Karpenter IMDS and validation-prefix exercise."
+  type        = string
+  default     = "hardened"
+
+  validation {
+    condition     = contains(["hardened", "capital-one-lab"], var.security_scenario_profile)
+    error_message = "security_scenario_profile must be one of: hardened, capital-one-lab."
+  }
+}
 variable "enable_valkey" {
   description = "Provision Valkey only after an application or experiment dependency is demonstrated."
   type        = bool

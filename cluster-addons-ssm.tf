@@ -10,6 +10,10 @@ locals {
     interruption_queue       = module.primary_karpenter.queue_name
     capacity_types           = jsonencode(var.karpenter_capacity_types)
     cpu_limit                = var.karpenter_cpu_limit
+    metadata_http_endpoint   = local.primary_karpenter_metadata_options.httpEndpoint
+    metadata_ipv6            = local.primary_karpenter_metadata_options.httpProtocolIPv6
+    metadata_hop_limit       = local.primary_karpenter_metadata_options.httpPutResponseHopLimit
+    metadata_http_tokens     = local.primary_karpenter_metadata_options.httpTokens
     enable_external_dns      = local.domain_name != "" ? "true" : "false"
     domain_name              = local.domain_name
     web_namespace            = var.web_namespace
@@ -34,6 +38,10 @@ locals {
     interruption_queue       = module.dr_karpenter[0].queue_name
     capacity_types           = jsonencode(var.karpenter_capacity_types)
     cpu_limit                = var.karpenter_cpu_limit
+    metadata_http_endpoint   = local.hardened_karpenter_metadata_options.httpEndpoint
+    metadata_ipv6            = local.hardened_karpenter_metadata_options.httpProtocolIPv6
+    metadata_hop_limit       = local.hardened_karpenter_metadata_options.httpPutResponseHopLimit
+    metadata_http_tokens     = local.hardened_karpenter_metadata_options.httpTokens
     enable_external_dns      = var.enable_dr_external_dns && local.domain_name != "" ? "true" : "false"
     domain_name              = local.domain_name
     web_namespace            = var.web_namespace

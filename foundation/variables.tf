@@ -88,6 +88,12 @@ variable "enable_project_s3_data_events" {
   default     = false
 }
 
+variable "enable_capital_one_s3_detection" {
+  description = "Create the opt-in CloudTrail metric filter and alarm for a successful validation-prefix GetObject by the Primary Karpenter Node Role. Requires project S3 data events."
+  type        = bool
+  default     = false
+}
+
 variable "dvwa_login_failure_alarm_threshold" {
   description = "Number of BANK login failure audit events in five minutes that moves the minimal WEB-01 alarm to ALARM."
   type        = number

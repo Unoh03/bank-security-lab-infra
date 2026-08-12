@@ -227,11 +227,12 @@ resource "helm_release" "primary_karpenter_node_config" {
   chart     = "${path.module}/charts/karpenter-node-config"
 
   values = [yamlencode({
-    clusterName  = module.primary_eks.cluster_name
-    projectName  = var.project_name
-    nodeRole     = module.primary_karpenter.node_iam_role_name
-    capacityType = var.karpenter_capacity_types
-    cpuLimit     = var.karpenter_cpu_limit
+    clusterName     = module.primary_eks.cluster_name
+    projectName     = var.project_name
+    nodeRole        = module.primary_karpenter.node_iam_role_name
+    capacityType    = var.karpenter_capacity_types
+    cpuLimit        = var.karpenter_cpu_limit
+    metadataOptions = local.primary_karpenter_metadata_options
   })]
 
   depends_on = [helm_release.primary_karpenter]
@@ -246,11 +247,12 @@ resource "helm_release" "dr_karpenter_node_config" {
   chart     = "${path.module}/charts/karpenter-node-config"
 
   values = [yamlencode({
-    clusterName  = module.dr_eks[0].cluster_name
-    projectName  = var.project_name
-    nodeRole     = module.dr_karpenter[0].node_iam_role_name
-    capacityType = var.karpenter_capacity_types
-    cpuLimit     = var.karpenter_cpu_limit
+    clusterName     = module.dr_eks[0].cluster_name
+    projectName     = var.project_name
+    nodeRole        = module.dr_karpenter[0].node_iam_role_name
+    capacityType    = var.karpenter_capacity_types
+    cpuLimit        = var.karpenter_cpu_limit
+    metadataOptions = local.hardened_karpenter_metadata_options
   })]
 
   depends_on = [helm_release.dr_karpenter]

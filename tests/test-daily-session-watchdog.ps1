@@ -188,6 +188,7 @@ try {
         -PrimaryBastionKeyPairName 'watchdog-primary-test' `
         -DrBastionKeyPairName 'watchdog-dr-test' `
         -WatchdogScriptPath $watchdogPath `
+        -SecurityScenarioProfile hardened `
         -ExperimentId 'watchdog-static-test' `
         -StateRoot $stateRoot
     $taskName = Get-DailySessionTaskName `
@@ -246,6 +247,9 @@ try {
     if ([datetimeoffset]$stored.RetryUntilUtc -ne $expectedRetryUntil) {
         throw 'Daily Session retry window is not bounded to two hours.'
     }
+    if ([string]$stored.SecurityScenarioProfile -cne 'hardened') {
+        throw 'The hardened security scenario was not retained in Daily Session state.'
+    }
 
     $completion = Complete-DailySessionGuard `
         -SessionSafety $testSafety `
@@ -287,6 +291,7 @@ try {
         -DrBastionKeyPairName 'watchdog-dr-test' `
         -WatchdogScriptPath $watchdogPath `
         -WatchdogMode Off `
+        -SecurityScenarioProfile capital-one-lab `
         -ExperimentId 'watchdog-disabled-test' `
         -StateRoot $offStateRoot
     $offTaskName = Get-DailySessionTaskName `
@@ -296,8 +301,38 @@ try {
         throw 'WatchdogMode Off unexpectedly registered a Scheduled Task.'
     }
     if ([string]$offSession.WatchdogMode -cne 'Off' -or
-        [string]$offSession.LastResult -cne 'GuardDisabled') {
+        [string]$offSession.LastResult -cne 'GuardDisabled' -or
+        [string]$offSession.SecurityScenarioProfile -cne 'capital-one-lab') {
         throw 'WatchdogMode Off was not retained in the bounded Daily Session state.'
+    }
+    $profileChangeRejected = $false
+    try {
+        [void](Start-DailySessionGuard `
+            -SessionSafety $testSafety `
+            -StartedAt (Get-Date) `
+            -TerraformRoot $root `
+            -AccountId '000000000000' `
+            -PrimaryRegion 'ap-northeast-2' `
+            -DrRegion 'ap-northeast-1' `
+            -AwsProfile 'watchdog-test-profile' `
+            -ProjectName 'aws-topology' `
+            -AutomationConfigPath $configPath `
+            -PrimaryBastionKeyPairName 'watchdog-primary-test' `
+            -DrBastionKeyPairName 'watchdog-dr-test' `
+            -WatchdogScriptPath $watchdogPath `
+            -WatchdogMode Off `
+            -SecurityScenarioProfile hardened `
+            -ExperimentId 'watchdog-disabled-test' `
+            -StateRoot $offStateRoot)
+    } catch {
+        if ($_.Exception.Message -like '*security scenario*Run Daily Down*') {
+            $profileChangeRejected = $true
+        } else {
+            throw
+        }
+    }
+    if (-not $profileChangeRejected) {
+        throw 'An active Daily Session allowed its security scenario to change.'
     }
     $offLogPath = Get-DailySessionLogPath `
         -SessionId ([string]$offSession.SessionId) `

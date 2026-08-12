@@ -153,6 +153,19 @@
                 PollDelaySeconds   = 2
             }
             @{
+                Name                 = 'capital-one-validation-getobject'
+                Type                 = 'CloudWatchLogsInsights'
+                ScenarioIds          = @('CAPITAL-ONE')
+                QueryFile            = 'cloudwatch\13_capital_one_validation_getobject.cwli'
+                LogGroup             = '/aws/cloudtrail/{ProjectName}-security'
+                Region               = 'Primary'
+                Required             = $true
+                DeliveryGraceMinutes = 10
+                EventTimeField       = 'event_time'
+                MaxPollAttempts      = 60
+                PollDelaySeconds     = 5
+            }
+            @{
                 Name               = 't1-waf-http-https'
                 Type               = 'CloudWatchLogsInsights'
                 ScenarioIds        = @('T1')

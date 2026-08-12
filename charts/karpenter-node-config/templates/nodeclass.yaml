@@ -6,6 +6,11 @@ spec:
   amiSelectorTerms:
     - alias: al2023@latest
   role: {{ .Values.nodeRole | quote }}
+  metadataOptions:
+    httpEndpoint: {{ .Values.metadataOptions.httpEndpoint | quote }}
+    httpProtocolIPv6: {{ .Values.metadataOptions.httpProtocolIPv6 | quote }}
+    httpPutResponseHopLimit: {{ .Values.metadataOptions.httpPutResponseHopLimit }}
+    httpTokens: {{ .Values.metadataOptions.httpTokens | quote }}
   subnetSelectorTerms:
     - tags:
         karpenter.sh/discovery: {{ .Values.clusterName | quote }}

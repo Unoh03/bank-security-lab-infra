@@ -43,6 +43,11 @@ spec:
   amiSelectorTerms:
     - alias: al2023@latest
   role: "${karpenter_node_role}"
+  metadataOptions:
+    httpEndpoint: "${metadata_http_endpoint}"
+    httpProtocolIPv6: "${metadata_ipv6}"
+    httpPutResponseHopLimit: ${metadata_hop_limit}
+    httpTokens: "${metadata_http_tokens}"
   subnetSelectorTerms:
     - tags:
         karpenter.sh/discovery: "${cluster_name}"

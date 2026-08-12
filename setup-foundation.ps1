@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
     [string]$ConfirmSetup = '',
+    [string]$ConfirmCapitalOneDetection = '',
     [string]$TerraformRoot = '',
     [string]$AwsProfile = 'terra-user',
     [string]$Region = 'ap-northeast-2',
@@ -11,6 +12,8 @@ param(
     [Parameter(Mandatory)]
     [AllowEmptyString()]
     [string]$DomainName,
+    [switch]$EnableProjectS3DataEvents,
+    [switch]$EnableCapitalOneDetection,
     [string]$GitHubRepository = 'Unoh03/Uns-DVWA',
     [string]$ArgoDeployKeyPath = "$HOME\.ssh\argocd-uns-dvwa",
     [switch]$RotateDeployKey
@@ -28,6 +31,19 @@ if (-not $TerraformRoot) {
 $foundationRoot = Join-Path $TerraformRoot 'foundation'
 $planPath = Join-Path $foundationRoot 'foundation.tfplan'
 $foundationVars = Join-Path $foundationRoot 'terraform.tfvars'
+$enableProjectS3DataEventsValue = if ($EnableProjectS3DataEvents.IsPresent) { 'true' } else { 'false' }
+$enableCapitalOneDetectionValue = if ($EnableCapitalOneDetection.IsPresent) { 'true' } else { 'false' }
+
+if ($EnableCapitalOneDetection.IsPresent -and
+    -not $EnableProjectS3DataEvents.IsPresent) {
+    throw 'Capital One detection requires -EnableProjectS3DataEvents because its input is a CloudTrail S3 object data event.'
+}
+if ($EnableProjectS3DataEvents.IsPresent) {
+    Write-Warning 'Project S3 Data Events are enabled and can add CloudTrail data-event charges.'
+}
+if ($EnableCapitalOneDetection.IsPresent) {
+    Write-Warning 'Capital One detection is enabled: a CloudWatch custom metric and alarm will be created for the approved experiment.'
+}
 
 function Get-GitHubRepositoryMetadata {
     $json = Invoke-NativeCapture -FilePath 'gh' -ArgumentList @(
@@ -199,6 +215,8 @@ try {
         "-var=project_name=$ProjectName",
         "-var=domain_name=$DomainName",
         "-var=expected_account_id=$ExpectedAccountId",
+        "-var=enable_project_s3_data_events=$enableProjectS3DataEventsValue",
+        "-var=enable_capital_one_s3_detection=$enableCapitalOneDetectionValue",
         "-out=$planPath"
     ) -FailureMessage 'Foundation Terraform plan failed.'
 
@@ -208,6 +226,11 @@ try {
     if ($ConfirmSetup -cne 'SETUP FOUNDATION') {
         Write-Host "No AWS or GitHub change was made. Review the plan, then rerun with -ConfirmSetup 'SETUP FOUNDATION'."
         exit 2
+    }
+    if ($EnableCapitalOneDetection.IsPresent -and
+        $ConfirmCapitalOneDetection -cne 'ENABLE CAPITAL ONE DETECTION') {
+        Write-Host "No AWS or GitHub change was made. Capital One detection also requires -ConfirmCapitalOneDetection 'ENABLE CAPITAL ONE DETECTION'."
+        exit 3
     }
 
     Invoke-NativePassthrough -FilePath 'terraform' -ArgumentList @(

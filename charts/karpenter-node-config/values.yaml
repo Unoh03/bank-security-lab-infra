@@ -4,3 +4,8 @@ nodeRole: ""
 capacityType:
   - on-demand
 cpuLimit: "100"
+metadataOptions:
+  httpEndpoint: enabled
+  httpProtocolIPv6: disabled
+  httpPutResponseHopLimit: 1
+  httpTokens: required

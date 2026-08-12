@@ -86,6 +86,17 @@ output "dvwa_login_failure_alarm_name" {
   value = aws_cloudwatch_metric_alarm.dvwa_login_failures.alarm_name
 }
 
+output "capital_one_s3_detection" {
+  description = "Non-sensitive status and identifiers for the opt-in Capital One CloudTrail detector."
+  value = {
+    enabled            = var.enable_capital_one_s3_detection
+    metric_filter_name = try(aws_cloudwatch_log_metric_filter.capital_one_validation_getobject[0].name, null)
+    alarm_name         = try(aws_cloudwatch_metric_alarm.capital_one_validation_getobject[0].alarm_name, null)
+    expected_role_name = "${var.project_name}-primary-karpenter-node"
+    object_prefix      = "validation/"
+  }
+}
+
 output "security_alert_email_subscription_enabled" {
   value = var.enable_security_alert_email_subscription
 }

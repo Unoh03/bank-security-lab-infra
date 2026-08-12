@@ -1,0 +1,25 @@
+# Purpose: Karpenter Node Role 자격 증명으로 validation/ 객체를 읽은 성공·실패를 조사한다.
+# Log group: /aws/cloudtrail/aws-topology-security
+# Detector match: GetObject + Primary Karpenter Node Role + validation/* + errorCode 없음
+# Normal: 승인된 CAPITAL-ONE 실습 시간 밖에서는 0건
+# Attack/abuse: 외부 Source IP 또는 예상하지 않은 User Agent에서 성공한 GetObject
+# False positive: 승인된 실습 시간·실행자에서 발생한 계획된 성공 GetObject는 실제 사고로 분류하지 않음
+# Remediation evidence: 같은 Role·Prefix의 재시도가 AccessDenied 또는 Credential 실패
+# Runtime verification: pending; 새 통제 실습에서 성공 Event와 복구 후 실패 Event를 각각 확인한다.
+fields @timestamp as ingestion_time,
+       eventTime as event_time,
+       eventName as event_name,
+       userIdentity.sessionContext.sessionIssuer.arn as role_arn,
+       userIdentity.arn as caller_arn,
+       sourceIPAddress as source_ip,
+       userAgent as user_agent,
+       requestParameters.bucketName as bucket_name,
+       requestParameters.key as object_key,
+       errorCode as error_code,
+       requestID as request_id
+| filter eventSource = "s3.amazonaws.com"
+| filter eventName = "GetObject"
+| filter userIdentity.sessionContext.sessionIssuer.userName like /-primary-karpenter-node$/
+| filter requestParameters.key like /^validation\//
+| sort event_time asc
+| limit 200

@@ -81,6 +81,12 @@ function Read-DailySessionState {
     if ([string]$state.WatchdogMode -notin @('On', 'Off')) {
         throw "Unsupported Daily Session WatchdogMode: $($state.WatchdogMode)"
     }
+    if ($null -eq $state.PSObject.Properties['SecurityScenarioProfile']) {
+        $state | Add-Member -NotePropertyName SecurityScenarioProfile -NotePropertyValue 'hardened'
+    }
+    if ([string]$state.SecurityScenarioProfile -notin @('hardened', 'capital-one-lab')) {
+        throw "Unsupported Daily Session SecurityScenarioProfile: $($state.SecurityScenarioProfile)"
+    }
     if ([string]$state.SessionId -notmatch '^[A-Za-z0-9][A-Za-z0-9-]{7,63}$') {
         throw 'Daily Session ID is unsafe.'
     }
@@ -663,6 +669,7 @@ function Start-DailySessionGuard {
         [Parameter(Mandatory)][string]$DrBastionKeyPairName,
         [Parameter(Mandatory)][string]$WatchdogScriptPath,
         [ValidateSet('On', 'Off')][string]$WatchdogMode = 'On',
+        [ValidateSet('hardened', 'capital-one-lab')][string]$SecurityScenarioProfile = 'hardened',
         [string]$ExperimentId = '',
         [string]$StateRoot = ''
     )
@@ -693,6 +700,9 @@ function Start-DailySessionGuard {
         }
         if ([string]$existing.WatchdogMode -cne $WatchdogMode) {
             throw "The existing Daily Session uses WatchdogMode '$($existing.WatchdogMode)'. Run Daily Down before changing it to '$WatchdogMode'."
+        }
+        if ([string]$existing.SecurityScenarioProfile -cne $SecurityScenarioProfile) {
+            throw "The existing Daily Session uses security scenario '$($existing.SecurityScenarioProfile)'. Run Daily Down before changing it to '$SecurityScenarioProfile'."
         }
         $taskName = Get-DailySessionTaskName `
             -SessionSafety $SessionSafety `
@@ -753,6 +763,7 @@ function Start-DailySessionGuard {
         RetryUntilUtc    = $retryUntil.ToString('o')
         ExperimentId     = $ExperimentId
         WatchdogMode     = $WatchdogMode
+        SecurityScenarioProfile = $SecurityScenarioProfile
         LastAttemptAtUtc = ''
         LastResult       = if ($WatchdogMode -ceq 'On') { 'GuardRegistrationPending' } else { 'GuardDisabled' }
     }

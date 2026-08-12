@@ -92,6 +92,60 @@ resource "aws_cloudwatch_metric_alarm" "dvwa_login_failures" {
   }
 }
 
+# CAPITAL-ONE is deliberately a deterministic CloudTrail rule rather than a
+# claim that GuardDuty will always classify this controlled S3 read. The
+# filter matches only a successful GetObject below validation/ when the caller
+# session was issued by the Primary Karpenter Node Role.
+resource "aws_cloudwatch_log_metric_filter" "capital_one_validation_getobject" {
+  count = var.enable_capital_one_s3_detection ? 1 : 0
+
+  name           = "${local.name}-capital-one-validation-getobject"
+  log_group_name = aws_cloudwatch_log_group.cloudtrail.name
+  pattern = join(" ", [
+    "{",
+    "($.eventSource = \"s3.amazonaws.com\")",
+    "&& ($.eventName = \"GetObject\")",
+    "&& ($.userIdentity.sessionContext.sessionIssuer.userName = \"${local.name}-primary-karpenter-node\")",
+    "&& ($.requestParameters.key = \"validation/*\")",
+    "&& ($.errorCode NOT EXISTS)",
+    "}",
+  ])
+
+  metric_transformation {
+    name          = "CapitalOneValidationGetObject"
+    namespace     = local.security_metric_namespace
+    value         = "1"
+    default_value = 0
+    unit          = "Count"
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.enable_project_s3_data_events
+      error_message = "enable_capital_one_s3_detection requires enable_project_s3_data_events=true."
+    }
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "capital_one_validation_getobject" {
+  count = var.enable_capital_one_s3_detection ? 1 : 0
+
+  alarm_name          = "${local.name}-capital-one-validation-getobject"
+  alarm_description   = "CloudTrail recorded a successful validation-prefix GetObject using credentials issued to the Primary Karpenter Node Role. Investigate the CAPITAL-ONE evidence query."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "CapitalOneValidationGetObject"
+  namespace           = local.security_metric_namespace
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.security_alerts.arn]
+  ok_actions    = [aws_sns_topic.security_alerts.arn]
+}
+
 # F2 uses only GuardDuty's foundational threat detection. Optional protection
 # plans remain explicitly disabled so this phase does not silently expand into
 # Runtime Monitoring, Malware Protection, or other higher-cost F3 scope.

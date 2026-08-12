@@ -48,6 +48,69 @@ Plan과 AWS Account를 확인한 뒤에만 실행한다.
 - Argo CD read-only Deploy Key 생성·등록
 - `AWS_REGION`, `ECR_REPOSITORY`, `AWS_ROLE_ARN` Repository Variable 설정·재확인
 
+### Capital One 수집·탐지 활성화
+
+기본 Foundation에서는 추가 S3 Data Event와 Capital One Detector가 꺼져 있다.
+통제된 실습 전에는 두 기능을 함께 넣은 별도 Foundation Plan을 먼저 확인한다.
+
+```powershell
+.\setup-foundation.ps1 `
+  -DomainName '<EXISTING_PUBLIC_DOMAIN>' `
+  -EnableProjectS3DataEvents `
+  -EnableCapitalOneDetection
+```
+
+Plan에서 다음만 추가·변경되는지 확인한다.
+
+```text
+CloudTrail Project S3 Object Data Event Selector
+Capital One CloudWatch Logs Metric Filter
+Capital One CloudWatch Alarm
+기존 Security Alert SNS 연결
+```
+
+승인된 실습 시간에만 다음 두 확인문으로 Apply한다.
+
+```powershell
+.\setup-foundation.ps1 `
+  -DomainName '<EXISTING_PUBLIC_DOMAIN>' `
+  -EnableProjectS3DataEvents `
+  -EnableCapitalOneDetection `
+  -ConfirmCapitalOneDetection 'ENABLE CAPITAL ONE DETECTION' `
+  -ConfirmSetup 'SETUP FOUNDATION'
+```
+
+Detector 조건은 다음과 같다.
+
+```text
+eventSource=s3.amazonaws.com
++ eventName=GetObject
++ Primary Karpenter Node Role
++ key=validation/*
++ errorCode 없음
+→ 1분 동안 1건 이상이면 ALARM
+```
+
+Alarm은 기존 Security Alert SNS Topic으로 전달한다. CloudTrail 전달 지연이 있으므로
+실행 직후 경보가 없다고 실패로 단정하지 않는다. Evidence Query는 성공뿐 아니라
+복구 뒤 `AccessDenied`도 보존한다.
+
+```powershell
+.\daily-down.ps1 `
+  -EvidenceOnly `
+  -RunEvidenceQueries `
+  -ExperimentId '<EXPERIMENT_ID>' `
+  -ScenarioId 'CAPITAL-ONE' `
+  -EvidenceStartUtc '<UTC_START>' `
+  -EvidenceEndUtc '<UTC_END>' `
+  -EvidenceDeliveryGraceMinutes 10
+```
+
+S3 Data Event와 Custom Metric은 비용이 발생할 수 있다. 실습 종료 후 두 Switch를
+제외한 Foundation Plan에서 Selector·Metric Filter·Alarm 제거만 나타나는지 확인한
+뒤 승인해 비활성화한다. Log Bucket·Trail·SNS·GuardDuty Detector 삭제가 보이면
+적용하지 않는다.
+
 ### 기존 EKS Log Group의 일회성 소유권 이전
 
 Observability 보강 전부터 `/aws/eks/aws-topology-primary/cluster`가 존재하고
@@ -124,6 +187,36 @@ Valkey와 EFS는 어느 Profile에서도 자동 활성화되지 않는다. 실�
 Daily State가 있는 동안 Profile이나 이 세 Toggle을 바꾸지 않으며, 먼저
 `daily-down.ps1`로 State를 비운다.
 
+### Security Scenario Profile
+
+Runtime 규모와 보안 상태는 별도 입력이다.
+
+| Profile | Primary Karpenter IMDS | Primary Node Role | DR |
+|---|---|---|---|
+| `hardened` | IMDSv2 필수·Hop 1 | 실습용 S3 권한 없음 | 항상 hardened |
+| `capital-one-lab` | IMDSv1 허용·Hop 2 | Primary bucket의 `validation/*` 읽기만 허용 | 항상 hardened |
+
+기본값은 `hardened`다. `capital-one-lab`은 가짜 검증 자료만 사용하는 승인된 실습
+시간에 한해 사용한다. Plan을 먼저 확인한 뒤 실제 Apply에는 두 확인문이 모두
+필요하다.
+
+```powershell
+.\daily-up.ps1 `
+  -RuntimeProfile minimal `
+  -SecurityScenarioProfile capital-one-lab
+
+.\daily-up.ps1 `
+  -RuntimeProfile minimal `
+  -SecurityScenarioProfile capital-one-lab `
+  -ConfirmSecurityScenario 'ENABLE CAPITAL ONE LAB' `
+  -ConfirmApply 'APPLY DAILY'
+```
+
+활성 Daily State나 Session이 있는 동안 Security Scenario를 바꾸지 않는다. 먼저
+`daily-down.ps1`로 Runtime을 제거하고, 새 Profile의 Fresh Plan을 검토한다. Profile
+변경은 새 EC2NodeClass를 선언할 뿐 기존 Karpenter Node를 즉시 교체하지 않으므로,
+실제 Node의 MetadataOptions 검증과 Node 교체는 별도 승인 절차에서 수행한다.
+
 ## Daily Session 시간 제한
 
 `-ConfirmApply 'APPLY DAILY'`를 통과한 뒤 실제 Apply를 시작하기 전에 기본값
@@ -154,8 +247,9 @@ Deadline과 Sanitized Session Log는 남지만 자동 Down Scheduled Task는 생
 %LOCALAPPDATA%\aws-topology\daily-session\logs\<session-id>.daily-down.<attempt-id>.log
 ```
 
-상태와 Scheduled Task 인수에는 AWS Credential, Private Key, Password,
-Token을 기록하지 않는다. 노트북 전원이 꺼졌거나 AWS Profile을 사용할 수
+상태에는 선택한 Security Scenario가 함께 기록된다. 상태와 Scheduled Task 인수에는
+AWS Credential, Private Key, Password, Token을 기록하지 않는다. 노트북 전원이
+꺼졌거나 AWS Profile을 사용할 수
 없으면 자동 Down을 보장할 수 없으므로, 다음 접속 때 실패 상태와 실제 과금
 Runtime을 먼저 확인한다.
 

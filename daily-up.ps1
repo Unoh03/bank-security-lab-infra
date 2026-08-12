@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
     [string]$ConfirmApply = '',
+    [string]$ConfirmSecurityScenario = '',
     [string]$TerraformRoot = '',
     [string]$DvWaRoot = '',
     [string]$AwsProfile = 'terra-user',
@@ -20,6 +21,8 @@ param(
     [string]$ExperimentId = '',
     [ValidateSet('minimal', 'dr-test', 'full')]
     [string]$RuntimeProfile = 'minimal',
+    [ValidateSet('hardened', 'capital-one-lab')]
+    [string]$SecurityScenarioProfile = 'hardened',
     [ValidateSet('On', 'Off')]
     [string]$WatchdogMode = 'On',
     [switch]$EnableValkey,
@@ -50,6 +53,9 @@ $enableEfsValue = if ($EnableEfs.IsPresent) { 'true' } else { 'false' }
 $enableHttpsRedirectValue = if ($AllowHttp.IsPresent) { 'false' } else { 'true' }
 if ($AllowHttp.IsPresent) {
     Write-Warning 'AllowHttp is enabled: CloudFront will accept HTTP instead of redirecting every request to HTTPS.'
+}
+if ($SecurityScenarioProfile -ceq 'capital-one-lab') {
+    Write-Warning 'capital-one-lab weakens IMDS controls on Primary Karpenter nodes and grants validation-prefix read access to the Primary Karpenter Node Role.'
 }
 $application = Get-DailyApplication `
     -Config $automationConfig `
@@ -367,6 +373,12 @@ try {
         if ($appliedProfile.Trim() -cne $RuntimeProfile) {
             throw "Daily Runtime is already using profile '$($appliedProfile.Trim())'. Run Daily Down before changing to '$RuntimeProfile'."
         }
+        $appliedSecurityProfile = Invoke-NativeCapture -FilePath 'terraform' -ArgumentList @(
+            "-chdir=$TerraformRoot", 'output', '-raw', 'security_scenario_profile'
+        ) -FailureMessage 'The current Daily Runtime security scenario profile could not be read.'
+        if ($appliedSecurityProfile.Trim() -cne $SecurityScenarioProfile) {
+            throw "Daily Runtime is already using security scenario '$($appliedSecurityProfile.Trim())'. Run Daily Down before changing to '$SecurityScenarioProfile'."
+        }
         $appliedFeaturesJson = Invoke-NativeCapture -FilePath 'terraform' -ArgumentList @(
             "-chdir=$TerraformRoot", 'output', '-json', 'runtime_features'
         ) -FailureMessage 'The current Daily Runtime feature selection could not be read.'
@@ -390,6 +402,7 @@ try {
         "-var=primary_region=$Region",
         "-var=dr_region=$DrRegion",
         "-var=runtime_profile=$RuntimeProfile",
+        "-var=security_scenario_profile=$SecurityScenarioProfile",
         "-var=enable_valkey=$enableValkeyValue",
         "-var=enable_efs=$enableEfsValue",
         "-var=enable_https_redirect=$enableHttpsRedirectValue",
@@ -406,6 +419,11 @@ try {
         Write-Host "No AWS change was made. Review the plan, then rerun with -ConfirmApply 'APPLY DAILY'."
         exit 2
     }
+    if ($SecurityScenarioProfile -ceq 'capital-one-lab' -and
+        $ConfirmSecurityScenario -cne 'ENABLE CAPITAL ONE LAB') {
+        Write-Host "No AWS change was made. capital-one-lab also requires -ConfirmSecurityScenario 'ENABLE CAPITAL ONE LAB'."
+        exit 3
+    }
 
     $session = Start-DailySessionGuard `
         -SessionSafety $automationConfig.SessionSafety `
@@ -421,9 +439,11 @@ try {
         -DrBastionKeyPairName $DrBastionKeyPairName `
         -WatchdogScriptPath $watchdogScript `
         -WatchdogMode $WatchdogMode `
+        -SecurityScenarioProfile $SecurityScenarioProfile `
         -ExperimentId $ExperimentId
     Write-Host "Daily Session: $($session.SessionId)"
     Write-Host "Runtime profile: $RuntimeProfile"
+    Write-Host "Security scenario: $SecurityScenarioProfile"
     Write-Host "Watchdog mode: $WatchdogMode"
     Write-Host "Optional features: valkey=$enableValkeyValue, efs=$enableEfsValue, https_redirect=$enableHttpsRedirectValue"
     Write-Host "Soft deadline: $(([datetimeoffset]$session.SoftDeadlineAtUtc).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss zzz'))"
