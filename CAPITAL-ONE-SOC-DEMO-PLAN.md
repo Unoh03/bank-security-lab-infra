@@ -1,8 +1,8 @@
 # Capital One 기반 보안 관제·자동 대응 시연 계획
 
-> **상태:** Draft v0.7 — Gate 2 공격 로그 Coverage 확정, SIEM·SOAR·GitHub 자동화 미검증
+> **상태:** Draft v0.8 — Gate 3 정상 대조군 검증, Alert 필드 Source·Plan 완료·Apply 전
 > **기준 시점:** 2026-08-12
-> **현재 절차 Gate:** Gate 3 — 정상 GetObject 오탐 Test·Alert 필드 보강 전
+> **현재 절차 Gate:** Gate 3 — Alert description 1건 Apply 승인 전
 > **현재 Runtime 상태:** T4 BASELINE OBSERVED — `minimal + capital-one-lab`, 자동 Containment 실행 전
 > **Terraform 진행:** T1·T2 Source, T3 Plan-only, Foundation·Daily Apply와 Post-Apply 0-change 검증 완료
 > **번호 구분:** `T0~T6`는 Terraform 구현 순서이고 `Gate 0~8`은 시연 Evidence 검증 순서다. 같은 번호끼리 같은 작업이 아니다.
@@ -525,15 +525,62 @@ GuardDuty Finding과 WAF·Application Event는 발생하면 조사 Timeline을 �
 
 - [x] 탐지 Rule 입력 Source 확정
 - [x] Rule 조건과 제외 조건 문서화
-- [ ] 정상 접근으로 오탐 Test
+- [x] 정상 접근으로 오탐 Test
 - [x] 공격 접근으로 정탐 Test
-- [ ] Alert에 시간·Role·행위·Severity 포함
+- [ ] Alert에 시간·Role·행위·Severity 포함 — Source·Fresh Plan 완료, Runtime Apply 전
 
 Runtime 정탐 결과는 Metric Filter의 새 `ALARM` 전환과 같은 시간창의 CloudTrail
 `GetObject` 1행으로 확인했다. 첫 Evidence Query가 0행이었던 원인은 공격이나 AWS
 로그 부재가 아니라 Windows PowerShell 5.1의 native argument 인용 손실이었다.
 Collector가 CWLI를 UTF-8 `file://`로 전달하도록 고쳤고, CAPITAL-ONE에만 최소 1행과
 제한된 전달 재조회를 적용한 뒤 Bundle을 다시 생성해 1행을 확인했다.
+
+2026-08-12 Negative Control Evidence:
+
+```text
+ExperimentId: capital-one-negative-20260812T034935Z
+Caller: 고정 정상 terra-user, ARN 비저장
+S3: 같은 고정 가짜 CSV 5행·SHA-256 일치
+CloudTrail: 성공 GetObject 정확히 1행, Node Role 불일치, 실행 시간창 일치
+Alarm: OK 유지, State Updated Timestamp 불변
+Bundle: SHA256SUMS 50개 일치
+```
+
+Negative Control의 시간 계약은 다음과 같다. S3 읽기는 수초지만 CloudTrail Event의
+CloudWatch Logs 전달은 평균 약 5분이며 보장 시간은 아니다. Runner는 전달·Query를
+약 10분까지만 기다리고, Event를 확인한 뒤 Alarm 비전환을 120초 관찰한다.
+
+```text
+S3 읽기·가짜 데이터 검증: 수초
+CloudTrail 전달·Query: 최대 약 10분, 30초 간격 진행률 출력
+Alarm 비전환 관찰: 120초
+Timeout: 같은 GetObject 반복 금지 → 기존 ExperimentId로 Resume
+```
+
+Runner는 별도 CWLI 실행기를 두지 않고 Evidence Collector의 UTF-8 Query 정규화,
+Delivery Grace, `event_time` 재필터, 제한 재시도를 그대로 사용한다. Client Record에는
+현재 Invocation과 세 단계의 소요시간을 남긴다.
+
+현재 SNS Alarm 메시지는 기본 Schema의 `StateChangeTime`과 `AlarmDescription`을 사용한다.
+실제 Runtime Description에는 GetObject와 Node Role은 있지만 Severity가 없다. Source는
+다음 고정 필드를 Description에 넣도록 보강했다.
+
+```text
+scenario=CAPITAL-ONE
+severity=HIGH
+action=s3:GetObject
+actor=aws-topology-primary-karpenter-node
+object=validation/*
+verdict=success
+```
+
+2026-08-12에 만든 Foundation Plan Snapshot은 해당 Alarm의 `alarm_description`
+**1개 in-place update**만 표시하고 Create·Delete는 0건이었다. 이는 변경 범위 Evidence일
+뿐 재개 뒤 그대로 실행할 Plan이 아니다. Apply 직전 Source·State 기준으로 Fresh Plan을
+다시 생성하고 같은 범위인지 확인한다. 아직 Apply하지 않았으므로 Runtime Alert가
+보강됐다고 주장하지 않는다. SIEM 단계에서는 CloudWatch Alarm State Change Event를
+EventBridge로 받아 정규 JSON으로 변환하며, 지금 SNS 경로에 별도 Target을 더해 중복
+이메일·SMS를 만들지 않는다.
 
 ### Gate 4 — SIEM·중앙 관제 계층
 
@@ -799,14 +846,15 @@ Argo CD가 담당한 것과 Terraform이 담당한 것은 무엇인가
 
 ## 11. 지금 바로 할 한 가지
 
-Baseline·확정 탐지·Gate 2 Coverage 판정까지 끝났다. 다음은 Terraform을 다시 Apply하거나
-같은 공격을 반복하는 단계가 아니라, Gate 3의 **정상 GetObject 오탐 Test와 Alert 필드
-보강**이다.
+Baseline·Gate 2·정상 접근 Negative Control까지 끝났다. 다음은 같은 공격이나 정상
+GetObject를 반복하는 단계가 아니라, 재개 시점에 Foundation Fresh Plan을 다시 만들고
+Alarm Description 1개 update인지 사람이 확인해 Apply할지 결정하는 단계다.
 
 ```text
-Alarm이 실제 OK로 복귀한 뒤 정상 운영자 Identity로 고정 가짜 Object를 한 번 읽기
-→ Node Role 조건이 불일치하므로 대표 Rule이 ALARM으로 전환되지 않는지 확인
-→ Alert Payload에 시간·Role·행위·Severity가 있는지 확인·보강
+기존 Plan Snapshot: Alarm Description 1개 update, Create/Delete 0
+→ Apply 직전 Fresh Plan 재생성·동일 범위 확인
+→ 명시적 승인 뒤에만 Foundation Apply
+→ describe-alarms로 새 Description Runtime 확인
 → 그 뒤 중앙 관제 제품 한 개 선택
 ```
 

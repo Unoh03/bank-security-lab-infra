@@ -2,7 +2,7 @@
 
 > **용도:** 최종 보고서·발표 자료에 재사용할 Observability / S3 / Athena / Grafana 증거를 한곳에서 추적한다.  
 > **기준 시점:** 2026-08-12
-> **진행 상태:** 기존 Observability Evidence + Capital One Baseline·탐지·Gate 2 Coverage 검증 완료
+> **진행 상태:** 기존 Observability Evidence + Capital One 정탐·Gate 2·정상 대조군 검증 완료
 > **관련 현황:** [`../OBSERVABILITY-CURRENT-STATUS.md`](../OBSERVABILITY-CURRENT-STATUS.md)  
 > **실행 계획:** [`../OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](../OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)
 
@@ -450,7 +450,39 @@ Gate 2 판정에서 `미수집`과 `탐지 없음`을 구분한다. Pod→IMDS�
 GuardDuty는 Detector를 직접 조회했지만 같은 TAKE 이후 Finding 자체가 0건인 경우다.
 둘 다 CloudTrail Custom Rule의 정탐 성공을 뒤집지 않는다.
 
-## 9.2 기존 Pod Identity 후속
+## 9.2 Capital One 정상 대조군 — 내부 조사 Bundle
+
+```text
+C:\Users\Unoh\Documents\aws-topology-evidence\capital-one-negative-20260812T034935Z\
+├─ source\client\capital-one-negative-control.json
+├─ results\cloudwatch\capital-one-negative-control.json
+├─ manifest.json
+├─ manifest.json.sha256
+└─ SHA256SUMS.txt
+```
+
+확인된 Claim:
+
+```text
+고정 정상 terra-user가 가짜 CSV 한 객체를 GetObject
+가짜 5행·준비 SHA-256 일치
+CloudTrail 성공 GetObject 정확히 1행
+Primary Karpenter Node Role이 아님
+실행 Event는 시작 0.868초 뒤·읽기 종료 0.629초 전
+Capital One Alarm은 OK·State Updated Timestamp 불변
+Client Record에 Bucket·Caller ARN·Credential Pattern 없음
+SHA256SUMS 50개 모두 일치
+```
+
+이 Bundle도 CloudTrail 내부 조사 필드를 포함하므로 공개본이 아니다. 첫 Query 실패는
+GetObject 실패가 아니라 Query 파일 인코딩과 전달 지연 Scan Window 오류였고, Resume
+모드가 동일 S3 읽기를 반복하지 않고 기존 Event만 재검증했다.
+
+보고서에 사용할 검증 목적·시간 해석·시행착오·재발 방지·주장 한계는
+[`CAPITAL-ONE-GATE3-VALIDATION-LESSONS.md`](./CAPITAL-ONE-GATE3-VALIDATION-LESSONS.md)에
+분리해 정리했다.
+
+## 9.3 기존 Pod Identity 후속
 
 ```text
 Pod Identity Association

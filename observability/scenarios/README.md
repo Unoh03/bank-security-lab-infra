@@ -83,7 +83,7 @@ Reference:
 이 ID는 `capital-one-lab` Profile에서 재현할 대표 시나리오다. 기존 IAM-01은
 Pod Identity 권한 검증이므로 서로 같은 공격으로 설명하지 않는다.
 
-다음 두 Script가 Target과 데이터를 고정한다.
+다음 세 Script가 Target과 데이터를 고정한다.
 
 - `Prepare-CapitalOneDemoData.ps1`: Primary Application Bucket의
   `validation/capital-one-demo.csv` 한 객체만 만든다. 모든 행은
@@ -91,6 +91,9 @@ Pod Identity 권한 검증이므로 서로 같은 공격으로 설명하지 않�
 - `Invoke-CapitalOneBaseline.ps1`: Terraform의 `application_url`에서만 DVWA
   Command Injection을 실행한다. URL·Bucket·Object Key·Command·Payload를 외부
   입력으로 받지 않는다.
+- `Invoke-CapitalOneNegativeControl.ps1`: 고정 `terra-user` 정상 운영자 Identity로
+  같은 가짜 Object를 한 번 읽는다. CloudTrail에는 1행이 남되 Node Role 조건이 달라
+  Alarm은 계속 `OK`여야 한다.
 
 Preview와 실제 실행은 각각 분리돼 있다.
 
@@ -102,7 +105,36 @@ Preview와 실제 실행은 각각 분리돼 있다.
 .\observability\scenarios\Invoke-CapitalOneBaseline.ps1
 .\observability\scenarios\Invoke-CapitalOneBaseline.ps1 `
   -ConfirmRun 'RUN CAPITAL ONE BASELINE'
+
+.\observability\scenarios\Invoke-CapitalOneNegativeControl.ps1
+.\observability\scenarios\Invoke-CapitalOneNegativeControl.ps1 `
+  -ConfirmRun 'RUN CAPITAL ONE NEGATIVE CONTROL'
 ```
+
+Negative Control은 같은 `ExperimentId`의 기록이 이미 있으면 새 GetObject를 거부한다.
+S3 읽기 뒤 CloudTrail 조회만 실패한 경우에는 다음 Resume 확인문으로 기존 1건을
+재사용한다.
+
+```powershell
+.\observability\scenarios\Invoke-CapitalOneNegativeControl.ps1 `
+  -ExperimentId '<existing-id>' `
+  -ResumeAfterRead `
+  -ConfirmRun 'RESUME CAPITAL ONE NEGATIVE CONTROL'
+```
+
+정상 실행의 예상 시간은 다음과 같다.
+
+```text
+S3 읽기·가짜 데이터 검증: 수초
+CloudTrail 전달·Query: 최대 약 10분, 30초 간격 진행률 출력
+Alarm 비전환 관찰: 120초
+```
+
+CloudTrail Timeout이 발생해도 새 GetObject를 만들지 않는다. 같은 `ExperimentId`와
+Resume 확인문으로 기존 Event만 다시 조회한다. Runner는 Evidence Collector의 공용
+CWLI 실행기를 사용하므로 UTF-8 정규화, Delivery Grace, `event_time` 재필터와 재시도
+규칙을 별도로 복제하지 않는다. Sanitized Record에는 Invocation·단계별 소요시간도
+남는다.
 
 실제 Runner는 `minimal + capital-one-lab`, Active Daily Session, Primary IMDS
 `optional/2`, 제한 Node Role Policy, Pod Identity 비활성, S3 Data Event,
@@ -143,6 +175,16 @@ CloudTrail S3 Data Event
 - 같은 실행으로 Capital One Alarm이 새 `ALARM` 상태로 전환됐다.
 - CloudTrail Query 1행에서 `GetObject`, 예상 Role, 고정 Object Key, 성공 상태,
   실행 시간창과 조사 필드가 모두 일치했다.
+
+Negative Control `capital-one-negative-20260812T034935Z`에서는 정상 운영자 GetObject
+1행이 같은 고정 Key와 실행 시간창에 남았지만, Primary Karpenter Node Role이 아니어서
+Alarm이 `OK`를 유지하고 State Updated Timestamp도 바뀌지 않았다. Client Record에는
+Bucket·Caller ARN·Credential을 남기지 않았고 Bundle의 SHA-256 50개를 모두 대조했다.
+
+첫 후속 Query는 한글 주석을 AWS CLI `file://`에 직접 넘기고 전달 지연 시간을 Scan
+Window에 포함하지 않아 실패했다. Runner의 별도 Query 구현을 제거하고 검증된 Evidence
+Collector를 재사용하도록 고쳤으며, Resume 모드로 S3 읽기를 반복하지 않은 채 같은
+Event를 검증했다.
 
 이 결과는 Command Injection을 대체 진입점으로 사용한 공격 경로와 확정 탐지까지의
 증거다. SSRF 자체, SIEM, SOAR, GitHub Containment, Argo 재배포, 재공격 실패는 아직

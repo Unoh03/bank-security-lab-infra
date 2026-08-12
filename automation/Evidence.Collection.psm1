@@ -596,7 +596,8 @@ function Invoke-EvidenceCloudWatchInsightsQuery {
         [Parameter(Mandatory)][string]$BundleRoot,
         [Parameter(Mandatory)][datetime]$StartTimeUtc,
         [Parameter(Mandatory)][datetime]$EndTimeUtc,
-        [scriptblock]$Invoker
+        [scriptblock]$Invoker,
+        [scriptblock]$ProgressReporter
     )
 
     $queryPackRoot = Join-Path (
@@ -657,6 +658,11 @@ function Invoke-EvidenceCloudWatchInsightsQuery {
     } else {
         0
     }
+    $overallTimeoutSeconds = if ($Query.ContainsKey('OverallTimeoutSeconds')) {
+        [int]$Query.OverallTimeoutSeconds
+    } else {
+        0
+    }
     if ($minimumRows -lt 0 -or $minimumRows -gt 10000) {
         throw "Evidence query MinimumRows must be between 0 and 10000: $($Query.Name)"
     }
@@ -665,6 +671,16 @@ function Invoke-EvidenceCloudWatchInsightsQuery {
     }
     if ($deliveryRetryDelaySeconds -lt 0 -or $deliveryRetryDelaySeconds -gt 60) {
         throw "Evidence query DeliveryRetryDelaySeconds must be between 0 and 60: $($Query.Name)"
+    }
+    if ($overallTimeoutSeconds -lt 0 -or $overallTimeoutSeconds -gt 3600) {
+        throw "Evidence query OverallTimeoutSeconds must be between 0 and 3600: $($Query.Name)"
+    }
+
+    $queryStartedAt = [datetimeoffset]::UtcNow
+    $queryDeadline = if ($overallTimeoutSeconds -gt 0) {
+        $queryStartedAt.AddSeconds($overallTimeoutSeconds)
+    } else {
+        $null
     }
 
     $queryId = ''
@@ -677,7 +693,31 @@ function Invoke-EvidenceCloudWatchInsightsQuery {
         $deliveryAttempt -le $maxDeliveryAttempts;
         $deliveryAttempt++
     ) {
+        if ($null -ne $queryDeadline -and
+            [datetimeoffset]::UtcNow -ge $queryDeadline) {
+            throw "CloudWatch Logs Insights query '$($Query.Name)' exceeded its overall timeout."
+        }
         $deliveryAttempts = $deliveryAttempt
+        if ($ProgressReporter) {
+            $elapsedSeconds = [math]::Round(
+                ([datetimeoffset]::UtcNow - $queryStartedAt).TotalSeconds
+            )
+            & $ProgressReporter ([pscustomobject]@{
+                Phase = 'DeliveryAttempt'
+                QueryName = [string]$Query.Name
+                Attempt = $deliveryAttempt
+                MaxAttempts = $maxDeliveryAttempts
+                RetryDelaySeconds = $deliveryRetryDelaySeconds
+                ElapsedSeconds = $elapsedSeconds
+                RemainingSeconds = if ($null -ne $queryDeadline) {
+                    [math]::Max(0, [math]::Round(
+                        ($queryDeadline - [datetimeoffset]::UtcNow).TotalSeconds
+                    ))
+                } else {
+                    $null
+                }
+            })
+        }
         $startJson = Invoke-EvidenceBoundedRetry `
             -MaxAttempts 3 `
             -DelaySeconds 2 `
@@ -710,6 +750,10 @@ function Invoke-EvidenceCloudWatchInsightsQuery {
 
         $response = $null
         for ($attempt = 1; $attempt -le $maxPollAttempts; $attempt++) {
+            if ($null -ne $queryDeadline -and
+                [datetimeoffset]::UtcNow -ge $queryDeadline) {
+                throw "CloudWatch Logs Insights query '$($Query.Name)' exceeded its overall timeout."
+            }
             $resultJson = Invoke-EvidenceNative `
                 -FilePath 'aws' `
                 -ArgumentList @(
@@ -718,10 +762,32 @@ function Invoke-EvidenceCloudWatchInsightsQuery {
                     '--profile', [string]$Context.AwsProfile,
                     '--region', $region,
                     '--output', 'json'
-                ) `
+            ) `
                 -Invoker $Invoker
             $response = $resultJson | ConvertFrom-Json
             $status = [string]$response.status
+            if ($ProgressReporter) {
+                & $ProgressReporter ([pscustomobject]@{
+                    Phase = 'QueryPoll'
+                    QueryName = [string]$Query.Name
+                    Attempt = $deliveryAttempt
+                    MaxAttempts = $maxDeliveryAttempts
+                    PollAttempt = $attempt
+                    MaxPollAttempts = $maxPollAttempts
+                    PollDelaySeconds = $pollDelaySeconds
+                    Status = $status
+                    ElapsedSeconds = [math]::Round(
+                        ([datetimeoffset]::UtcNow - $queryStartedAt).TotalSeconds
+                    )
+                    RemainingSeconds = if ($null -ne $queryDeadline) {
+                        [math]::Max(0, [math]::Round(
+                            ($queryDeadline - [datetimeoffset]::UtcNow).TotalSeconds
+                        ))
+                    } else {
+                        $null
+                    }
+                })
+            }
             if ($status -ceq 'Complete') {
                 break
             }
@@ -729,7 +795,20 @@ function Invoke-EvidenceCloudWatchInsightsQuery {
                 throw "CloudWatch Logs Insights query '$($Query.Name)' ended with status '$status'."
             }
             if ($attempt -lt $maxPollAttempts -and $pollDelaySeconds -gt 0) {
-                Start-Sleep -Seconds $pollDelaySeconds
+                $pollSleepSeconds = $pollDelaySeconds
+                if ($null -ne $queryDeadline) {
+                    $remainingSeconds = [math]::Ceiling(
+                        ($queryDeadline - [datetimeoffset]::UtcNow).TotalSeconds
+                    )
+                    if ($remainingSeconds -le 0) {
+                        throw "CloudWatch Logs Insights query '$($Query.Name)' exceeded its overall timeout."
+                    }
+                    $pollSleepSeconds = [math]::Min(
+                        $pollSleepSeconds,
+                        $remainingSeconds
+                    )
+                }
+                Start-Sleep -Seconds $pollSleepSeconds
             }
         }
         if ($null -eq $response -or [string]$response.status -cne 'Complete') {
@@ -758,12 +837,35 @@ function Invoke-EvidenceCloudWatchInsightsQuery {
                 }
             })
         }
+        if ($ProgressReporter) {
+            & $ProgressReporter ([pscustomobject]@{
+                Phase = 'DeliveryResult'
+                QueryName = [string]$Query.Name
+                Attempt = $deliveryAttempt
+                MaxAttempts = $maxDeliveryAttempts
+                RowCount = $rows.Count
+                ServiceRowCount = $serviceRowCount
+            })
+        }
         if ($rows.Count -ge $minimumRows) {
             break
         }
         if ($deliveryAttempt -lt $maxDeliveryAttempts -and
             $deliveryRetryDelaySeconds -gt 0) {
-            Start-Sleep -Seconds $deliveryRetryDelaySeconds
+            $deliverySleepSeconds = $deliveryRetryDelaySeconds
+            if ($null -ne $queryDeadline) {
+                $remainingSeconds = [math]::Ceiling(
+                    ($queryDeadline - [datetimeoffset]::UtcNow).TotalSeconds
+                )
+                if ($remainingSeconds -le 0) {
+                    throw "CloudWatch Logs Insights query '$($Query.Name)' exceeded its overall timeout."
+                }
+                $deliverySleepSeconds = [math]::Min(
+                    $deliverySleepSeconds,
+                    $remainingSeconds
+                )
+            }
+            Start-Sleep -Seconds $deliverySleepSeconds
         }
     }
     $rowCount = $rows.Count
@@ -785,6 +887,11 @@ function Invoke-EvidenceCloudWatchInsightsQuery {
         MinimumRows = $minimumRows
         MinimumRowsMet = $minimumRowsMet
         DeliveryAttempts = $deliveryAttempts
+        OverallTimeoutSeconds = $overallTimeoutSeconds
+        ElapsedSeconds = [math]::Round(
+            ([datetimeoffset]::UtcNow - $queryStartedAt).TotalSeconds,
+            3
+        )
         ServiceRowCount = $serviceRowCount
         Status = [string]$response.status
         Statistics = if ($response.PSObject.Properties.Name -contains 'statistics') {
@@ -1128,6 +1235,7 @@ function Invoke-SecurityEvidenceCollection {
 
 Export-ModuleMember -Function @(
     'Invoke-EvidenceBoundedRetry',
+    'Invoke-EvidenceCloudWatchInsightsQuery',
     'Protect-SecurityEvidenceText',
     'Invoke-SecurityEvidenceCollection'
 )

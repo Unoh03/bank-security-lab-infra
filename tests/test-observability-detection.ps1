@@ -100,7 +100,18 @@ Assert-Contains $detection 'resource\s+"aws_cloudwatch_metric_alarm"\s+"capital_
     'The Capital One alarm must fire on one matching event in a one-minute metric window.'
 Assert-Contains $detection 'CapitalOneValidationGetObject[\s\S]*?alarm_actions\s*=\s*\[aws_sns_topic\.security_alerts\.arn\]' `
     'The Capital One metric and alarm are not connected to the persistent SNS topic.'
-Assert-Contains $outputs 'output\s+"capital_one_s3_detection"[\s\S]*?expected_role_name[\s\S]*?object_prefix' `
+foreach ($alertField in @(
+    'scenario=CAPITAL-ONE',
+    'severity=\$\{local\.capital_one_alert_severity\}',
+    'action=\$\{local\.capital_one_alert_action\}',
+    'actor=\$\{local\.name\}-primary-karpenter-node',
+    'object=validation/\*',
+    'verdict=success'
+)) {
+    Assert-Contains $detection $alertField `
+        "The Capital One alarm description is missing alert field: $alertField"
+}
+Assert-Contains $outputs 'output\s+"capital_one_s3_detection"[\s\S]*?expected_role_name[\s\S]*?object_prefix[\s\S]*?severity[\s\S]*?action' `
     'The Capital One detector state and non-sensitive match contract are not exported.'
 
 Assert-Contains $setupFoundation '\[switch\]\$EnableProjectS3DataEvents' `

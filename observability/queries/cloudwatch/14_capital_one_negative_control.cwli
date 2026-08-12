@@ -1,0 +1,23 @@
+# Purpose: 정상 운영자 Identity의 고정 가짜 Object GetObject가 기록되지만 Node Role 탐지 조건에서는 제외되는지 검증한다.
+# Log group: /aws/cloudtrail/aws-topology-security
+# Normal: 정확한 Control 시간창에서 성공 GetObject 1건, Primary Karpenter Node Role은 아님
+# Attack/abuse: 이 Query는 공격을 판정하지 않으며 Node Role 탐지 Query와의 대조군이다.
+# False positive: 정상 운영자 이외의 Caller가 조회되거나 실행 시간창 밖 Event가 섞이면 대조군으로 사용하지 않는다.
+# Boundary: 이 Query는 정상 접근 Evidence이며 공격 성공이나 GuardDuty Finding을 뜻하지 않는다.
+# Runtime verification: 2026-08-12 정상 terra-user GetObject 1행·Alarm 비전환 확인.
+fields @timestamp as ingestion_time,
+       eventTime as event_time,
+       eventName as event_name,
+       userIdentity.type as identity_type,
+       userIdentity.arn as caller_arn,
+       userIdentity.sessionContext.sessionIssuer.userName as issuer_role,
+       requestParameters.bucketName as bucket_name,
+       requestParameters.key as object_key,
+       errorCode as error_code,
+       requestID as request_id
+| filter eventSource = "s3.amazonaws.com"
+| filter eventName = "GetObject"
+| filter requestParameters.key = "validation/capital-one-demo.csv"
+| filter userIdentity.arn not like /assumed-role\/aws-topology-primary-karpenter-node\//
+| sort event_time asc
+| limit 20

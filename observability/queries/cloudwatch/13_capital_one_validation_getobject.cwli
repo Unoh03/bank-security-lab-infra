@@ -5,7 +5,7 @@
 # Attack/abuse: 외부 Source IP 또는 예상하지 않은 User Agent에서 성공한 GetObject
 # False positive: 승인된 실습 시간·실행자에서 발생한 계획된 성공 GetObject는 실제 사고로 분류하지 않음
 # Remediation evidence: 같은 Role·Prefix의 재시도가 AccessDenied 또는 Credential 실패
-# Runtime verification: pending; 새 통제 실습에서 성공 Event와 복구 후 실패 Event를 각각 확인한다.
+# Runtime verification: 2026-08-12 성공 Event 1행 확인; hardened 복구 후 실패 Event는 미검증.
 fields @timestamp as ingestion_time,
        eventTime as event_time,
        eventName as event_name,

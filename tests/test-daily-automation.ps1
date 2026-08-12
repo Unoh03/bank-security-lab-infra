@@ -908,6 +908,80 @@ try {
         throw 'CloudWatch delivery retry did not re-run an initially empty minimum-row query.'
     }
 
+    $timeoutQuery = @{
+        Name = 'timeout-query'
+        Type = 'CloudWatchLogsInsights'
+        QueryFile = 'cloudwatch\01_repeated_login_failures.cwli'
+        LogGroup = '/aws/cloudtrail/{ProjectName}-security'
+        Region = 'Primary'
+        Required = $true
+        MaxPollAttempts = 10
+        PollDelaySeconds = 2
+        MinimumRows = 1
+        MaxDeliveryAttempts = 1
+        DeliveryRetryDelaySeconds = 0
+        OverallTimeoutSeconds = 1
+    }
+    $timeoutContext = @{
+        TerraformRoot = $root
+        AwsProfile = 'test'
+        AccountId = '123456789012'
+        ProjectName = 'test'
+        PrimaryRegion = 'ap-northeast-2'
+        DrRegion = 'ap-northeast-1'
+        Tokens = @{
+            ProjectName = 'test'
+            AccountId = '123456789012'
+            PrimaryRegion = 'ap-northeast-2'
+            DrRegion = 'ap-northeast-1'
+        }
+    }
+    $timeoutInvoker = {
+        param($FilePath, $ArgumentList, $AllowFailure)
+        $signature = @($ArgumentList[0], $ArgumentList[1]) -join ' '
+        switch ($signature) {
+            'logs start-query' { return '{"queryId":"timeout-query-id"}' }
+            'logs get-query-results' {
+                return '{"status":"Running","results":[]}'
+            }
+            default { throw "Unexpected timeout-query command: $signature" }
+        }
+    }
+    $timeoutRejected = $false
+    $timeoutProgress = @{ QueryPolls = 0 }
+    $timeoutProgressReporter = {
+        param($ProgressState)
+        if ([string]$ProgressState.Phase -ceq 'QueryPoll') {
+            $timeoutProgress.QueryPolls++
+        }
+    }.GetNewClosure()
+    $timeoutStartedAt = [datetimeoffset]::UtcNow
+    try {
+        [void](Invoke-EvidenceCloudWatchInsightsQuery `
+            -Query $timeoutQuery `
+            -Config $collectorConfig `
+            -Context $timeoutContext `
+            -BundleRoot (Join-Path $collectorEvidenceRoot 'timeout-query') `
+            -StartTimeUtc $windowStart `
+            -EndTimeUtc $windowEnd `
+            -Invoker $timeoutInvoker `
+            -ProgressReporter $timeoutProgressReporter)
+    } catch {
+        if ($_.Exception.Message -like '*exceeded its overall timeout*') {
+            $timeoutRejected = $true
+        } else {
+            throw
+        }
+    }
+    $timeoutElapsedSeconds = (
+        [datetimeoffset]::UtcNow - $timeoutStartedAt
+    ).TotalSeconds
+    if (-not $timeoutRejected -or
+        $timeoutElapsedSeconds -gt 5 -or
+        [int]$timeoutProgress.QueryPolls -lt 1) {
+        throw 'CloudWatch query overall timeout was not enforced within its bounded window.'
+    }
+
     $failingConfig = @{
         Evidence = @{
             RootDefault = $collectorEvidenceRoot

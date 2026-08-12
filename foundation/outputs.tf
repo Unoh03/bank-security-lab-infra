@@ -94,6 +94,8 @@ output "capital_one_s3_detection" {
     alarm_name         = try(aws_cloudwatch_metric_alarm.capital_one_validation_getobject[0].alarm_name, null)
     expected_role_name = "${var.project_name}-primary-karpenter-node"
     object_prefix      = "validation/"
+    severity           = local.capital_one_alert_severity
+    action             = local.capital_one_alert_action
   }
 }
 

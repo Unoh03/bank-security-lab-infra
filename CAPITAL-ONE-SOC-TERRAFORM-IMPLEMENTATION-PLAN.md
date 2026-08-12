@@ -1,8 +1,8 @@
 # Capital One SOC 시연 Terraform 단계별 실행 계획
 
-> **상태:** Draft v0.8 — T4 Baseline·Gate 2 로그 Coverage 검증, 자동 대응 미실행
+> **상태:** Draft v0.9 — T4 정탐·정상 대조군 검증, Alert 필드 Source·Plan 완료·Apply 전
 > **기준 시점:** 2026-08-12
-> **현재 단계:** T4 BASELINE OBSERVED / Gate 2 완료 — 정상 오탐 Test 전
+> **현재 단계:** T4 DETECTOR TESTED — Alarm Description 1개 Apply 승인 전
 > **번호 구분:** 이 문서의 `T0~T6`는 Terraform 구현 단계다. 상위 계획의 `Gate 0~8`은 시연 Evidence 단계이며 같은 번호끼리 같은 작업이 아니다.
 > **상위 계획:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)
 > **기존 관측성 현황:** [`OBSERVABILITY-CURRENT-STATUS.md`](./OBSERVABILITY-CURRENT-STATUS.md)
@@ -707,6 +707,20 @@ Gate:
 - TAKE 시작 약 49분 뒤 GuardDuty API와 EventBridge 보존 Log Group을 다시 조회했으나
   실제 Finding과 전달 Event는 모두 0건이었다. `S3_DATA_EVENTS` Protection은 계속
   `DISABLED`이고, 이번 대표 탐지는 CloudTrail Custom Rule이다.
+- Negative Control `capital-one-negative-20260812T034935Z`에서 정상 `terra-user`가
+  같은 고정 가짜 Object를 한 번 읽었다. CloudTrail 성공 Event는 정확히 1행이었고,
+  Primary Karpenter Node Role 조건이 달라 Alarm은 `OK`·상태 변경 시각 불변이었다.
+- 첫 후속 Query 실패 뒤 동일 GetObject를 반복하지 않도록 Resume 경계를 추가했다.
+  Runner의 별도 CWLI 구현은 제거하고 Evidence Collector의 UTF-8 Query 정규화,
+  Delivery Grace, 제한 재시도, `event_time` 실행 창 재필터를 함께 사용한다.
+- 시간 계약은 S3 읽기 수초, CloudTrail 전달·Query 최대 약 10분, Event 확인 뒤 Alarm
+  비전환 120초다. Query는 30초 간격으로 진행률을 보이고 Client Record에 현재
+  Invocation과 단계별 소요시간을 남긴다.
+- 내부 Bundle의 Client Record는 Bucket·Caller ARN·Credential을 저장하지 않았고,
+  CloudTrail Query 1행과 SHA-256 50개를 확인했다.
+- Alert Description Source에 `scenario=CAPITAL-ONE`, `severity=HIGH`,
+  `action=s3:GetObject`, Actor·Object·Verdict를 추가했다. Fresh Foundation Plan은
+  해당 Alarm Description 1개 in-place update뿐이며 Create·Delete는 없다. Apply 전이다.
 
 ### T5 — Terraform 영구 복구
 
@@ -868,10 +882,12 @@ Terraform 부분은 다음이 모두 충족돼야 완료다.
 
 ## 10. 다음 작업
 
-Foundation·Daily Apply, Baseline 공격, CloudTrail·Alarm, 같은 TAKE의 WAF·DVWA·IMDS·
-GuardDuty Coverage 판정까지 끝났다. 다음은 Terraform을 다시 Apply하는 단계가 아니다.
-정상 GetObject가 대표 Rule에서 제외되는지 한 번 검증하고 Alert Payload의 시간·Role·
-행위·Severity 필드를 보강한다. 그 뒤 중앙 관제 제품 한 개를 결정한다.
+Foundation·Daily Apply, 공격 정탐, Gate 2 Coverage, 정상 GetObject 대조군까지 끝났다.
+Alert Description 보강 Source와 2026-08-12 Plan Snapshot도 완료됐다. 재개 후에는 해당
+Saved Plan을 그대로 쓰지 않고 Foundation Fresh Plan을 다시 만든다.
+`aws_cloudwatch_metric_alarm.capital_one_validation_getobject[0]` Description 1개 Update,
+Create·Delete 0인지 재확인하고 명시적 승인 뒤에만 Apply한다. Apply 후
+`describe-alarms`로 Runtime Description을 확인한 뒤 중앙 관제 제품 한 개를 결정한다.
 
 Containment 구현 전에는 Alarm이 실제 `OK`로 복귀했는지 확인하고 새 TAKE를 사용한다.
 취약 Runtime의 영구 복구는 최종 촬영 확인 전에는 수행하지 않되, 통제권 상실·자리

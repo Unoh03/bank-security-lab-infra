@@ -8,6 +8,11 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $preparePath = Join-Path $root 'observability\scenarios\Prepare-CapitalOneDemoData.ps1'
 $runnerPath = Join-Path $root 'observability\scenarios\Invoke-CapitalOneBaseline.ps1'
+$negativePath = Join-Path $root 'observability\scenarios\Invoke-CapitalOneNegativeControl.ps1'
+$negativeQueryPath = Join-Path $root 'observability\queries\cloudwatch\14_capital_one_negative_control.cwli'
+$configPath = Join-Path $root 'automation\project.psd1'
+$evidenceModulePath = Join-Path $root 'automation\Evidence.Collection.psm1'
+$dailyAutomationPath = Join-Path $root 'automation\Daily.Automation.psm1'
 
 function Assert-Contains {
     param(
@@ -20,7 +25,7 @@ function Assert-Contains {
     }
 }
 
-foreach ($path in @($preparePath, $runnerPath)) {
+foreach ($path in @($preparePath, $runnerPath, $negativePath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Required Capital One scenario file is missing: $path"
     }
@@ -38,6 +43,11 @@ foreach ($path in @($preparePath, $runnerPath)) {
 
 $prepare = Get-Content -LiteralPath $preparePath -Raw
 $runner = Get-Content -LiteralPath $runnerPath -Raw
+$negative = Get-Content -LiteralPath $negativePath -Raw
+$negativeQuery = Get-Content -LiteralPath $negativeQueryPath -Raw
+$config = Get-Content -LiteralPath $configPath -Raw
+$evidenceModule = Get-Content -LiteralPath $evidenceModulePath -Raw
+$dailyAutomation = Get-Content -LiteralPath $dailyAutomationPath -Raw
 
 Assert-Contains $prepare "ConfirmRun -cne 'PREPARE CAPITAL ONE DATA'" `
     'Preparation lacks its exact fake-data confirmation.'
@@ -92,6 +102,77 @@ if ($runner -match '(?i)Write-(Host|Output|Verbose|Debug).*?(AccessKey|SecretAcc
 }
 if ($runner -match '(?i)(AccessKeyId|SecretAccessKey|Token)\s*=\s*[''"][A-Za-z0-9/+]{16,}') {
     throw 'The baseline contains a credential-like literal.'
+}
+
+Assert-Contains $negative "AwsProfile -cne 'terra-user'" `
+    'The negative control does not restrict execution to the fixed normal operator profile.'
+Assert-Contains $negative "'RUN CAPITAL ONE NEGATIVE CONTROL'" `
+    'The negative control lacks its fixed new-read confirmation text.'
+Assert-Contains $negative 'ConfirmRun -cne \$requiredConfirmation' `
+    'The negative control does not enforce the selected exact confirmation.'
+Assert-Contains $negative 'RESUME CAPITAL ONE NEGATIVE CONTROL' `
+    'The negative control lacks a no-repeat post-read resume confirmation.'
+Assert-Contains $negative 'FailureStage -cne ''normal-cloudtrail-event''' `
+    'Resume is not restricted to the eligible post-read failure stage.'
+Assert-Contains $negative 'ExperimentId already has a record' `
+    'The negative control does not prevent an accidental duplicate fixed read.'
+Assert-Contains $negative 'Import-Module \$evidenceModulePath -Force' `
+    'The negative control does not import the shared Evidence query implementation.'
+Assert-Contains $negative 'Invoke-EvidenceCloudWatchInsightsQuery' `
+    'The negative control does not reuse the shared CWLI implementation.'
+Assert-Contains $evidenceModule "'Invoke-EvidenceCloudWatchInsightsQuery'" `
+    'The shared CWLI implementation is not exported for bounded scenario reuse.'
+Assert-Contains $negative 'CloudTrail delivery/query: attempt' `
+    'The negative control does not show bounded CloudTrail delivery progress.'
+Assert-Contains $negative 'PollAttempt % 6[\s\S]*?CloudWatch query:' `
+    'The negative control does not report a long-running CWLI query about every thirty seconds.'
+Assert-Contains $negative 'Read-DailySessionState' `
+    'The negative control does not require an Active Daily Session.'
+Assert-Contains $negative "securityProfile -cne 'capital-one-lab'" `
+    'The negative control is not restricted to capital-one-lab.'
+Assert-Contains $negative "runtimeProfile -cne 'minimal'" `
+    'The negative control is not restricted to the prepared minimal Runtime.'
+Assert-Contains $negative "validation/capital-one-demo\.csv" `
+    'The negative control does not use the fixed fake-data object key.'
+Assert-Contains $negative "'s3api', 'get-object'" `
+    'The negative control does not perform the fixed normal S3 read.'
+Assert-Contains $negative 'StateValue -cne ''OK''' `
+    'The negative control does not require the alarm to stay OK.'
+Assert-Contains $negative 'alarmTimestampUnchanged' `
+    'The negative control does not verify an unchanged alarm state timestamp.'
+Assert-Contains $negative 'CloudTrailObserved = \$cloudTrailObserved' `
+    'The negative control does not persist its CloudTrail visibility verdict.'
+Assert-Contains $negative 'StageDurationsSeconds = \[ordered\]@\{' `
+    'The negative control does not persist stage timings.'
+Assert-Contains $negative 'InvocationDurationSeconds' `
+    'The negative control does not persist current invocation duration.'
+Assert-Contains $negative 'CallerArnPersisted = \$false' `
+    'The negative-control record does not omit the caller ARN.'
+Assert-Contains $negative 'BucketPersisted = \$false' `
+    'The negative-control record does not omit the bucket name.'
+Assert-Contains $negativeQuery 'requestParameters\.key = "validation/capital-one-demo\.csv"' `
+    'The negative-control query is not restricted to the fixed object.'
+Assert-Contains $negativeQuery 'userIdentity\.arn not like /assumed-role\\/aws-topology-primary-karpenter-node\\//' `
+    'The negative-control query does not exclude the detector Node Role.'
+Assert-Contains $config "ScenarioIds\s*=\s*@\('CAPITAL-ONE-NEGATIVE'\)" `
+    'The Evidence configuration does not register the negative-control scenario.'
+Assert-Contains $config "QueryFile\s*=\s*'cloudwatch\\14_capital_one_negative_control\.cwli'" `
+    'The Evidence configuration does not register the negative-control query.'
+Assert-Contains $config 'MaxDeliveryAttempts\s*=\s*20[\s\S]*?DeliveryRetryDelaySeconds\s*=\s*30[\s\S]*?OverallTimeoutSeconds\s*=\s*600' `
+    'The negative-control query does not use the reviewed ten-minute delivery budget.'
+Assert-Contains $evidenceModule 'OverallTimeoutSeconds[\s\S]*?exceeded its overall timeout' `
+    'The shared CWLI implementation does not enforce the configured overall timeout.'
+Assert-Contains $dailyAutomation 'OverallTimeoutSeconds[\s\S]*?between 0 and 3600' `
+    'The automation config loader does not reject an invalid query overall timeout.'
+
+if ($negative -match '(?m)^\s*\[string\]\$(BaseUrl|Bucket|ObjectKey|Command|Payload)\b') {
+    throw 'The negative control accepts an arbitrary target, bucket, object key, command, or payload.'
+}
+if ($negative -match '(?i)--no-verify-ssl|Invoke-Expression|\biex\b|Start-Transcript') {
+    throw 'The negative control contains a TLS bypass, dynamic execution, or transcript capture.'
+}
+if ($negative -match "'logs',\s*'start-query'") {
+    throw 'The negative control reimplements AWS CWLI execution instead of using the shared module.'
 }
 
 Write-Host 'Capital One scenario static tests passed.'

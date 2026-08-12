@@ -1,5 +1,7 @@
 locals {
-  security_metric_namespace = "${local.name}/Security"
+  security_metric_namespace  = "${local.name}/Security"
+  capital_one_alert_severity = "HIGH"
+  capital_one_alert_action   = "s3:GetObject"
   guardduty_disabled_features = toset([
     "S3_DATA_EVENTS",
     "EKS_AUDIT_LOGS",
@@ -131,7 +133,7 @@ resource "aws_cloudwatch_metric_alarm" "capital_one_validation_getobject" {
   count = var.enable_capital_one_s3_detection ? 1 : 0
 
   alarm_name          = "${local.name}-capital-one-validation-getobject"
-  alarm_description   = "CloudTrail recorded a successful validation-prefix GetObject using credentials issued to the Primary Karpenter Node Role. Investigate the CAPITAL-ONE evidence query."
+  alarm_description   = "scenario=CAPITAL-ONE severity=${local.capital_one_alert_severity} action=${local.capital_one_alert_action} actor=${local.name}-primary-karpenter-node object=validation/* verdict=success; investigate the CAPITAL-ONE evidence query."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   datapoints_to_alarm = 1

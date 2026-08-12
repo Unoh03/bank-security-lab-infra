@@ -311,6 +311,12 @@ function Import-DailyAutomationConfig {
         )) {
             throw "Evidence query PollDelaySeconds must be between 0 and 30: $($query.Name)"
         }
+        if ($query.ContainsKey('OverallTimeoutSeconds') -and (
+            [int]$query.OverallTimeoutSeconds -lt 0 -or
+            [int]$query.OverallTimeoutSeconds -gt 3600
+        )) {
+            throw "Evidence query OverallTimeoutSeconds must be between 0 and 3600: $($query.Name)"
+        }
         $queryNames[[string]$query.Name] = $true
     }
 

@@ -169,6 +169,23 @@
                 DeliveryRetryDelaySeconds = 10
             }
             @{
+                Name                 = 'capital-one-negative-control'
+                Type                 = 'CloudWatchLogsInsights'
+                ScenarioIds          = @('CAPITAL-ONE-NEGATIVE')
+                QueryFile            = 'cloudwatch\14_capital_one_negative_control.cwli'
+                LogGroup             = '/aws/cloudtrail/{ProjectName}-security'
+                Region               = 'Primary'
+                Required             = $true
+                DeliveryGraceMinutes = 10
+                EventTimeField       = 'event_time'
+                MaxPollAttempts      = 60
+                PollDelaySeconds     = 5
+                MinimumRows          = 1
+                MaxDeliveryAttempts  = 20
+                DeliveryRetryDelaySeconds = 30
+                OverallTimeoutSeconds = 600
+            }
+            @{
                 Name               = 't1-waf-http-https'
                 Type               = 'CloudWatchLogsInsights'
                 ScenarioIds        = @('T1')
