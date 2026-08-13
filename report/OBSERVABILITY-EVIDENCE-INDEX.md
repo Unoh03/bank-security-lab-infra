@@ -2,7 +2,7 @@
 
 > **용도:** 최종 보고서·발표 자료에 재사용할 Observability / S3 / Athena / Grafana 증거를 한곳에서 추적한다.  
 > **기준 시점:** 2026-08-12
-> **진행 상태:** 기존 Observability Evidence + Capital One Gate 3 Runtime 검증 완료
+> **진행 상태:** 초기 관측성 프로토타입 + Capital One Gate 3 완료, Wazuh Local Stack·Reader IAM 검증 완료
 > **관련 현황:** [`../OBSERVABILITY-CURRENT-STATUS.md`](../OBSERVABILITY-CURRENT-STATUS.md)  
 > **실행 계획:** [`../OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](../OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)
 
@@ -46,23 +46,45 @@ AWS Credential
 
 # 2. Evidence 분류
 
-보고서용 로컬 자산은 다음 구조를 권장한다.
+보고서용 로컬 자산의 **단일 기준 경로**는 다음과 같다.
 
 ```text
 C:\Users\Unoh\Documents\aws-topology-evidence\report-assets\observability\
+├─ 00_inbox\
 ├─ 01_waf\
 ├─ 02_s3\
 ├─ 03_athena\
 ├─ 04_grafana\
 ├─ 05_pod-identity\
-└─ 06_capital-one\
+├─ 06_capital-one\
+├─ 07_wazuh\
+├─ 08_shuffle\
+└─ 09_containment\
 ```
 
 이 디렉터리는 **로컬 보고서 자산 저장소**다. 공개 Git Repository에 그대로 Commit하지 않는다.
 
+2026-08-12 확인 전에는 위 경로가 문서에만 있었고 실제 디렉터리는 없었다. 과거 화면
+캡처는 `C:\Users\Unoh\Pictures\Screenshots\`에 날짜형 파일명으로 섞여 있으며,
+사용자가 필요한 파일을 직접 선별한다. 아래의 `권장 Screenshot 파일명`은 존재 증명이
+아니라 선별한 파일에 붙일 목표 이름이다.
+
+앞으로는 다음 규칙을 사용한다.
+
+1. 사용자가 이미지 파일이나 경로를 주면 원본을 `00_inbox`에 먼저 복사한다.
+2. 제공된 파일만 확인한다. `Pictures\Screenshots` 전체를 반복해서 읽지 않는다.
+3. 보고서에 쓸 Claim·민감정보 상태를 확인한 파일만 해당 번호 폴더에 복사한다.
+4. 이 Index에는 **실제로 존재하는 최종 경로**를 기록한다. 예정 경로는 `예정`으로 표시한다.
+5. 원본과 마스킹본을 구분하고, Raw Screenshot은 공개 Repository에 Commit하지 않는다.
+
 ---
 
-# 3. WAF 근실시간 관제 Evidence
+# 3. WAF 근실시간 관제 Evidence — 초기 프로토타입
+
+WAF Live Viewer는 SIEM·SOAR 기반의 통합 관제 구조를 도입하기 전에, WAF Event를
+근실시간으로 확인하려고 만든 개별 조회 도구다. 동작 결과는 초기 시행착오와 요구사항
+발견 Evidence로 보존한다. Wazuh의 WAF 원본 수집·검색·Alert가 Runtime에서 검증되면
+최종 관제의 핵심 경로에서는 제외하고 보조 진단 도구로만 남긴다.
 
 ## 3.1 확인 완료
 
@@ -242,7 +264,12 @@ rejected_flows, rejected_packets
 
 ---
 
-# 6. Grafana S3 / Athena 시각화 Evidence
+# 6. Grafana S3 / Athena 시각화 Evidence — 초기 프로토타입
+
+Local Grafana는 분산된 S3 로그를 Athena로 조회·시각화하려고 만든 초기 관측성
+프로토타입이다. 로그 Source별 현황과 Drill-down은 증명했지만 통합 Detection·Alert·
+Response 계층은 아니다. Wazuh 검증 뒤 최종 관제 화면에서는 제외하되, 통합 SIEM이
+필요하다는 결론에 도달한 발전 과정과 Athena 분석 Evidence로 보존한다.
 
 Dashboard:
 
@@ -401,6 +428,28 @@ Runtime 전달 성공
 ---
 
 # 9. 다음 Evidence 추가 지점
+
+## 9.0 Wazuh 보고서 자산 — 예정
+
+실제 저장 위치:
+
+```text
+C:\Users\Unoh\Documents\aws-topology-evidence\report-assets\observability\07_wazuh\
+```
+
+최소 보고서 자산은 네 장으로 제한한다.
+
+```text
+01_Wazuh_Stack_Healthy.png
+02_Wazuh_CloudTrail_WAF_DVWA_Search.png
+03_Capital_One_Custom_Alert.png
+04_Alert_To_CloudTrail_Event.png
+```
+
+Negative Control, 재시작 보존, IAM 최소 권한은 Screenshot 수를 늘리지 않고 명령 결과·
+Sanitized JSON·Terraform Plan으로 증명한다. Local Wazuh Stack 기동은 확인했지만 위
+보고서 자산 경로의 네 파일 존재 여부와 AWS 원본 수집은 아직 검증하지 않았다. 따라서
+목록은 계속 `예정`이며 존재한다고 주장하지 않는다.
 
 ## 9.1 Capital One Baseline — 내부 조사 Bundle
 

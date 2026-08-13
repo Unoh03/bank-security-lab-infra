@@ -133,3 +133,28 @@ output "route53_zone_id" {
 output "cloudfront_acm_certificate_arn" {
   value = var.domain_name == "" ? "" : aws_acm_certificate_validation.cloudfront[0].certificate_arn
 }
+
+output "wazuh_log_reader_role_arn" {
+  description = "ARN of the optional read-only Wazuh role. Null while the integration is disabled."
+  value       = try(aws_iam_role.wazuh_log_reader[0].arn, null)
+}
+
+output "wazuh_log_sources" {
+  description = "Non-sensitive source contract used to configure the local Wazuh manager."
+  value = {
+    enabled = var.enable_wazuh_log_reader
+    cloudtrail = {
+      bucket_name = aws_s3_bucket.security_logs.id
+      prefix      = local.wazuh_cloudtrail_prefix
+      account_id  = data.aws_caller_identity.current.account_id
+      regions     = [var.primary_region]
+      encryption  = "SSE-S3"
+    }
+    cloudwatch = {
+      for key, source in local.wazuh_cloudwatch_log_groups : key => {
+        log_group_name = source.name
+        region         = source.region
+      }
+    }
+  }
+}

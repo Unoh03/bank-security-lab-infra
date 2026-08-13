@@ -1,8 +1,8 @@
 # Capital One SOC 시연 Terraform 단계별 실행 계획
 
-> **상태:** Draft v1.0 — T4 정탐·정상 대조군·Alert 필드 Runtime 검증 완료
+> **상태:** Draft v1.3 — Gate 3 완료, Wazuh Reader Apply·Post-Apply 검증 완료
 > **기준 시점:** 2026-08-12
-> **현재 단계:** T4 DETECTOR TESTED — Gate 3 종료, Gate 4 제품 선택 전
+> **현재 단계:** T4 DETECTOR TESTED — Gate 4 Wazuh CloudTrail Runtime 연결 전
 > **번호 구분:** 이 문서의 `T0~T6`는 Terraform 구현 단계다. 상위 계획의 `Gate 0~8`은 시연 Evidence 단계이며 같은 번호끼리 같은 작업이 아니다.
 > **상위 계획:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)
 > **기존 관측성 현황:** [`OBSERVABILITY-CURRENT-STATUS.md`](./OBSERVABILITY-CURRENT-STATUS.md)
@@ -16,6 +16,7 @@ Terraform의 책임
 = 통제된 취약 실습 환경
 + 공격 흔적 수집 기반
 + CloudTrail 기반 확정 탐지 경로
++ Wazuh가 기존 원본 로그를 읽는 최소 권한 IAM
 + 최소 권한
 + 근본 원인 복구
 
@@ -343,24 +344,78 @@ GuardDuty S3 Protection
 → Sample Finding은 공격 성공 Evidence로 사용하지 않음
 ```
 
-### 3.6 SIEM 연결은 제품 선택 뒤 한 갈래만 구현
+### 3.6 Wazuh는 기존 원본 Source를 직접 읽는다
 
-Wazuh 또는 Elastic Security 중 하나가 결정되기 전에는 SIEM용 AWS Resource를 만들지
-않는다.
+SIEM은 **Wazuh**, 배치는 **Local Docker single-node**로 결정했다. 별도 Elastic
+Security·ELK Stack과 AWS상의 Wazuh EC2를 함께 만들지 않는다. 2026-08-12 현재 Wazuh
+4.14.7 Manager·Indexer·Dashboard가 Local Docker에서 모두 기동됐고 Docker·WSL
+사전 조건도 확인했다. AWS 원본 로그 수집 Runtime은 아직 시작하지 않았다.
 
-로컬 Docker SIEM을 선택하면 가능한 Terraform 범위는 다음과 같다.
+첫 구현의 입력 계약:
+
+| Wazuh 입력 | 현재 Source | Region | Terraform 변경 |
+|---|---|---|---|
+| CloudTrail 원본 Event | Foundation Security Log S3 `AWSLogs/<ACCOUNT_ID>/CloudTrail/` | Multi-Region Trail, Gate 4 분석은 Primary | 기존 Source 유지·Reader 권한만 추가 |
+| WAF 원본 Event | `aws-waf-logs-${local.name}-edge` | `us-east-1` | 기존 Log Group 유지·Reader 권한만 추가 |
+| DVWA·Apache 원본 Event | `/aws/eks/${local.name}-primary/dvwa` | `ap-northeast-2` | 기존 Fluent Bit·Log Group 유지·Reader 권한만 추가 |
+
+초기 경로에는 S3→SQS, Firehose, EventBridge API Destination을 추가하지 않는다. Wazuh의
+공식 `bucket type="cloudtrail"`과 `service type="cloudwatchlogs"` Polling을 사용한다.
+CloudWatch Alarm은 기존 SNS 사람 알림에 남고 Wazuh 입력이나 Shuffle Trigger로
+복제하지 않는다.
+
+구현한 Terraform Resource는 다음으로 제한한다.
 
 ```text
-기존 Log Group·S3 위치 Output 재사용
-필요한 경우 S3 → SQS 전달 경로
-정확히 필요한 Read 권한만 가진 IAM Role
+foundation/variables.tf
+→ enable_wazuh_log_reader = false 기본값
+→ wazuh_reader_trusted_principal_arn = null 기본값
+
+foundation/wazuh.tf
+→ 명시된 Bootstrap Principal만 Assume 가능한 aws_iam_role.wazuh_log_reader
+→ CloudTrail Prefix List/Get + WAF·Primary DVWA Log Group Read-only Policy
+→ Toggle이 true인데 같은 계정의 Principal ARN이 없으면 실패하는 Resource Precondition
+
+foundation/outputs.tf
+→ Reader Role ARN
+→ 비민감 Source 이름·Region·Prefix 계약
 ```
 
-장기 Access Key를 Terraform으로 만들지 않는다. 실제 제품의 공식 AWS 연동 방식과
-팀 환경을 확인한 뒤 IAM·SQS 필요 여부를 확정한다.
+2026-08-12 Source 검증 결과:
 
-AWS에 SIEM 서버를 배포하면 EC2·EBS·Network·Backup까지 범위가 커진다. 핵심 시연
-기간에는 기본안으로 채택하지 않는다.
+```text
+정적 계약 Test + terraform validate: 통과
+기본 비활성 Plan: AWS Resource 0건
+활성 Plan: Reader Role + Inline Policy 2 Add, 0 Change, 0 Destroy
+Principal 누락 Plan: Resource Precondition 실패
+승인 Saved Plan Apply: 2 Add, 0 Change, 0 Destroy
+AWS 실제 Policy Action: s3:ListBucket, s3:GetObject, logs:DescribeLogStreams, logs:GetLogEvents
+15분 AssumeRole: 성공, Credential 원문 미출력·미저장
+Post-Apply Fresh Plan: 0 change
+```
+
+최소 권한 경계:
+
+- Security Log Bucket의 `s3:ListBucket`은 CloudTrail Prefix로 제한한다.
+- `s3:GetObject`는 `AWSLogs/<ACCOUNT_ID>/CloudTrail/*`로 제한한다.
+- CloudWatch Logs는 WAF와 Primary DVWA Log Group의 `logs:DescribeLogStreams`,
+  `logs:GetLogEvents`만 허용한다.
+- `s3:DeleteObject`, `logs:DeleteLogStream`, Put·Write, 광범위 `s3:*`, `logs:*`는 금지한다.
+- `aws_iam_user`, `aws_iam_access_key`와 Credential 값은 Terraform State에 만들지 않는다.
+
+Host의 광범위 AWS Profile을 Wazuh Container에 그대로 Mount하지 않는다. 기본안은
+Host가 Wazuh Reader Role의 임시 STS Session을 발급해 Git 밖의 임시 Credential 파일에
+저장하고, Wazuh Manager가 그 파일을 Read-only로 사용하는 방식이다. 임시 Session의
+발급·갱신 Script, Wazuh Stack·Named Volume, `ossec.conf`, Archives, Custom Rule,
+Shuffle Webhook은 Terraform 밖의 Gate 4·5 작업이다.
+
+`ossec.conf`의 첫 AWS 수집 전에 `only_logs_after=2026-AUG-12`, 승인 Account ID와
+Source별 Region을 고정한다. 이 값은 Terraform Resource가 아니라 Wazuh 수집 경계지만,
+기존 Baseline 누락·프로젝트 밖 과거 로그 과수집·무계획 `reparse`로 인한 중복 Alert를
+막는 Gate 4 필수 검증값이다.
+
+AWS에 SIEM 서버를 배포하면 EC2·EBS·Network·Backup까지 범위가 커지므로 핵심 시연의
+기본안으로 채택하지 않는다.
 
 ---
 
@@ -391,10 +446,15 @@ AWS에 SIEM 서버를 배포하면 EC2·EBS·Network·Backup까지 범위가 커
 | `observability/scenarios/README.md` | IAM-01과 구분한 탐지 계약 | T2 |
 | `DAILY-CICD-RUNBOOK.md` | 취약 실습·Foundation 수집·복구 절차 | T1·T2 |
 | `tests/test-observability-detection.ps1` | Detector·Wrapper·Query 정적 계약 Test | T2 |
+| `foundation/variables.tf` | Wazuh Reader Toggle·명시적 Bootstrap Principal 입력 | Gate 4 Terraform 지원 |
+| `foundation/wazuh.tf` | CloudTrail S3 Prefix·WAF·Primary DVWA Log Group 전용 Read-only Role·Policy | Gate 4 Terraform 지원 |
+| `foundation/outputs.tf` | Wazuh Reader Role ARN과 비민감 Source 계약 Output | Gate 4 Terraform 지원 |
+| `tests/test-wazuh-foundation-contract.ps1` | 기본 비활성·No Access Key·No Delete·ARN 범위 정적 Test | Gate 4 Terraform 지원 |
 
 자동 Containment와 수동 Reset Workflow는 `D:\DVWA` 저장소의 책임이다. 이 문서에서
 그 상태 전환 순서는 고정하지만 Terraform Resource로 구현하거나 Terraform Apply로
-대신하지 않는다. SIEM 제품별 Resource도 제품 선택 전 만들지 않는다.
+대신하지 않는다. Wazuh Stack·Rule·Dashboard·Shuffle 연동도 Terraform Resource가
+아니며, Terraform은 기존 AWS Source의 최소 Read 권한까지만 책임진다.
 
 ---
 
@@ -846,7 +906,7 @@ Gate 4의 SIEM, Gate 5의 SOAR, Gate 6·7의 GitHub·Argo 구현은 별도 작�
 
 ---
 
-## 8. 아직 결정하지 않을 항목
+## 8. 확정 및 대기 항목
 
 다음은 앞 Gate의 Evidence를 본 뒤 결정한다.
 
@@ -855,12 +915,14 @@ Gate 4의 SIEM, Gate 5의 SOAR, Gate 6·7의 GitHub·Argo 구현은 별도 작�
 | S3 Event 이름 | Detector는 `GetObject`; 기존 Selector의 세 API 유지 | T2 결정·T4 Runtime 확인 |
 | GuardDuty S3 Protection | `DISABLED` 유지·보조 Evidence만 허용 | T2 결정 |
 | 대표 탐지 | CloudTrail Metric Filter → Alarm → SNS | T2 결정 |
-| SIEM | Wazuh / Elastic Security | 입력 Source 연동 시험 |
-| SIEM 위치 | Local Docker / AWS | 팀 PC 자원·복구 시간 |
-| AWS→SIEM 전달 | 기존 API 조회 / S3·SQS | 선택 제품 공식 방식 |
+| SIEM | **Wazuh 확정, 별도 ELK 미구축** | 2026-08-12 사용자 결정 |
+| SIEM 위치 | **Local Docker single-node 기술안** | Host 사양 충족·Docker Runtime 전 |
+| AWS→SIEM 전달 | **CloudTrail S3 + WAF·DVWA CloudWatch Logs 직접 Read** | 공식 방식·Source 대조 완료 |
+| Wazuh Credential | **Reader Role 임시 STS Session 기본안** | 발급·갱신 Runtime 검증 전 |
+| S3→SQS·Firehose·EventBridge | **초기 미사용** | Polling 실패나 규모 요구가 생길 때만 재검토 |
 | Node 교체 | Karpenter Drift / 승인된 수동 절차 | 현재 Runtime 동작 확인 |
 
-결정 전에는 두 후보를 동시에 Terraform에 추가하지 않는다.
+결정된 Wazuh 경로 외의 SIEM 후보나 전달 경로를 동시에 Terraform에 추가하지 않는다.
 
 ---
 
@@ -873,7 +935,10 @@ Terraform 부분은 다음이 모두 충족돼야 완료다.
 - [x] 취약화 범위가 Primary Node와 `validation/*` 읽기로 제한된다.
 - [ ] SSM·Helm 두 Karpenter 경로가 같은 Metadata를 만든다.
 - [x] 공격과 직접 연결된 CloudTrail Event 또는 실제 GuardDuty Finding이 있다.
-- [ ] SIEM에 필요한 AWS 권한이 최소 범위이고 장기 Access Key를 Terraform으로 만들지 않는다.
+- [x] SIEM에 필요한 AWS 권한이 최소 범위이고 장기 Access Key를 Terraform으로 만들지 않는다.
+- [x] Wazuh Reader Role에 S3·CloudWatch Write/Delete 권한이 없다.
+- [x] Wazuh가 비활성인 기본 Foundation Plan에는 Reader Resource가 없다.
+- [x] Reader Source Plan은 EventBridge·SQS·Firehose·새 Log Destination을 만들지 않는다.
 - [ ] 수동 Reset은 DVWA 한 값만 되돌리고 Terraform·IAM·IMDS를 변경하지 않는다.
 - [ ] Reset 후 새 세션·Alarm OK·새 TAKE로 재촬영을 시작할 수 있다.
 - [ ] 복구 Plan이 실습 Policy 제거와 hardened Metadata를 명확히 보여준다.
@@ -891,10 +956,20 @@ Foundation·Daily Apply, 공격 정탐, Gate 2 Coverage, 정상 GetObject 대조
 Description Runtime 적용과 Post-Apply 0-change까지 끝났다. Gate 3을 위해 같은 공격이나
 GetObject를 다시 실행할 필요는 없다.
 
-다음은 Gate 4의 중앙 관제 제품 한 개를 결정하는 일이다. 제품과 Event 입력 계약을
-정하기 전에는 SIEM용 IAM·EventBridge Target을 추측해 Terraform에 추가하지 않는다.
-제품을 선택한 뒤 필요한 AWS 읽기·전달 권한을 Source로 만들고 Plan 범위를 다시
-검토한다.
+중앙 관제 제품은 Wazuh로 결정했고 입력 계약도 기존 CloudTrail S3와 WAF·Primary DVWA
+CloudWatch Logs의 직접 Read로 좁혔다. Local Stack과 Reader IAM까지 완료했으며 다음은
+Wazuh Runtime 연결 순서다.
+
+```text
+Local Docker·WSL Preflight·Wazuh Stack 기동 완료
+→ Reader Source·Test·Apply·AssumeRole·Post-Apply 0-change 완료
+→ 운영용 임시 Session Profile 생성·Read-only Mount
+→ GUI에서 CloudTrail wodle 저장·재시작
+→ Wazuh Raw Event·Custom Alert Runtime 검증
+```
+
+기존 Source를 바꾸거나 SQS·Firehose·EventBridge를 추가하는 대안은 실제 Polling 실패
+Evidence가 생긴 뒤에만 별도 Plan으로 검토한다.
 
 Containment 구현 전에는 Alarm이 실제 `OK`로 복귀했는지 확인하고 새 TAKE를 사용한다.
 취약 Runtime의 영구 복구는 최종 촬영 확인 전에는 수행하지 않되, 통제권 상실·자리

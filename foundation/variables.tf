@@ -122,6 +122,30 @@ variable "security_alert_email" {
   sensitive   = true
 }
 
+variable "enable_wazuh_log_reader" {
+  description = "Create the optional read-only IAM role used by the local Wazuh manager to collect the approved project log sources."
+  type        = bool
+  default     = false
+}
+
+variable "wazuh_reader_trusted_principal_arn" {
+  description = "Explicit same-account IAM user or role ARN allowed to bootstrap a temporary Wazuh reader session. Required when enable_wazuh_log_reader is true."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.wazuh_reader_trusted_principal_arn == null ||
+      can(regex(
+        "^arn:[^:]+:iam::[0-9]{12}:(user|role)/.+$",
+        trimspace(var.wazuh_reader_trusted_principal_arn)
+      ))
+    )
+    error_message = "wazuh_reader_trusted_principal_arn must be null or an IAM user/role ARN, not an STS assumed-role session ARN."
+  }
+}
+
 variable "tags" {
   type    = map(string)
   default = { Environment = "production" }

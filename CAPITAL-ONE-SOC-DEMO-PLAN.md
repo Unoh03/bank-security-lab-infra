@@ -1,8 +1,8 @@
 # Capital One 기반 보안 관제·자동 대응 시연 계획
 
-> **상태:** Draft v0.9 — Gate 3 종료, Gate 4 중앙 관제 제품 선택 전
+> **상태:** Draft v1.0 — Gate 3 종료, Gate 4 Wazuh 선택·구현 전
 > **기준 시점:** 2026-08-12
-> **현재 절차 Gate:** Gate 4 — SIEM·중앙 관제 제품 한 개 선택 전
+> **현재 절차 Gate:** Gate 4 — Wazuh 원본 로그 수집·Custom Alert Runtime 검증 전
 > **현재 Runtime 상태:** T4 BASELINE OBSERVED — `minimal + capital-one-lab`, 자동 Containment 실행 전
 > **Terraform 진행:** T1·T2 Source, T3 Plan-only, T4 탐지·대조군·Alert 필드 Runtime 검증 완료
 > **번호 구분:** `T0~T6`는 Terraform 구현 순서이고 `Gate 0~8`은 시연 Evidence 검증 순서다. 같은 번호끼리 같은 작업이 아니다.
@@ -53,8 +53,8 @@
 |---|---|
 | WAF·애플리케이션 로그·CloudTrail | 공격과 AWS 활동의 흔적을 기록한다. |
 | GuardDuty·탐지 규칙 | 수집된 흔적이 공격 조건에 맞는지 판단해 경보를 만든다. |
-| SIEM | 여러 로그와 경보를 한 화면에서 조회·분석한다. |
-| SOAR | 경보를 검증하고 사전에 허용된 대응 절차를 요청한다. |
+| Wazuh SIEM | 여러 원본 로그를 한곳에서 조회·분석하고 Custom Rule로 Alert를 만든다. |
+| Shuffle SOAR | Wazuh Alert를 검증하고 사전에 허용된 대응 절차를 요청한다. |
 | GitHub Actions | 허용된 보안 설정 한 가지를 검증·변경해 Commit한다. |
 | Argo CD | GitHub의 변경을 감지해 EKS에 새 설정을 배포한다. |
 | Terraform | IAM·IMDS·Node 같은 근본 원인을 사람 승인 후 복구한다. |
@@ -76,7 +76,8 @@ Gate 8  근본 원인 복구와 팀 전체 연습
 
 Gate는 별개의 기능 목록이 아니라 앞 단계의 결과를 확인하고 다음 단계로 넘어가기
 위한 중간 완료 조건이다. Gate 0~3에서 공격 재현, 로그 Coverage, 정탐·정상 대조군,
-Alert 필드 Runtime 검증까지 닫았다. 다음은 Gate 4의 중앙 관제 제품 선택이다.
+Alert 필드 Runtime 검증까지 닫았다. 중앙 관제 제품은 Wazuh로 선택했으며, 다음은
+Gate 4에서 원본 로그 수집·검색·Custom Alert를 Runtime으로 증명하는 단계다.
 
 ### 0.5 빠른 차단과 영구 대응의 차이
 
@@ -580,44 +581,126 @@ verdict=success
 State와 실제 Description도 일치했다. 같은 입력의 Post-Apply Fresh Plan은
 `create=0, update=0, delete=0, replace=0`이다.
 
-SIEM 단계에서는 CloudWatch Alarm State Change Event를 EventBridge로 받아 정규 JSON으로
-변환하며, 지금 SNS 경로에 별도 Target을 더해 중복 이메일·SMS를 만들지 않는다.
+CloudWatch Alarm은 SIEM 입력으로 재전송하지 않는다. 기존 경로는 AWS Native 탐지와
+사람 알림을 증명하는 독립 경로로 유지한다.
+
+```text
+CloudTrail → CloudWatch Logs Metric Filter → CloudWatch Alarm → SNS
+```
 
 ### Gate 4 — SIEM·중앙 관제 계층
 
-후보는 하나만 선택한다.
+중앙 관제 제품은 **Wazuh**로 확정한다. Elastic Security와 별도 ELK Stack을 함께
+구축하지 않는다. Wazuh가 이미 수집·분석·Indexer·Dashboard·Custom Rule을 담당하므로
+두 Stack을 동시에 운영하면 핵심 시연과 무관한 중복 구축이 된다.
+
+#### 4.1 원본 로그 입력 계약
 
 ```text
-Wazuh
-또는
-Elastic Security
+Security Log S3의 CloudTrail 원본 Event ─┐
+us-east-1 WAF CloudWatch Logs ────────────┼→ Wazuh
+ap-northeast-2 DVWA CloudWatch Logs ─────┘
+                                          ↓
+                                검색·분석·Custom Rule
+                                          ↓
+                                     Wazuh Alert
+                                          ↓
+                                        Shuffle
 ```
 
-선택 기준:
+현재 Source와 Wazuh 입력의 대응은 다음과 같다.
 
-- 현재 CloudTrail·GuardDuty Source 연동 시간
-- 필요한 Field Parsing 가능 여부
-- Custom Rule과 Alert 표현력
-- 팀원 네 명이 직접 조회·설명 가능한가
-- 로컬 자원·AWS 비용
-- 재설치·복구 가능성
+| Source | 현재 저장 위치 | Gate 4 수집 방식 | 역할 |
+|---|---|---|---|
+| CloudTrail | Foundation Security Log S3 `AWSLogs/<ACCOUNT_ID>/CloudTrail/` | Wazuh `bucket type="cloudtrail"` | Node Role의 `GetObject` 성공을 판정하는 확정 근거 |
+| WAF | `aws-waf-logs-aws-topology-edge`, `us-east-1` | Wazuh `service type="cloudwatchlogs"` | 공격 요청의 Edge 문맥 |
+| DVWA·Apache | `/aws/eks/aws-topology-primary/dvwa`, `ap-northeast-2` | Wazuh `service type="cloudwatchlogs"` | 애플리케이션 도달 문맥 |
+
+첫 구현에서는 새 Firehose, S3→SQS, EventBridge→Wazuh Target을 만들지 않는다. 기존
+Source를 Wazuh가 Read-only로 Polling한다. WAF를 S3로 바꾸면 현재 Live Viewer와
+Grafana CloudWatch 경로를 깨뜨릴 수 있으므로 변경하지 않는다.
+
+첫 수집을 시작하기 전에 CloudTrail과 CloudWatch Logs 입력 모두
+`only_logs_after=2026-AUG-12`를 설정한다. CloudTrail에는 승인 Account ID와
+`ap-northeast-2`, WAF에는 `us-east-1`, DVWA에는 `ap-northeast-2`를 명시한다. 이는 이미
+확보한 Baseline Event를 놓치지 않으면서 프로젝트 밖의 오래된 로그를 불필요하게 읽지
+않기 위한 시작 경계다. 첫 수집 뒤 시작일을 뒤늦게 바꾸거나 무작정 `reparse`하지 않는다.
+필요한 과거 Event 재처리는 중복 Alert 가능성을 기록한 별도 시험으로 수행한다.
+
+#### 4.2 배치와 보존
+
+- Wazuh는 노트북의 Local Docker single-node Stack으로 시작한다.
+- 2026-08-12 확인값은 16 Logical Processor, RAM 31.3 GB, D Drive 여유 634.7 GB로
+  공식 single-node 최소값 4 Core·8 GB RAM·50 GB Disk를 충족한다.
+- Docker Daemon, WSL 2의 `vm.max_map_count=262144`, Docker 16 CPU·약 15.25 GiB를
+  확인했고 Wazuh 4.14.7 Manager·Indexer·Dashboard가 모두 기동됐다.
+- 이는 Local Stack 기동 Evidence이며 AWS 원본 로그 수집 성공을 의미하지 않는다.
+- Manager·Indexer·Dashboard의 Named Volume과 Host-mounted 설정 파일을 유지하여
+  `docker compose down/up` 뒤 설정·Alert·원본 Event가 남는지 검증한다.
+- 규칙에 걸리지 않은 원본 Event 검색을 위해 `wazuh-archives-*`를 활성화하되, 프로젝트
+  Source만 수집하고 짧은 보존 정책은 실제 Index 크기를 측정한 뒤 고정한다.
+
+#### 4.3 IAM·Credential 경계
+
+- Terraform은 Wazuh 전용 Read-only Role과 Policy만 만든다.
+- Security Log Bucket은 CloudTrail Prefix의 `s3:ListBucket`, `s3:GetObject`만 허용한다.
+- WAF·Primary DVWA Log Group은 `logs:DescribeLogStreams`, `logs:GetLogEvents`만 허용한다.
+- `s3:DeleteObject`, `logs:DeleteLogStream`, Put·Write 권한은 주지 않는다.
+- `aws_iam_user`, `aws_iam_access_key`와 장기 Credential을 Terraform으로 만들지 않는다.
+- 최종 방식은 기존 광범위 Profile을 Container에 그대로 노출하지 않고, Host에서 발급한
+  Wazuh Reader Role의 임시 STS Session Profile을 Git 밖의 임시 파일로 Read-only Mount한다.
+- Credential 원문, Shuffle Webhook, Wazuh Password는 Source·Evidence·영상에 남기지 않는다.
+
+#### 4.4 탐지와 분석 계약
+
+Wazuh Custom Rule은 최소한 다음 **의미 조건**을 함께 확인한다. 아래 표기는
+CloudTrail 원본 JSON 기준이며, Wazuh Rule의 `<field name="...">` 경로로 미리 확정한
+값이 아니다.
+
+```text
+eventSource = s3.amazonaws.com
+eventName = GetObject
+recipientAccountId = 승인 Account
+userIdentity.sessionContext.sessionIssuer.userName = Primary Karpenter Node Role
+requestParameters.bucketName = 현재 Primary Application Bucket
+requestParameters.key starts with validation/
+errorCode 없음
+```
+
+대표 Event를 먼저 수집한 뒤 `wazuh-logtest` Phase 2와 `wazuh-archives-*` JSON에서 실제
+Decoded Field 경로를 확인하고 Custom Rule에 고정한다. 즉 `aws.*` 또는 Index의
+`data.aws.*`처럼 보일 것이라고 추측해 Rule을 먼저 작성하지 않는다.
+
+완성된 Alert에서는 원본 `CloudTrail eventID`, Event 시간, Rule ID·Level, Role,
+Bucket·Key, 성공 여부를 확인할 수 있어야 한다. Shuffle의 중복 제거 기준도 재수집 때
+달라질 수 있는 Wazuh Alert ID가 아니라, Runtime에서 확인한 Decoded Field의 원본
+`CloudTrail eventID`를 사용한다.
+
+Wazuh가 현재 관측 공백을 자동으로 메우지는 않는다. DVWA Command Body·실행 결과와
+Pod→IMDS 네트워크 Event는 계속 미수집이며, WAF와 Apache에는 공통 Request ID도 없다.
+따라서 Gate 4의 다중 Source 분석은 같은 시간창·Method·Path·Role·Object를 이용한
+Timeline 조사로 설명하고, 완전한 인과 상관분석으로 과장하지 않는다.
 
 완료 조건:
 
-- [ ] Raw Event 검색
-- [ ] Detection Rule 실행
-- [ ] Alert 생성
-- [ ] Alert에서 원본 Event로 이동
+- [ ] CloudTrail·WAF·DVWA 세 Source의 원본 Event를 Wazuh에서 검색
+- [ ] 첫 실행 전 Account·Region·`only_logs_after` 경계를 설정하고 실제 수집 범위를 기록
+- [ ] Capital One CloudTrail Custom Rule을 `wazuh-logtest`와 실제 수집 Event로 검증
+- [ ] 공격 Event에서 Wazuh Alert 생성
+- [ ] 정상 `terra-user` 대조군이 같은 Custom Alert를 만들지 않음
+- [ ] Alert에서 동일 `CloudTrail eventID`의 원본 Event로 이동
 - [ ] 정탐·오탐·미판정 분류 기록
+- [ ] Wazuh 재시작 뒤 설정·Rule·수집 Event 보존
+- [ ] Credential·Webhook·기본 Password가 Repository와 Evidence에 없음
 
 ### Gate 5 — SOAR Dry Run
 
 SOAR는 처음부터 GitHub를 변경하지 않는다.
 
 ```text
-Alert 수신
-→ Finding ID·Type·Role·Account·Lab Prefix 검증
-→ 중복 Finding 차단
+Wazuh Alert 수신
+→ CloudTrail eventID·Rule ID·Role·Account·Lab Prefix 검증
+→ 같은 CloudTrail eventID 중복 실행 차단
 → ‘실행했을 GitHub Workflow’ Preview
 → 아무것도 변경하지 않고 종료
 ```
@@ -625,7 +708,7 @@ Alert 수신
 완료 조건:
 
 - [ ] 허용한 Account·Role·Scenario만 통과
-- [ ] 같은 Finding ID 재수신 시 중복 실행 없음
+- [ ] 같은 CloudTrail eventID 재수신 시 중복 실행 없음
 - [ ] Credential·원본 Log를 GitHub로 전달하지 않음
 - [ ] 실패·Timeout·재시도 기록
 
@@ -733,8 +816,8 @@ CloudWatch Alarm Action은 보통 상태 전환 때 실행되므로 계속 `ALAR
 - [ ] 새 Pod·새 세션의 기본값이 `low`다.
 - [ ] 이전 AWS Credential 환경변수가 공격자 PC에 남아 있지 않다.
 - [ ] 이전 로그는 삭제하지 않고 실패한 `TAKE_ID`로 구분했다.
-- [ ] Alarm이 실제 `OK`이며 SOAR 중복 방지가 Alarm 이름만으로 고정되지 않았다.
-- [ ] 새 AWS Event·Alarm 상태 전환 ID가 독립된 두 번째 대응을 만들 수 있다.
+- [ ] Alarm이 실제 `OK`이며 AWS Native SNS 경로가 다음 TAKE를 받을 수 있다.
+- [ ] 새 CloudTrail `eventID`가 독립된 두 번째 Wazuh Alert·대응을 만들 수 있다.
 - [ ] `TAKE_ID`는 촬영·Evidence 묶음 표식이며 보안 Event 고유 ID를 대신하지 않는다.
 
 ### Gate 8 — 영구 대응·전체 Rehearsal
@@ -826,7 +909,7 @@ Argo CD가 담당한 것과 Terraform이 담당한 것은 무엇인가
 
 ---
 
-## 10. 결정 대기 목록
+## 10. 결정 및 대기 목록
 
 다음 항목은 계획서 존재만으로 결정하지 않는다. 앞 Gate의 Evidence를 본 뒤 하나씩
 확정한다.
@@ -834,8 +917,10 @@ Argo CD가 담당한 것과 Terraform이 담당한 것은 무엇인가
 | 결정 | 후보 | 결정 시점 |
 |---|---|---|
 | 대표 탐지 신호 | **CloudTrail GetObject Custom Rule 확정·Runtime 정탐 검증** | 2026-08-12 완료 |
-| 중앙 관제 제품 | Wazuh / Elastic Security | Source 연동 검토 후 |
-| SOAR 제품 | Shuffle 우선 검토 / 다른 Workflow 도구 | Gate 4 종료 |
+| 중앙 관제 제품 | **Wazuh 확정, 별도 ELK 미구축** | 2026-08-12 사용자 결정 |
+| SIEM 위치 | **Local Docker single-node** | Wazuh 4.14.7 세 Service 기동 확인·AWS 입력 전 |
+| AWS→SIEM 입력 | **CloudTrail S3 + WAF·DVWA CloudWatch Logs 직접 Read** | Reader Apply·AssumeRole 완료·Wazuh Runtime 수집 전 |
+| SOAR 제품 | **Shuffle 확정** | Wazuh 공식 Webhook 연동, Gate 5 Runtime 전 |
 | GitHub 호출 방식 | `workflow_dispatch` / `repository_dispatch` | 권한 설계 후 |
 | 자동 대응 값 | **`defaultSecurityLevel=impossible` 확정** | DVWA 전용 시연 Containment |
 | 재촬영 Reset | **수동 `workflow_dispatch`, `impossible → low`만 허용** | Gate 6 구현 |
@@ -847,21 +932,23 @@ Argo CD가 담당한 것과 Terraform이 담당한 것은 무엇인가
 
 ## 11. 지금 바로 할 한 가지
 
-Gate 3까지 끝났다. 다음은 같은 공격이나 정상 GetObject를 반복하는 단계가 아니라,
-Gate 4에서 중앙 관제 제품 한 개를 선택하고 CloudWatch Alarm State Change Event를
-어떤 입력 형태로 전달할지 확정하는 단계다.
+Gate 3과 Wazuh Local Docker Preflight, Reader Terraform Apply·AssumeRole·Post-Apply
+0-change까지 끝났다. 다음은 같은 공격이나 정상 GetObject를 반복하는 단계가 아니라,
+임시 Reader Profile을 Wazuh Manager에 Mount하고 CloudTrail 원본을 처음 연결하는 단계다.
 
 ```text
 Gate 3: 정탐 + 정상 대조군 + Alert Runtime 필드 + Post-Apply 0-change 완료
-→ Wazuh와 Elastic Security를 현재 요구사항으로 비교
-→ 한 제품만 선택
-→ AWS Event 입력·최소 권한·Alert 화면의 완료 조건 확정
+→ Wazuh single-node Preflight 완료
+→ 운영용 임시 STS Session + Read-only Mount + CloudTrail S3 연결
+→ CloudTrail 성공 뒤 WAF·DVWA CloudWatch Logs 연결
+→ Raw Event 검색
+→ Custom Rule·Alert·정상 대조군 검증
 ```
 
 현재 확인된 범위는 `Command Injection → IMDS → Node Role Credential → 고정 가짜 S3
 GetObject → CloudTrail → Metric Filter → Alarm`과 같은 TAKE의 WAF·DVWA·GuardDuty
 Coverage 판정이다. Pod→IMDS 직접 네트워크 로그는 현재 방식으로 수집되지 않는다.
-SIEM 화면, SOAR, GitHub 변경, Argo CD Containment, 재공격 실패는 아직 구현하거나
-검증하지 않았다. Active Session의
+Wazuh Local Stack 화면은 확인했지만 AWS 원본 수집·SIEM Alert, SOAR, GitHub 변경,
+Argo CD Containment, 재공격 실패는 아직 구현하거나 검증하지 않았다. Active Session의
 Watchdog Hard Deadline은 2026-08-12 22:00 KST, 실패 재시도 창은 자정까지다. 작업을
 중단하면 예약 시각을 기다리지 말고 `daily-down.ps1`로 Daily Runtime을 종료한다.

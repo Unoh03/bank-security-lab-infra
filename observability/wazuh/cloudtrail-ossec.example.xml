@@ -1,0 +1,19 @@
+<!--
+  Paste this <wodle> block inside the existing <ossec_config> in
+  Server management > Settings only after the temporary wazuh-reader profile
+  is mounted read-only into the manager container.
+-->
+<wodle name="aws-s3">
+  <disabled>no</disabled>
+  <interval>10m</interval>
+  <run_on_start>yes</run_on_start>
+  <skip_on_error>yes</skip_on_error>
+  <bucket type="cloudtrail">
+    <name>__SECURITY_LOG_BUCKET__</name>
+    <aws_profile>wazuh-reader</aws_profile>
+    <aws_account_id>__AWS_ACCOUNT_ID__</aws_account_id>
+    <regions>ap-northeast-2</regions>
+    <only_logs_after>2026-AUG-12</only_logs_after>
+    <remove_from_bucket>no</remove_from_bucket>
+  </bucket>
+</wodle>

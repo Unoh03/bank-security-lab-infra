@@ -2,7 +2,7 @@
 
 > **용도:** 지금 어디까지 왔고, 바로 다음에 무엇을 해야 하는지만 확인하는 현황판  
 > **기준 시점:** 2026-08-12
-> **현재 Focus:** Gate 4 중앙 관제 제품 한 개 선택
+> **현재 Focus:** Gate 4 Wazuh 임시 Profile Mount·GUI CloudTrail 첫 원본 로그 연결
 > **관련 결정:** [`OBSERVABILITY-IAM-DECISIONS.md`](./OBSERVABILITY-IAM-DECISIONS.md)  
 > **전체 계획:** [`OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](./OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)  
 > **보고서 Evidence:** [`report/OBSERVABILITY-EVIDENCE-INDEX.md`](./report/OBSERVABILITY-EVIDENCE-INDEX.md)
@@ -43,7 +43,8 @@ flowchart LR
 1. Gate 2 Coverage 판정 완료
 2. 정상 GetObject Negative Control 완료
 3. Gate 3 Alert Description Apply·Runtime·Post-Apply 0-change 완료
-4. 중앙 관제 제품 한 개 선택
+4. Wazuh 4.14.7 Local Docker Stack 기동 확인
+5. Reader Role·Policy Apply·AssumeRole·Post-Apply 0-change 완료
 ```
 
 S3 Source별 저장, Athena 실제 분석, Grafana Athena 시각화는 닫았다. 새 Athena Panel을 추가하거나 같은 Dashboard를 계속 다듬지 않는다.
@@ -87,7 +88,10 @@ S3 Source별 저장, Athena 실제 분석, Grafana Athena 시각화는 닫았다
 | Capital One 확정 탐지 | CloudTrail GetObject 1행·Metric Filter·새 Alarm 전환 | **완료** |
 | Capital One 로그 Coverage | WAF·DVWA·IMDS 공백·CloudTrail·GuardDuty 0건 판정 | **Gate 2 완료** |
 | Capital One 정상 대조군 | 정상 GetObject 1행·Alarm OK·상태 시각 불변 | **완료** |
+| Wazuh Local Stack | Manager·Indexer·Dashboard 4.14.7, Docker·WSL 사전 조건 | **기동 확인 / AWS 입력 전** |
+| Wazuh Reader Terraform | 2 Add·0 Change·0 Destroy Apply, AssumeRole 성공, Post-Apply 0-change | **완료** |
 | Capital One Alert 필드 | 시간·Severity·Action·Actor·Object·Verdict Runtime 확인, Post-Apply 0-change | **완료** |
+| Wazuh SIEM | Local Stack 기동·Reader IAM 완료, AWS 원본 미연결 | **Gate 4 수집 전** |
 | EKS Pod Identity | Source 정의 존재, Runtime 미검증 | **별도 미완료** |
 | WAF Hardening | 계획만 존재 | **후속** |
 
@@ -218,7 +222,7 @@ Pod Identity Runtime             미검증
 
 ## 6. 바로 다음 한 가지
 
-### Gate 4 중앙 관제 제품 한 개 선택
+### Gate 4 Wazuh 원본 로그 수집·Custom Alert
 
 Baseline `capital-one-20260812T025054Z`는 다음 경로까지 실제 Runtime에서 닫혔다.
 
@@ -266,17 +270,56 @@ Terraform State와 AWS Runtime Description: 일치
 Post-Apply Fresh Plan: 0 change
 ```
 
-따라서 Gate 3을 위해 공격이나 정상 GetObject를 반복하지 않는다. 다음 결정은
-Wazuh 또는 Elastic Security 중 현재 Runtime에 한 제품을 선택하고, CloudWatch Alarm
-State Change Event의 입력 형식·최소 권한·Alert 완료 조건을 확정하는 것이다.
+따라서 Gate 3을 위해 공격이나 정상 GetObject를 반복하지 않는다. 중앙 관제 제품은
+Wazuh로 결정했고 별도 ELK Stack은 구축하지 않는다. Wazuh는 이미 만들어진 CloudWatch
+Alarm을 입력받는 중계 화면이 아니라 다음 원본 Source를 직접 읽는다.
+
+| Source | 현재 위치 | Wazuh 방식 | Source 변경 |
+|---|---|---|---|
+| CloudTrail | Foundation Security Log S3 | `bucket type="cloudtrail"` | 없음 |
+| WAF | `us-east-1` CloudWatch Log Group | `service type="cloudwatchlogs"` | 없음 |
+| Primary DVWA·Apache | `ap-northeast-2` CloudWatch Log Group | `service type="cloudwatchlogs"` | 없음 |
+
+기존 `CloudTrail → Metric Filter → Alarm → SNS`는 AWS Native 탐지·사람 알림 경로로
+그대로 유지한다. Wazuh Custom Alert만 Gate 5에서 Shuffle의 자동 대응 입력으로 사용해
+같은 사건의 중복 Containment를 막는다.
+
+2026-08-12 Host·Wazuh Runtime 재확인:
+
+```text
+Logical Processor: 16
+RAM: 31.3 GB
+D Drive Free: 634.7 GB
+Docker Client: 29.6.2
+Docker Allocation: 16 CPU / 약 15.25 GiB
+vm.max_map_count: 262144
+Wazuh 4.14.7 Manager·Indexer·Dashboard: 모두 Up
+AWS 원본 입력: 아직 미연결
+```
+
+Reader Source는 `foundation/wazuh.tf`에 기본 비활성으로 구현했다. 정적 계약 Test와
+`terraform validate`를 통과했고, 기본 비활성 Plan은 AWS Resource 0건, 활성 Plan은
+Reader Role·Inline Policy 2 Add, 0 Change, 0 Destroy였다. 승인된 Saved Plan을 Apply했고
+AWS 실제 Policy Action 네 개, 15분 AssumeRole 성공, Post-Apply Fresh Plan 0-change를
+확인했다. Credential 값은 출력하거나 파일에 저장하지 않았다.
+
+바로 다음 한 가지:
+
+```text
+Reader Role 운영용 임시 STS Session 발급
+→ 임시 wazuh-reader Profile을 Manager에 Read-only Mount
+→ GUI에서 CloudTrail wodle 저장·재시작
+→ 첫 CloudTrail Event 수집 확인
+```
 
 ---
 
 ## 7. 이후 순서
 
 ```text
-중앙 관제 제품 1개 선택
-→ SIEM Alert
+Wazuh 임시 Profile Mount·CloudTrail Raw Event 첫 수집
+→ WAF·DVWA Raw Event 수집
+→ Wazuh Custom Rule·Alert·정상 대조군
 → SOAR Dry Run
 → GitOps Containment·재공격 실패
 → Terraform hardened 영구 복구
@@ -310,6 +353,9 @@ report/OBSERVABILITY-EVIDENCE-INDEX.md
 analytics/dashboard/security-log-investigation.json
 tools/waf-live-viewer/
 observability/queries/athena/
+foundation/wazuh.tf
+observability/wazuh/
+tests/test-wazuh-foundation-contract.ps1
 ```
 
 ### Local Athena Evidence

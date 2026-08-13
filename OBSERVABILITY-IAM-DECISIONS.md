@@ -190,6 +190,14 @@ Live Tail 자체는 새 AWS Resource를 생성하지 않는다. 기존 `terra-us
 | D14 | Pod Identity 완료 조건 | Runtime Gate | 실제 Pod STS Role, 허용 API 성공, 비허용 API 거부, Node Role 비노출을 확인한다. |
 | D15 | 결과 증명 | 확정 | Source·Runtime·Evidence를 분리하고 Screenshot, Query, Viewer 출력, Pod Identity 결과를 보존한다. |
 | D16 | 변경 통제 | 확정 | Read-only Test 전에 새 AWS Resource, IAM 변경, Terraform Apply, Kubernetes Mutation을 하지 않는다. |
+| D17 | 중앙 관제 제품 | 확정 | Wazuh를 SIEM으로 사용하고 별도 Elastic Security·ELK Stack은 함께 구축하지 않는다. |
+| D18 | Wazuh 배치 | Local Runtime 기동 확인 | Local Docker single-node를 사용한다. Wazuh 4.14.7 Manager·Indexer·Dashboard와 Docker·WSL 사전 조건을 확인했으며 AWS 원본 입력은 아직 연결하지 않았다. |
+| D19 | Wazuh 원본 입력 | 확정 | CloudTrail은 Security Log S3, WAF와 Primary DVWA는 기존 CloudWatch Logs에서 직접 읽는다. CloudWatch Alarm State Change를 SIEM 입력으로 사용하지 않는다. |
+| D20 | AWS Native 경보 | 확정 | 기존 Metric Filter→CloudWatch Alarm→SNS는 사람 알림과 독립 검증 경로로 유지한다. |
+| D21 | SIEM→SOAR | 확정 | Wazuh Custom Alert를 Shuffle의 단일 자동 대응 입력으로 사용하고 같은 사건을 CloudWatch에서도 Shuffle로 중복 전송하지 않는다. |
+| D22 | Wazuh IAM | Apply·Runtime Trust 검증 완료 | 기본 비활성 전용 Read-only Role만 Terraform으로 만들고 장기 Access Key·User·Credential은 만들지 않는다. 2 Add, 0 Change, 0 Destroy Apply와 실제 네 Read Action, AssumeRole, Post-Apply 0-change를 확인했다. |
+| D23 | Wazuh 원본 보존 | Runtime Gate | Scoped Source의 `wazuh-archives-*`와 Docker Volume을 사용하고 재시작 뒤 설정·Rule·Event 보존을 증명한다. |
+| D24 | Wazuh 최초 수집 경계 | 확정 | 첫 AWS 모듈 실행 전에 `only_logs_after=2026-AUG-12`, 승인 Account ID, Source별 Region을 고정한다. 뒤늦은 범위 변경·무계획 `reparse`로 인한 누락·중복 Alert를 피한다. |
 
 ---
 
@@ -223,6 +231,20 @@ Terraform 변경 최소화
 ### A03 — DR Pod Identity 증명 범위
 
 Primary와 DR을 모두 시연해야 하는지는 Runtime 활성 상태와 평가 기준을 보고 결정한다.
+
+### A04 — Wazuh 임시 Credential 갱신 방식
+
+기본안은 Host에서 Wazuh Reader Role의 임시 STS Session을 발급하고 Git 밖의 임시
+Credential 파일을 Wazuh Manager에 Read-only Mount하는 방식이다. 광범위한 기존
+`terra-user` Profile 전체를 Container에 노출하지 않는다. Gate 4 Preflight에서 Session
+만료 전 갱신·재시작 절차를 검증하며, 이 방식이 운영 시간을 충족하지 못할 때만
+IAM Roles Anywhere 또는 AWS 배치를 후속 대안으로 검토한다.
+
+### A05 — Wazuh Archives 보존 기간
+
+원본 검색을 위해 `wazuh-archives-*`를 활성화하되 무기한 보존하지 않는다. 세 Project
+Source를 연결한 뒤 하루 Index 크기를 측정하고, 핵심 시연 기간을 포함하는 가장 짧은
+보존 기간을 확정한다.
 
 ---
 
@@ -279,6 +301,8 @@ Source별 S3 Bucket Migration
 | EFS CSI·Web S3 Pod Identity | `storage-access.tf`, `eks.tf` |
 | Karpenter Pod Identity | `eks.tf` |
 | 실행 순서·Live Tail Gate | `OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md` |
+| Wazuh SIEM·SOAR 전체 흐름 | `CAPITAL-ONE-SOC-DEMO-PLAN.md` |
+| Wazuh Reader Terraform 경계 | `CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md` |
 
 ---
 
@@ -290,3 +314,11 @@ Source별 S3 Bucket Migration
 - Amazon Athena Data Source for Grafana: https://grafana.com/docs/plugins/grafana-athena-datasource/latest/
 - Grafana CloudWatch Data Source: https://grafana.com/docs/grafana/latest/datasources/aws-cloudwatch/
 - Amazon EKS Pod Identity: https://docs.aws.amazon.com/eks/latest/userguide/pod-identities.html
+- Wazuh Docker deployment: https://documentation.wazuh.com/current/deployment-options/docker/wazuh-container.html
+- Wazuh AWS CloudTrail: https://documentation.wazuh.com/current/cloud-security/amazon/services/supported-services/cloudtrail.html
+- Wazuh AWS CloudWatch Logs: https://documentation.wazuh.com/current/cloud-security/amazon/services/supported-services/cloudwatchlogs.html
+- Wazuh AWS module configuration: https://documentation.wazuh.com/current/user-manual/reference/ossec-conf/wodle-s3.html
+- Wazuh AWS module filtering and reparse: https://documentation.wazuh.com/current/cloud-security/amazon/services/prerequisites/considerations.html
+- Wazuh custom rules: https://documentation.wazuh.com/current/user-manual/ruleset/rules/custom.html
+- Wazuh all-event archives: https://documentation.wazuh.com/current/user-manual/wazuh-indexer/wazuh-indexer-indices.html
+- Wazuh Shuffle integration: https://documentation.wazuh.com/current/user-manual/manager/integration-with-external-apis.html
