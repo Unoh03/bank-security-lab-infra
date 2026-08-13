@@ -1,8 +1,8 @@
 # Observability Current Status
 
 > **용도:** 지금 어디까지 왔고, 바로 다음에 무엇을 해야 하는지만 확인하는 현황판  
-> **기준 시점:** 2026-08-12
-> **현재 Focus:** Gate 4 Wazuh 임시 Profile Mount·GUI CloudTrail 첫 원본 로그 연결
+> **기준 시점:** 2026-08-13
+> **현재 Focus:** Gate 4 Wazuh Raw Archive 활성화·Capital One Custom Rule 오프라인 검증
 > **관련 결정:** [`OBSERVABILITY-IAM-DECISIONS.md`](./OBSERVABILITY-IAM-DECISIONS.md)  
 > **전체 계획:** [`OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](./OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)  
 > **보고서 Evidence:** [`report/OBSERVABILITY-EVIDENCE-INDEX.md`](./report/OBSERVABILITY-EVIDENCE-INDEX.md)
@@ -45,6 +45,7 @@ flowchart LR
 3. Gate 3 Alert Description Apply·Runtime·Post-Apply 0-change 완료
 4. Wazuh 4.14.7 Local Docker Stack 기동 확인
 5. Reader Role·Policy Apply·AssumeRole·Post-Apply 0-change 완료
+6. 로컬 전용 Reader로 CloudTrail S3 Object 처리·Dashboard 집계 완료
 ```
 
 S3 Source별 저장, Athena 실제 분석, Grafana Athena 시각화는 닫았다. 새 Athena Panel을 추가하거나 같은 Dashboard를 계속 다듬지 않는다.
@@ -88,10 +89,10 @@ S3 Source별 저장, Athena 실제 분석, Grafana Athena 시각화는 닫았다
 | Capital One 확정 탐지 | CloudTrail GetObject 1행·Metric Filter·새 Alarm 전환 | **완료** |
 | Capital One 로그 Coverage | WAF·DVWA·IMDS 공백·CloudTrail·GuardDuty 0건 판정 | **Gate 2 완료** |
 | Capital One 정상 대조군 | 정상 GetObject 1행·Alarm OK·상태 시각 불변 | **완료** |
-| Wazuh Local Stack | Manager·Indexer·Dashboard 4.14.7, Docker·WSL 사전 조건 | **기동 확인 / AWS 입력 전** |
+| Wazuh Local Stack | Manager·Indexer·Dashboard 4.14.7, Docker·WSL 사전 조건 | **기동·CloudTrail 입력 확인** |
 | Wazuh Reader Terraform | 2 Add·0 Change·0 Destroy Apply, AssumeRole 성공, Post-Apply 0-change | **완료** |
 | Capital One Alert 필드 | 시간·Severity·Action·Actor·Object·Verdict Runtime 확인, Post-Apply 0-change | **완료** |
-| Wazuh SIEM | Local Stack 기동·Reader IAM 완료, AWS 원본 미연결 | **Gate 4 수집 전** |
+| Wazuh SIEM | CloudTrail 수집 확인, 기본 목록 밖 `GetObject` Alert 0건, Raw Archive 비활성 원인 확인 | **Gate 4 Archive·Custom Rule 전** |
 | EKS Pod Identity | Source 정의 존재, Runtime 미검증 | **별도 미완료** |
 | WAF Hardening | 계획만 존재 | **후속** |
 
@@ -222,7 +223,7 @@ Pod Identity Runtime             미검증
 
 ## 6. 바로 다음 한 가지
 
-### Gate 4 Wazuh 원본 로그 수집·Custom Alert
+### Gate 4 Raw Archive·Capital One Custom Rule
 
 Baseline `capital-one-20260812T025054Z`는 다음 경로까지 실제 Runtime에서 닫혔다.
 
@@ -284,7 +285,7 @@ Alarm을 입력받는 중계 화면이 아니라 다음 원본 Source를 직접 
 그대로 유지한다. Wazuh Custom Alert만 Gate 5에서 Shuffle의 자동 대응 입력으로 사용해
 같은 사건의 중복 Containment를 막는다.
 
-2026-08-12 Host·Wazuh Runtime 재확인:
+2026-08-13 Host·Wazuh Runtime 판정:
 
 ```text
 Logical Processor: 16
@@ -294,7 +295,8 @@ Docker Client: 29.6.2
 Docker Allocation: 16 CPU / 약 15.25 GiB
 vm.max_map_count: 262144
 Wazuh 4.14.7 Manager·Indexer·Dashboard: 모두 Up
-AWS 원본 입력: 아직 미연결
+CloudTrail 입력: Security Log S3 Object 처리·Dashboard 집계 완료
+WAF·Primary DVWA 입력: 미연결
 ```
 
 Reader Source는 `foundation/wazuh.tf`에 기본 비활성으로 구현했다. 정적 계약 Test와
@@ -303,23 +305,51 @@ Reader Role·Inline Policy 2 Add, 0 Change, 0 Destroy였다. 승인된 Saved Pla
 AWS 실제 Policy Action 네 개, 15분 AssumeRole 성공, Post-Apply Fresh Plan 0-change를
 확인했다. Credential 값은 출력하거나 파일에 저장하지 않았다.
 
-바로 다음 한 가지:
+현재 수집 경계:
 
 ```text
-Reader Role 운영용 임시 STS Session 발급
-→ 임시 wazuh-reader Profile을 Manager에 Read-only Mount
-→ GUI에서 CloudTrail wodle 저장·재시작
-→ 첫 CloudTrail Event 수집 확인
+only_logs_after = 2026-AUG-12
+account = 승인 프로젝트 Account
+region = ap-northeast-2
 ```
+
+Wazuh 설치 전 실행한 Baseline도 해당 날짜의 CloudTrail Object가 S3에 보존돼 있다면 최초
+Polling의 수집 대상이다. Dashboard에서 날짜를 넓혀 검색하는 작업은 Local Wazuh
+Indexer 조회이므로 AWS Query 비용을 발생시키지 않는다. 수집 DB 초기화·무계획
+`reparse`는 S3 재조회와 중복 Alert 가능성이 있어 현재 실행하지 않는다.
+
+기존 Baseline 검색 결과:
+
+```text
+Last 7 days + S3 GetObject + validation/capital-one-demo.csv
+→ 0건
+→ Wazuh 기본 aws-eventnames에 GetObject 없음
+→ logall_json=no, Filebeat archives.enabled=false
+→ 기본 Rule 밖 원본이 Alert·Archive 어디에도 남지 않음
+```
+
+Gate 3 Bundle에는 실제 Query 결과 1행과 Sanitized CloudTrail Event가 남아 있다. 따라서
+AWS 재조회나 새 공격 전에 이를 이용해 Custom Rule을 작성하고 `wazuh-logtest`로
+오프라인 검증한다. 이후 Raw Archive를 활성화하고 새 통제 Event 1회로 실제 Alert를
+검증한다. 과거 전체 `reparse`는 실행하지 않는다.
+
+실제 최초 Runtime은 Terraform Reader Role의 임시 STS Session이 아니라 로컬 전용 IAM
+User의 장기 Key를 Git 밖 Profile에 저장해 Read-only Mount했다. 또한 Wazuh의 Bucket
+최상위 사전 확인 때문에 수동 Policy는 Bucket 전체 `ListBucket`을 허용하고 Object
+내용은 CloudTrail Prefix `GetObject`로 제한했다. 현재 Terraform Reader Role의 Prefix
+조건은 이 Runtime 요구와 맞지 않으므로 Source 보정·Fresh Plan·승인된 Apply 전에는
+검증된 실행 경로로 주장하지 않는다.
 
 ---
 
 ## 7. 이후 순서
 
 ```text
-Wazuh 임시 Profile Mount·CloudTrail Raw Event 첫 수집
+Capital One Custom Rule 오프라인 작성·wazuh-logtest
+→ Raw Archive 활성화·보존 확인
+→ 새 통제 GetObject 1회·실제 Alert 확인
 → WAF·DVWA Raw Event 수집
-→ Wazuh Custom Rule·Alert·정상 대조군
+→ 정상 대조군 오탐 없음 검증
 → SOAR Dry Run
 → GitOps Containment·재공격 실패
 → Terraform hardened 영구 복구

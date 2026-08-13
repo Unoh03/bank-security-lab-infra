@@ -1,8 +1,8 @@
 # Capital One 기반 보안 관제·자동 대응 시연 계획
 
-> **상태:** Draft v1.0 — Gate 3 종료, Gate 4 Wazuh 선택·구현 전
-> **기준 시점:** 2026-08-12
-> **현재 절차 Gate:** Gate 4 — Wazuh 원본 로그 수집·Custom Alert Runtime 검증 전
+> **상태:** Draft v1.1 — Gate 3 종료, Gate 4 CloudTrail 중앙 수집 완료·Custom Alert 전
+> **기준 시점:** 2026-08-13
+> **현재 절차 Gate:** Gate 4 — Raw Archive 활성화·Custom Rule 오프라인 및 Runtime 검증 전
 > **현재 Runtime 상태:** T4 BASELINE OBSERVED — `minimal + capital-one-lab`, 자동 Containment 실행 전
 > **Terraform 진행:** T1·T2 Source, T3 Plan-only, T4 탐지·대조군·Alert 필드 Runtime 검증 완료
 > **번호 구분:** `T0~T6`는 Terraform 구현 순서이고 `Gate 0~8`은 시연 Evidence 검증 순서다. 같은 번호끼리 같은 작업이 아니다.
@@ -75,9 +75,11 @@ Gate 8  근본 원인 복구와 팀 전체 연습
 ```
 
 Gate는 별개의 기능 목록이 아니라 앞 단계의 결과를 확인하고 다음 단계로 넘어가기
-위한 중간 완료 조건이다. Gate 0~3에서 공격 재현, 로그 Coverage, 정탐·정상 대조군,
-Alert 필드 Runtime 검증까지 닫았다. 중앙 관제 제품은 Wazuh로 선택했으며, 다음은
-Gate 4에서 원본 로그 수집·검색·Custom Alert를 Runtime으로 증명하는 단계다.
+위한 중간 완료 조건이다. Gate 1~3에서 공격 재현, 로그 Coverage, 정탐·정상 대조군,
+Alert 필드 Runtime 검증까지 닫았다. Gate 0의 공개본 위생 체크는 최종 촬영 전 다시
+확정한다. 중앙 관제 제품은 Wazuh로 선택했고 CloudTrail 중앙 수집까지 확인했으며,
+다음은 기존 Baseline Event 검색과 WAF·DVWA 수집, Custom Alert를 Runtime으로
+증명하는 단계다.
 
 ### 0.5 빠른 차단과 영구 대응의 차이
 
@@ -639,6 +641,12 @@ Grafana CloudWatch 경로를 깨뜨릴 수 있으므로 변경하지 않는다.
   `docker compose down/up` 뒤 설정·Alert·원본 Event가 남는지 검증한다.
 - 규칙에 걸리지 않은 원본 Event 검색을 위해 `wazuh-archives-*`를 활성화하되, 프로젝트
   Source만 수집하고 짧은 보존 정책은 실제 Index 크기를 측정한 뒤 고정한다.
+- 2026-08-13 실제 Runtime에서 `only_logs_after=2026-AUG-12`, 승인 Account,
+  `ap-northeast-2`를 적용하고 CloudTrail Object 처리와 Dashboard 집계를 확인했다.
+- Dashboard 시간 범위 검색은 Local Wazuh Indexer 조회다. 과거 Event 확인을 위해
+  검색 범위를 넓히는 것만으로 AWS Query 비용이 발생하지 않는다.
+- 수집 DB 초기화·무계획 `reparse`는 S3 재조회와 중복 Alert를 만들 수 있으므로 기존
+  Index 검색과 Marker 확인 뒤에만 별도 승인한다.
 
 #### 4.3 IAM·Credential 경계
 
@@ -650,6 +658,19 @@ Grafana CloudWatch 경로를 깨뜨릴 수 있으므로 변경하지 않는다.
 - 최종 방식은 기존 광범위 Profile을 Container에 그대로 노출하지 않고, Host에서 발급한
   Wazuh Reader Role의 임시 STS Session Profile을 Git 밖의 임시 파일로 Read-only Mount한다.
 - Credential 원문, Shuffle Webhook, Wazuh Password는 Source·Evidence·영상에 남기지 않는다.
+
+2026-08-13 최초 Runtime 연결은 반복적인 STS 갱신 없이 로컬 실습을 진행하기 위해
+Terraform 밖에서 만든 전용 IAM User `aws-topology-wazuh-local-reader`와 장기 Access
+Key를 사용했다. Key는 Git 밖의 전용 Profile에만 저장하고 Manager에 Read-only로
+Mount했으며, 프로젝트 종료 후 비활성화·삭제한다. 이는 계획서의 임시 STS Reader Role
+기본안과 다른 **로컬 실습용 예외**다.
+
+또한 설치된 Wazuh 4.14.7은 실제 Prefix 조회 전에 Bucket 최상위
+`ListObjectsV2(Prefix="")`를 실행한다. 수동 Reader Policy는 이를 반영해 Bucket의
+`s3:ListBucket`만 허용하고, Object 내용은 CloudTrail Prefix의 `s3:GetObject`로 계속
+제한했다. 현재 Terraform Reader Role의 Prefix 조건은 이 Runtime 요구와 일치하지
+않으므로 Source 보정·Fresh Plan·승인된 Apply 전에는 검증된 Wazuh 실행 경로로 주장하지
+않는다.
 
 #### 4.4 탐지와 분석 계약
 
@@ -684,7 +705,7 @@ Timeline 조사로 설명하고, 완전한 인과 상관분석으로 과장하�
 완료 조건:
 
 - [ ] CloudTrail·WAF·DVWA 세 Source의 원본 Event를 Wazuh에서 검색
-- [ ] 첫 실행 전 Account·Region·`only_logs_after` 경계를 설정하고 실제 수집 범위를 기록
+- [x] 첫 실행 전 Account·Region·`only_logs_after` 경계를 설정하고 실제 수집 범위를 기록
 - [ ] Capital One CloudTrail Custom Rule을 `wazuh-logtest`와 실제 수집 Event로 검증
 - [ ] 공격 Event에서 Wazuh Alert 생성
 - [ ] 정상 `terra-user` 대조군이 같은 Custom Alert를 만들지 않음
@@ -918,8 +939,10 @@ Argo CD가 담당한 것과 Terraform이 담당한 것은 무엇인가
 |---|---|---|
 | 대표 탐지 신호 | **CloudTrail GetObject Custom Rule 확정·Runtime 정탐 검증** | 2026-08-12 완료 |
 | 중앙 관제 제품 | **Wazuh 확정, 별도 ELK 미구축** | 2026-08-12 사용자 결정 |
-| SIEM 위치 | **Local Docker single-node** | Wazuh 4.14.7 세 Service 기동 확인·AWS 입력 전 |
-| AWS→SIEM 입력 | **CloudTrail S3 + WAF·DVWA CloudWatch Logs 직접 Read** | Reader Apply·AssumeRole 완료·Wazuh Runtime 수집 전 |
+| SIEM 위치 | **Local Docker single-node** | Wazuh 4.14.7 세 Service 기동·CloudTrail Dashboard 집계 확인 |
+| AWS→SIEM 입력 | **CloudTrail S3 + WAF·DVWA CloudWatch Logs 직접 Read** | CloudTrail 완료, WAF·DVWA 미연결 |
+| Wazuh Runtime Credential | **로컬 전용 IAM User 장기 Key 예외** | Git 밖 Profile·Read-only Mount, 종료 후 비활성화·삭제 |
+| Terraform Reader Role | Source·Apply 존재, 현재 Runtime 경로는 아님 | Wazuh Bucket 최상위 List 요구 반영 뒤 재검증 |
 | SOAR 제품 | **Shuffle 확정** | Wazuh 공식 Webhook 연동, Gate 5 Runtime 전 |
 | GitHub 호출 방식 | `workflow_dispatch` / `repository_dispatch` | 권한 설계 후 |
 | 자동 대응 값 | **`defaultSecurityLevel=impossible` 확정** | DVWA 전용 시연 Containment |
@@ -933,22 +956,30 @@ Argo CD가 담당한 것과 Terraform이 담당한 것은 무엇인가
 ## 11. 지금 바로 할 한 가지
 
 Gate 3과 Wazuh Local Docker Preflight, Reader Terraform Apply·AssumeRole·Post-Apply
-0-change까지 끝났다. 다음은 같은 공격이나 정상 GetObject를 반복하는 단계가 아니라,
-임시 Reader Profile을 Wazuh Manager에 Mount하고 CloudTrail 원본을 처음 연결하는 단계다.
+0-change, 로컬 전용 Reader의 CloudTrail 중앙 수집까지 끝났다. 기존 Wazuh Index에서
+Baseline `GetObject`를 검색했지만 0건이었다. 설치된 기본 CloudTrail Rule의 Event 목록에
+`GetObject`가 없고 Raw Archive도 비활성이라, 수집된 Object 안의 Rule 미일치 Event가
+검색 가능한 형태로 남지 않은 것이 원인이다. Gate 3 Bundle에는 실제 Query 결과와
+Sanitized CloudTrail Event가 보존돼 있으므로 새 공격보다 Custom Rule 오프라인 검증과
+Archive 활성화를 먼저 수행한다.
 
 ```text
 Gate 3: 정탐 + 정상 대조군 + Alert Runtime 필드 + Post-Apply 0-change 완료
 → Wazuh single-node Preflight 완료
-→ 운영용 임시 STS Session + Read-only Mount + CloudTrail S3 연결
-→ CloudTrail 성공 뒤 WAF·DVWA CloudWatch Logs 연결
-→ Raw Event 검색
-→ Custom Rule·Alert·정상 대조군 검증
+→ 로컬 전용 Reader + Read-only Mount + CloudTrail S3 수집 완료
+→ 기존 Baseline GetObject 검색 0건·기본 Rule 목록/Archive 비활성 원인 확인
+→ Gate 3 Sanitized Event로 Custom Rule 작성·wazuh-logtest
+→ Raw Archive 활성화
+→ 새 통제 Event 1회로 실제 Custom Alert 검증
+→ WAF·DVWA CloudWatch Logs 연결
+→ 정상 대조군 검증
 ```
 
 현재 확인된 범위는 `Command Injection → IMDS → Node Role Credential → 고정 가짜 S3
 GetObject → CloudTrail → Metric Filter → Alarm`과 같은 TAKE의 WAF·DVWA·GuardDuty
-Coverage 판정이다. Pod→IMDS 직접 네트워크 로그는 현재 방식으로 수집되지 않는다.
-Wazuh Local Stack 화면은 확인했지만 AWS 원본 수집·SIEM Alert, SOAR, GitHub 변경,
-Argo CD Containment, 재공격 실패는 아직 구현하거나 검증하지 않았다. Active Session의
-Watchdog Hard Deadline은 2026-08-12 22:00 KST, 실패 재시도 창은 자정까지다. 작업을
-중단하면 예약 시각을 기다리지 말고 `daily-down.ps1`로 Daily Runtime을 종료한다.
+Coverage 판정, 그리고 `CloudTrail S3 → Wazuh Manager → Indexer → Dashboard` 수집이다.
+Pod→IMDS 직접 네트워크 로그는 현재 방식으로 수집되지 않는다. WAF·DVWA의 Wazuh 수집,
+대표 Custom Alert, SOAR, GitHub 변경, Argo CD Containment, 재공격 실패는 아직 구현하거나
+검증하지 않았다. Watchdog Hard Deadline은 각 `daily-up.ps1` Session의 실제 출력과
+Session State를 기준으로 확인한다. 작업을 중단하면 과거 문서의 예약 시각을 믿고
+기다리지 말고 `daily-down.ps1`로 Daily Runtime을 종료한다.
