@@ -1,9 +1,9 @@
 # Capital One 기반 보안 관제·자동 대응 시연 계획
 
-> **상태:** Draft v1.1 — Gate 3 종료, Gate 4 CloudTrail 중앙 수집 완료·Custom Alert 전
+> **상태:** Draft v1.2 — Gate 4 CloudTrail Raw·Custom Alert Runtime 완료, WAF·DVWA Wazuh 입력·초보자용 화면 전
 > **기준 시점:** 2026-08-13
-> **현재 절차 Gate:** Gate 4 — Raw Archive 활성화·Custom Rule 오프라인 및 Runtime 검증 전
-> **현재 Runtime 상태:** T4 BASELINE OBSERVED — `minimal + capital-one-lab`, 자동 Containment 실행 전
+> **현재 절차 Gate:** Gate 4 — CloudTrail 정탐 완료, 다중 Source 중앙 수집·사용성·오탐 검증 중
+> **최근 Runtime Evidence:** T4 WAZUH CLOUDTRAIL DETECTED — TAKE `capital-one-20260813T082735Z`, 자동 Containment 실행 전
 > **Terraform 진행:** T1·T2 Source, T3 Plan-only, T4 탐지·대조군·Alert 필드 Runtime 검증 완료
 > **번호 구분:** `T0~T6`는 Terraform 구현 순서이고 `Gate 0~8`은 시연 Evidence 검증 순서다. 같은 번호끼리 같은 작업이 아니다.
 > **기존 구현 현황:** [`OBSERVABILITY-CURRENT-STATUS.md`](./OBSERVABILITY-CURRENT-STATUS.md)
@@ -77,9 +77,9 @@ Gate 8  근본 원인 복구와 팀 전체 연습
 Gate는 별개의 기능 목록이 아니라 앞 단계의 결과를 확인하고 다음 단계로 넘어가기
 위한 중간 완료 조건이다. Gate 1~3에서 공격 재현, 로그 Coverage, 정탐·정상 대조군,
 Alert 필드 Runtime 검증까지 닫았다. Gate 0의 공개본 위생 체크는 최종 촬영 전 다시
-확정한다. 중앙 관제 제품은 Wazuh로 선택했고 CloudTrail 중앙 수집까지 확인했으며,
-다음은 기존 Baseline Event 검색과 WAF·DVWA 수집, Custom Alert를 Runtime으로
-증명하는 단계다.
+확정한다. 중앙 관제 제품은 Wazuh로 선택했고, 새 통제 Event에서 CloudTrail Raw Event와
+Rule `100100`·Level 12 Alert가 동일 `eventID`로 연결되는 것까지 확인했다. 다음은
+WAF·DVWA 원본 입력, 초보자용 관제 화면, 정상 접근의 Wazuh 오탐 검증이다.
 
 ### 0.5 빠른 차단과 영구 대응의 차이
 
@@ -618,6 +618,41 @@ ap-northeast-2 DVWA CloudWatch Logs ─────┘
 | WAF | `aws-waf-logs-aws-topology-edge`, `us-east-1` | Wazuh `service type="cloudwatchlogs"` | 공격 요청의 Edge 문맥 |
 | DVWA·Apache | `/aws/eks/aws-topology-primary/dvwa`, `ap-northeast-2` | Wazuh `service type="cloudwatchlogs"` | 애플리케이션 도달 문맥 |
 
+위 표는 **목표 입력 계약**이다. 2026-08-13 현재 실제 `ossec.conf`에 활성화된 입력은
+CloudTrail `bucket` 하나이며, WAF·DVWA `cloudwatchlogs` 입력은 아직 추가하지 않았다.
+
+#### 4.1.1 공격 단계와 현재 Wazuh 가시성
+
+공격이 여러 계층을 통과한다는 사실과 Wazuh가 현재 그 로그를 모두 읽는다는 주장을
+혼동하지 않는다.
+
+| 공격 단계 | 관련 로그·증거 | 현재 Wazuh 상태 |
+|---|---|---|
+| CloudFront 통과 | CloudFront Access Log | 원본은 별도 S3 경로, Wazuh 미수집 |
+| WAF 검사 | 현재 Filter가 보존하는 `COUNT`·`BLOCK` Event | CloudWatch Logs 원본 존재, Wazuh 미수집 |
+| ALB 통과 | Edge Access Logging 활성 시 ALB Access Log | 원본은 별도 S3 경로, Wazuh 미수집 |
+| DVWA 요청·Command Injection | Apache·DVWA Log → CloudWatch Logs | 원본 존재, Wazuh 미수집. Command Body·실행 결과는 미수집 |
+| DVWA → IMDS | Runner의 Role·Credential 획득 결과 | CloudTrail 대상이 아니며 현재 네트워크 로그로 직접 증명하지 못함 |
+| 탈취 Credential로 STS 호출 | CloudTrail Management Event | CloudTrail 입력 범위지만 시나리오 전용 Alert 없음 |
+| 탈취 Credential로 S3 읽기 | CloudTrail S3 Data Event | **Raw 수집·Rule `100100`·Level 12 Runtime 검증 완료** |
+| AWS Native 탐지 결과 | CloudWatch Metric Filter → Alarm → SNS | Wazuh와 독립된 탐지·사람 알림 경로 |
+
+Runner는 DVWA를 통해 IMDS Credential을 획득한 뒤, 그 값을 Process Memory의 환경
+변수에만 넣고 **Runner가 실행되는 노트북의 AWS CLI**로 `STS GetCallerIdentity`와
+`S3 GetObject`를 호출한다. 따라서 해당 CloudTrail Event의 Source IP와 User Agent는
+DVWA Pod가 아니라 노트북 실행 환경을 가리킨다. Credential 값은 출력·Evidence에
+저장하지 않는다.
+
+현재 완료된 Wazuh 시연 범위는 다음이다.
+
+> CloudTrail을 근거로 탈취 Node Role의 보호 대상 S3 접근을 탐지하고, 동일 Event의
+> Raw 문서와 Custom Alert를 중앙 화면에서 대조한다.
+
+아직 완료되지 않은 전체 관제 범위는 다음이다.
+
+> WAF·DVWA·CloudTrail을 Wazuh 한곳에서 조회해 공격 Timeline을 구성하고, 검색 문법
+> 없이 사람이 사건·위험도·다음 조치를 이해한다.
+
 첫 구현에서는 새 Firehose, S3→SQS, EventBridge→Wazuh Target을 만들지 않는다. 기존
 Source를 Wazuh가 Read-only로 Polling한다. WAF를 S3로 바꾸면 현재 Live Viewer와
 Grafana CloudWatch 경로를 깨뜨릴 수 있으므로 변경하지 않는다.
@@ -706,10 +741,12 @@ Timeline 조사로 설명하고, 완전한 인과 상관분석으로 과장하�
 
 - [ ] CloudTrail·WAF·DVWA 세 Source의 원본 Event를 Wazuh에서 검색
 - [x] 첫 실행 전 Account·Region·`only_logs_after` 경계를 설정하고 실제 수집 범위를 기록
-- [ ] Capital One CloudTrail Custom Rule을 `wazuh-logtest`와 실제 수집 Event로 검증
-- [ ] 공격 Event에서 Wazuh Alert 생성
+- [x] Capital One CloudTrail Custom Rule을 `wazuh-logtest`와 실제 수집 Event로 검증
+- [x] 공격 Event에서 Rule `100100`·Level 12 Wazuh Alert 생성
 - [ ] 정상 `terra-user` 대조군이 같은 Custom Alert를 만들지 않음
-- [ ] Alert에서 동일 `CloudTrail eventID`의 원본 Event로 이동
+- [x] Alert와 Raw Archive에서 동일 `CloudTrail eventID` 확인
+- [ ] 검색식 없이 사건을 확인하는 초보자용 Saved View·Dashboard 구현
+- [ ] 새 Alert가 `amazon` Group 적용 뒤 AWS 전용 Events 화면에 표시됨
 - [ ] 정탐·오탐·미판정 분류 기록
 - [ ] Wazuh 재시작 뒤 설정·Rule·수집 Event 보존
 - [ ] Credential·Webhook·기본 Password가 Repository와 Evidence에 없음
@@ -956,30 +993,30 @@ Argo CD가 담당한 것과 Terraform이 담당한 것은 무엇인가
 ## 11. 지금 바로 할 한 가지
 
 Gate 3과 Wazuh Local Docker Preflight, Reader Terraform Apply·AssumeRole·Post-Apply
-0-change, 로컬 전용 Reader의 CloudTrail 중앙 수집까지 끝났다. 기존 Wazuh Index에서
-Baseline `GetObject`를 검색했지만 0건이었다. 설치된 기본 CloudTrail Rule의 Event 목록에
-`GetObject`가 없고 Raw Archive도 비활성이라, 수집된 Object 안의 Rule 미일치 Event가
-검색 가능한 형태로 남지 않은 것이 원인이다. Gate 3 Bundle에는 실제 Query 결과와
-Sanitized CloudTrail Event가 보존돼 있으므로 새 공격보다 Custom Rule 오프라인 검증과
-Archive 활성화를 먼저 수행한다.
+0-change, CloudTrail 중앙 수집, Raw Archive, Custom Rule 오프라인 검증을 완료했다.
+TAKE `capital-one-20260813T082735Z`에서 S3 `GetObject` 원본과 Rule `100100`·Level 12
+Alert를 동일한 CloudTrail `eventID`로 확인했다. 즉 CloudTrail 기반 양성 탐지 장면은
+촬영 가능하지만, 이 결과를 공격 전체의 다중 Source 관제 완료로 확대하지 않는다.
 
 ```text
 Gate 3: 정탐 + 정상 대조군 + Alert Runtime 필드 + Post-Apply 0-change 완료
 → Wazuh single-node Preflight 완료
 → 로컬 전용 Reader + Read-only Mount + CloudTrail S3 수집 완료
 → 기존 Baseline GetObject 검색 0건·기본 Rule 목록/Archive 비활성 원인 확인
-→ Gate 3 Sanitized Event로 Custom Rule 작성·wazuh-logtest
-→ Raw Archive 활성화
-→ 새 통제 Event 1회로 실제 Custom Alert 검증
-→ WAF·DVWA CloudWatch Logs 연결
-→ 정상 대조군 검증
+→ Gate 3 Sanitized Event로 Custom Rule 작성·wazuh-logtest 완료
+→ Raw Archive 활성화·새 통제 Event Custom Alert 완료
+→ WAF·DVWA CloudWatch Logs 입력 연결
+→ 초보자용 Capital One Saved View·Dashboard 구현
+→ 다음 새 Alert에서 amazon Group 화면 노출·정상 대조군 오탐 검증
+→ Archive 증가량 측정 뒤 7일 Retention 검증
 ```
 
 현재 확인된 범위는 `Command Injection → IMDS → Node Role Credential → 고정 가짜 S3
 GetObject → CloudTrail → Metric Filter → Alarm`과 같은 TAKE의 WAF·DVWA·GuardDuty
 Coverage 판정, 그리고 `CloudTrail S3 → Wazuh Manager → Indexer → Dashboard` 수집이다.
-Pod→IMDS 직접 네트워크 로그는 현재 방식으로 수집되지 않는다. WAF·DVWA의 Wazuh 수집,
-대표 Custom Alert, SOAR, GitHub 변경, Argo CD Containment, 재공격 실패는 아직 구현하거나
-검증하지 않았다. Watchdog Hard Deadline은 각 `daily-up.ps1` Session의 실제 출력과
-Session State를 기준으로 확인한다. 작업을 중단하면 과거 문서의 예약 시각을 믿고
-기다리지 말고 `daily-down.ps1`로 Daily Runtime을 종료한다.
+Pod→IMDS 직접 네트워크 로그는 현재 방식으로 수집되지 않는다. 대표 CloudTrail Custom
+Alert는 검증했지만 WAF·DVWA의 Wazuh 수집, 초보자용 관제 화면, Wazuh 정상 대조군,
+SOAR, GitHub 변경, Argo CD Containment, 재공격 실패는 아직 구현하거나 검증하지 않았다.
+Watchdog Hard Deadline은 각 `daily-up.ps1` Session의 실제 출력과 Session State를 기준으로
+확인한다. 작업을 중단하면 과거 문서의 예약 시각을 믿고 기다리지 말고
+`daily-down.ps1`로 Daily Runtime을 종료한다.

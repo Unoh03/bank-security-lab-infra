@@ -1,8 +1,8 @@
 # Capital One SOC 시연 Terraform 단계별 실행 계획
 
-> **상태:** Draft v1.4 — Gate 3 완료, Wazuh CloudTrail 중앙 수집 Runtime 확인
+> **상태:** Draft v1.5 — Terraform Source·Reader IAM 구현 완료, Wazuh Runtime은 상위 계획에서 추적
 > **기준 시점:** 2026-08-13
-> **현재 단계:** T4 DETECTOR TESTED — Gate 4 Raw Archive·Custom Rule 검증 전
+> **현재 단계:** T4 DETECTOR TESTED — 다음 Terraform 단계는 최종 촬영 뒤 hardened 복구
 > **번호 구분:** 이 문서의 `T0~T6`는 Terraform 구현 단계다. 상위 계획의 `Gate 0~8`은 시연 Evidence 단계이며 같은 번호끼리 같은 작업이 아니다.
 > **상위 계획:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)
 > **기존 관측성 현황:** [`OBSERVABILITY-CURRENT-STATUS.md`](./OBSERVABILITY-CURRENT-STATUS.md)
@@ -359,6 +359,12 @@ Account·Bucket·Region·시간대별 Event가 표시되는 것까지 확인했�
 | CloudTrail 원본 Event | Foundation Security Log S3 `AWSLogs/<ACCOUNT_ID>/CloudTrail/` | Multi-Region Trail, Gate 4 분석은 Primary | 기존 Source 유지·Reader 권한만 추가 |
 | WAF 원본 Event | `aws-waf-logs-${local.name}-edge` | `us-east-1` | 기존 Log Group 유지·Reader 권한만 추가 |
 | DVWA·Apache 원본 Event | `/aws/eks/${local.name}-primary/dvwa` | `ap-northeast-2` | 기존 Fluent Bit·Log Group 유지·Reader 권한만 추가 |
+
+이 표는 Terraform이 보존하고 Reader 권한을 제공하는 **목표 Source 계약**이다. Terraform은
+Wazuh Server·Rule·Dashboard를 관리하지 않는다. 실제 Local Wazuh 입력은 2026-08-13 현재
+CloudTrail만 완료됐고 WAF·DVWA 연결은 Terraform 밖의 Gate 4 작업이다. 공격 단계별 로그와
+현재 Wazuh 가시성은 상위 [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)에서
+추적한다.
 
 초기 경로에는 S3→SQS, Firehose, EventBridge API Destination을 추가하지 않는다. Wazuh의
 공식 `bucket type="cloudtrail"`과 `service type="cloudwatchlogs"` Polling을 사용한다.
@@ -971,11 +977,10 @@ GetObject를 다시 실행할 필요는 없다.
 
 중앙 관제 제품은 Wazuh로 결정했고 입력 계약도 기존 CloudTrail S3와 WAF·Primary DVWA
 CloudWatch Logs의 직접 Read로 좁혔다. Local Stack과 로컬 전용 Reader를 이용한
-CloudTrail Runtime 수집까지 완료했다. 기존 Index에서 Baseline `GetObject`를 검색했지만
-0건이었다. Wazuh 기본 CloudTrail Event 목록에 `GetObject`가 없고 Raw Archive도
-비활성이라 Rule 미일치 원본이 검색 가능한 형태로 남지 않은 것이 원인이다. Gate 3
-Bundle의 실제 Query 결과와 Sanitized CloudTrail Event로 Custom Rule을 먼저 오프라인
-검증하고, Archive를 활성화한 뒤 새 통제 Event 1회로 Runtime을 확인한다.
+CloudTrail Runtime 수집, Raw Archive와 Custom Rule 오프라인 검증까지 완료했다. TAKE
+`capital-one-20260813T082735Z`에서 실제 `GetObject`가 Rule `100100`·Level 12 Alert가
+됐고, Alert와 Raw 문서의 CloudTrail `eventID`가 일치했다. 다만 WAF·DVWA Wazuh 입력은
+아직 없으므로 CloudTrail 양성 탐지 완료와 공격 전체 Timeline 관제 완료를 구분한다.
 
 ```text
 Local Docker·WSL Preflight·Wazuh Stack 기동 완료
@@ -983,10 +988,12 @@ Local Docker·WSL Preflight·Wazuh Stack 기동 완료
 → 로컬 전용 Reader Profile·Read-only Mount 완료
 → CloudTrail wodle·실제 Object 처리·Dashboard 집계 완료
 → 기존 Baseline GetObject 0건·기본 Rule 목록/Archive 비활성 원인 확인
-→ Gate 3 Sanitized Event로 Custom Rule 작성·wazuh-logtest
-→ Raw Archive 활성화·보존 확인
-→ 새 통제 Event 1회·실제 Custom Alert 검증
-→ WAF·DVWA Raw Event 수집·정상 대조군 검증
+→ Gate 3 Sanitized Event로 Custom Rule 작성·wazuh-logtest 완료
+→ Raw Archive 활성화·새 통제 Event Custom Alert 완료
+→ WAF·DVWA CloudWatch Logs 입력 추가
+→ 초보자용 Saved View·Dashboard 구현
+→ 새 Alert amazon Group 화면 노출·정상 대조군 오탐 검증
+→ Archive 증가량 측정·7일 Retention 검증
 ```
 
 기존 Source를 바꾸거나 SQS·Firehose·EventBridge를 추가하는 대안은 실제 Polling 실패
