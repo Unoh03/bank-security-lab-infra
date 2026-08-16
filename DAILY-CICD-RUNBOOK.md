@@ -48,16 +48,20 @@ Plan과 AWS Account를 확인한 뒤에만 실행한다.
 - Argo CD read-only Deploy Key 생성·등록
 - `AWS_REGION`, `ECR_REPOSITORY`, `AWS_ROLE_ARN` Repository Variable 설정·재확인
 
-### Capital One 수집·탐지 활성화
+### Capital One 수집·탐지와 Wazuh Reader 활성화
 
 기본 Foundation에서는 추가 S3 Data Event와 Capital One Detector가 꺼져 있다.
-통제된 실습 전에는 두 기능을 함께 넣은 별도 Foundation Plan을 먼저 확인한다.
+Wazuh Reader도 기본값은 꺼져 있다. 현재 Gate 4 관제 계약을 유지하는 Foundation Plan은
+세 기능과, Reader를 Assume할 같은 계정의 IAM User 또는 Role ARN을 모두 명시한다.
+ARN은 Credential이 아니지만 개인 환경값이므로 예시 Placeholder를 실제 값으로 바꾼다.
 
 ```powershell
 .\setup-foundation.ps1 `
   -DomainName '<EXISTING_PUBLIC_DOMAIN>' `
   -EnableProjectS3DataEvents `
-  -EnableCapitalOneDetection
+  -EnableCapitalOneDetection `
+  -EnableWazuhLogReader `
+  -WazuhReaderTrustedPrincipalArn '<SAME_ACCOUNT_BOOTSTRAP_IAM_ARN>'
 ```
 
 Plan에서 다음만 추가·변경되는지 확인한다.
@@ -67,7 +71,12 @@ CloudTrail Project S3 Object Data Event Selector
 Capital One CloudWatch Logs Metric Filter
 Capital One CloudWatch Alarm
 기존 Security Alert SNS 연결
+CloudFront Wazuh 3일 Log Group·JSON Delivery Destination
+Wazuh Reader의 CloudTrail·Primary ALB·CloudFront·WAF·DVWA Read-only 계약
 ```
+
+이미 Wazuh Reader가 활성인 State에서 두 Wazuh 인자를 빼면 Terraform은 기본값 `false`로
+Reader Role·Policy 제거를 계획한다. Plan의 Delete·Replace를 확인하지 않고 Apply하지 않는다.
 
 승인된 실습 시간에만 다음 두 확인문으로 Apply한다.
 
@@ -76,6 +85,8 @@ Capital One CloudWatch Alarm
   -DomainName '<EXISTING_PUBLIC_DOMAIN>' `
   -EnableProjectS3DataEvents `
   -EnableCapitalOneDetection `
+  -EnableWazuhLogReader `
+  -WazuhReaderTrustedPrincipalArn '<SAME_ACCOUNT_BOOTSTRAP_IAM_ARN>' `
   -ConfirmCapitalOneDetection 'ENABLE CAPITAL ONE DETECTION' `
   -ConfirmSetup 'SETUP FOUNDATION'
 ```
