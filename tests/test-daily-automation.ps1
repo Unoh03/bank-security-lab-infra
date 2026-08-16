@@ -116,6 +116,10 @@ if ($clusterAddonsTemplate -match '(?m)^\s{2}extraFilters:\s*\|$' -or
     $clusterAddonsTemplate -notmatch '(?m)^\s{6}Regex\s+\$kubernetes\[''namespace_name''\]\s+\^\$\{web_namespace\}\$$') {
     throw 'Fluent Bit values do not retain the DVWA namespace filter supported by the pinned AWS chart.'
 }
+if ($clusterAddonsTemplate -match '(?m)^\s{2}mergeLogKey:\s*"?data"?\s*$' -or
+    $clusterAddonsTemplate -notmatch '(?m)^\s{2}mergeLogKey:\s*"app_event"\s*$') {
+    throw 'Fluent Bit parsed application JSON must avoid the Wazuh data.data keyword mapping.'
+}
 
 $foundationVariables = Get-Content -LiteralPath $foundationVariablesPath -Raw
 if ($foundationVariables -notmatch '(?s)variable\s+"security_log_retention_days"\s*\{.*?default\s*=\s*30') {
@@ -190,6 +194,10 @@ if ($dailyDown -notmatch '\[int\]\$EvidenceEventTailSeconds\s*=\s*0' -or
 if ($dailyDown -notmatch "status\.sync\.revision" -or
     $dailyDown -notmatch '\$evidenceContext\.ArgoRevision\s*=') {
     throw 'daily-down does not capture the live Argo CD sync revision for evidence.'
+}
+if ($dailyDown -notmatch "'LogLevel=ERROR'" -or
+    $dailyDown -notmatch "Argo CD sync revision is not a full commit SHA") {
+    throw 'daily-down does not suppress SSH host-key noise and validate the Argo revision before evidence capture.'
 }
 
 $clusterAddonsSsm = Get-Content -LiteralPath $clusterAddonsSsmPath -Raw

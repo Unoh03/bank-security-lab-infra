@@ -903,6 +903,13 @@ function Get-FoundationContext {
     } else {
         0
     }
+    $cloudFrontWazuhRetentionDays = if (
+        $outputs.PSObject.Properties.Name -contains 'cloudfront_wazuh_log_retention_days'
+    ) {
+        [int]$outputs.cloudfront_wazuh_log_retention_days.value
+    } else {
+        $securityRetentionDays
+    }
 
     [void](Invoke-NativeCapture -FilePath 'aws' -ArgumentList @(
         'ecr', 'describe-repositories',
@@ -967,7 +974,7 @@ function Get-FoundationContext {
         }
     }
     foreach ($entry in $securityLogGroups.GetEnumerator()) {
-        $logGroupRegion = if ([string]$entry.Key -ceq 'waf') {
+        $logGroupRegion = if ([string]$entry.Key -in @('cloudfront', 'waf')) {
             'us-east-1'
         } elseif ([string]$entry.Key -like '*_dr') {
             $DrRegion
@@ -991,7 +998,12 @@ function Get-FoundationContext {
         $matchingLogGroup = @($logGroups.logGroups | Where-Object {
             [string]$_.logGroupName -ceq $logGroupName
         })[0]
-        if ([int]$matchingLogGroup.retentionInDays -ne $securityRetentionDays) {
+        $expectedRetentionDays = if ([string]$entry.Key -ceq 'cloudfront') {
+            $cloudFrontWazuhRetentionDays
+        } else {
+            $securityRetentionDays
+        }
+        if ([int]$matchingLogGroup.retentionInDays -ne $expectedRetentionDays) {
             throw "Persistent security CloudWatch retention does not match the declared retention period: $logGroupName"
         }
     }

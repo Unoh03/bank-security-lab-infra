@@ -294,13 +294,18 @@ try {
             [void](Assert-CommandAvailable -Name 'ssh')
             $argoRevision = Invoke-NativeCapture -FilePath 'ssh' -ArgumentList @(
                 '-o', 'BatchMode=yes',
+                '-o', 'LogLevel=ERROR',
                 '-o', 'StrictHostKeyChecking=accept-new',
                 '-o', 'ConnectTimeout=15',
                 $SshHost,
                 "kubectl -n argocd get application $([string]$application.ArgoApplication) -o jsonpath='{.status.sync.revision}'"
             ) -FailureMessage 'Argo CD sync revision could not be read through the Bastion.'
             if ($argoRevision) {
-                $evidenceContext.ArgoRevision = $argoRevision.Trim()
+                $argoRevision = $argoRevision.Trim()
+                if ($argoRevision -notmatch '^[0-9a-f]{40}$') {
+                    throw "Argo CD sync revision is not a full commit SHA: $argoRevision"
+                }
+                $evidenceContext.ArgoRevision = $argoRevision
             }
         } catch {
             Write-Warning "Argo revision was not added to evidence context: $($_.Exception.Message)"

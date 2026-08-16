@@ -14,6 +14,8 @@ param(
     [string]$DomainName,
     [switch]$EnableProjectS3DataEvents,
     [switch]$EnableCapitalOneDetection,
+    [switch]$EnableWazuhLogReader,
+    [string]$WazuhReaderTrustedPrincipalArn = '',
     [string]$GitHubRepository = 'Unoh03/Uns-DVWA',
     [string]$ArgoDeployKeyPath = "$HOME\.ssh\argocd-uns-dvwa",
     [switch]$RotateDeployKey
@@ -33,6 +35,7 @@ $planPath = Join-Path $foundationRoot 'foundation.tfplan'
 $foundationVars = Join-Path $foundationRoot 'terraform.tfvars'
 $enableProjectS3DataEventsValue = if ($EnableProjectS3DataEvents.IsPresent) { 'true' } else { 'false' }
 $enableCapitalOneDetectionValue = if ($EnableCapitalOneDetection.IsPresent) { 'true' } else { 'false' }
+$enableWazuhLogReaderValue = if ($EnableWazuhLogReader.IsPresent) { 'true' } else { 'false' }
 
 if ($EnableCapitalOneDetection.IsPresent -and
     -not $EnableProjectS3DataEvents.IsPresent) {
@@ -43,6 +46,24 @@ if ($EnableProjectS3DataEvents.IsPresent) {
 }
 if ($EnableCapitalOneDetection.IsPresent) {
     Write-Warning 'Capital One detection is enabled: a CloudWatch custom metric and alarm will be created for the approved experiment.'
+}
+if ($EnableWazuhLogReader.IsPresent) {
+    if (-not $WazuhReaderTrustedPrincipalArn) {
+        throw 'Wazuh log reader requires -WazuhReaderTrustedPrincipalArn with an explicit same-account IAM user or role ARN.'
+    }
+
+    $wazuhPrincipalMatch = [regex]::Match(
+        $WazuhReaderTrustedPrincipalArn,
+        '^arn:[^:]+:iam::(?<AccountId>[0-9]{12}):(user|role)/.+$'
+    )
+    if (-not $wazuhPrincipalMatch.Success -or
+        $wazuhPrincipalMatch.Groups['AccountId'].Value -cne $ExpectedAccountId) {
+        throw 'WazuhReaderTrustedPrincipalArn must be an IAM user or role ARN in ExpectedAccountId.'
+    }
+
+    Write-Warning 'The optional read-only Wazuh Reader Role is enabled for the explicitly named bootstrap principal.'
+} elseif ($WazuhReaderTrustedPrincipalArn) {
+    throw 'WazuhReaderTrustedPrincipalArn was provided without -EnableWazuhLogReader.'
 }
 
 function Get-GitHubRepositoryMetadata {
@@ -206,7 +227,7 @@ try {
         "-chdir=$foundationRoot", 'init', '-input=false', '-upgrade=false'
     ) -FailureMessage 'Foundation Terraform initialization failed.'
 
-    Invoke-NativePassthrough -FilePath 'terraform' -ArgumentList @(
+    $foundationPlanArguments = @(
         "-chdir=$foundationRoot", 'plan',
         '-input=false',
         "-var=aws_profile=$AwsProfile",
@@ -217,8 +238,15 @@ try {
         "-var=expected_account_id=$ExpectedAccountId",
         "-var=enable_project_s3_data_events=$enableProjectS3DataEventsValue",
         "-var=enable_capital_one_s3_detection=$enableCapitalOneDetectionValue",
-        "-out=$planPath"
-    ) -FailureMessage 'Foundation Terraform plan failed.'
+        "-var=enable_wazuh_log_reader=$enableWazuhLogReaderValue"
+    )
+    if ($EnableWazuhLogReader.IsPresent) {
+        $foundationPlanArguments += "-var=wazuh_reader_trusted_principal_arn=$WazuhReaderTrustedPrincipalArn"
+    }
+    $foundationPlanArguments += "-out=$planPath"
+
+    Invoke-NativePassthrough -FilePath 'terraform' -ArgumentList $foundationPlanArguments `
+        -FailureMessage 'Foundation Terraform plan failed.'
 
     $summary = Get-TerraformPlanSummary -Root $foundationRoot -PlanPath $planPath
     Write-TerraformPlanSummary -Summary $summary -Label 'Foundation'

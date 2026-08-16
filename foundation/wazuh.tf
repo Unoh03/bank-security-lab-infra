@@ -1,5 +1,6 @@
 locals {
   wazuh_cloudtrail_prefix = "AWSLogs/${data.aws_caller_identity.current.account_id}/CloudTrail/"
+  wazuh_alb_prefix        = "alb/primary/AWSLogs/${data.aws_caller_identity.current.account_id}/elasticloadbalancing/${var.primary_region}/"
   wazuh_reader_trusted_principal_arn = try(
     trimspace(var.wazuh_reader_trusted_principal_arn),
     ""
@@ -8,6 +9,11 @@ locals {
     local.wazuh_reader_trusted_principal_arn
   ) : "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/wazuh-reader-principal-not-configured"
   wazuh_cloudwatch_log_groups = {
+    cloudfront = {
+      arn    = aws_cloudwatch_log_group.cloudfront_wazuh.arn
+      name   = aws_cloudwatch_log_group.cloudfront_wazuh.name
+      region = "us-east-1"
+    }
     waf = {
       arn    = aws_cloudwatch_log_group.waf_edge.arn
       name   = aws_cloudwatch_log_group.waf_edge.name
@@ -60,26 +66,20 @@ data "aws_iam_policy_document" "wazuh_log_reader" {
   count = var.enable_wazuh_log_reader ? 1 : 0
 
   statement {
-    sid       = "ListCloudTrailPrefix"
+    sid       = "ListSecurityLogBucketKeys"
     effect    = "Allow"
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.security_logs.arn]
-
-    condition {
-      test     = "StringLike"
-      variable = "s3:prefix"
-      values = [
-        trimsuffix(local.wazuh_cloudtrail_prefix, "/"),
-        "${local.wazuh_cloudtrail_prefix}*"
-      ]
-    }
   }
 
   statement {
-    sid       = "ReadCloudTrailObjects"
-    effect    = "Allow"
-    actions   = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.security_logs.arn}/${local.wazuh_cloudtrail_prefix}*"]
+    sid     = "ReadApprovedSecurityLogObjects"
+    effect  = "Allow"
+    actions = ["s3:GetObject"]
+    resources = [
+      "${aws_s3_bucket.security_logs.arn}/${local.wazuh_cloudtrail_prefix}*",
+      "${aws_s3_bucket.security_logs.arn}/${local.wazuh_alb_prefix}*"
+    ]
   }
 
   statement {

@@ -103,7 +103,10 @@ serviceAccount:
 filter:
   enabled: true
   mergeLog: "On"
-  mergeLogKey: "data"
+  # Wazuh wraps the complete CloudWatch record below its own data field and
+  # maps data.data as a keyword. Keep parsed application JSON under a distinct
+  # object so Filebeat can index the record without a mapping conflict.
+  mergeLogKey: "app_event"
   keepLog: "On"
 additionalFilters: |
   [FILTER]

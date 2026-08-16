@@ -105,10 +105,11 @@ output "security_scenario_profile" {
 output "security_scenario_features" {
   description = "Non-sensitive expected security controls for the selected scenario."
   value = {
-    primary_metadata_options        = local.primary_karpenter_metadata_options
-    primary_validation_read_enabled = local.capital_one_lab_enabled
-    dr_metadata_options             = local.hardened_karpenter_metadata_options
-    dr_validation_read_enabled      = false
+    primary_metadata_options         = local.primary_karpenter_metadata_options
+    primary_validation_read_enabled  = local.capital_one_lab_enabled
+    cloudfront_wazuh_logging_enabled = local.cloudfront_wazuh_logging_enabled
+    dr_metadata_options              = local.hardened_karpenter_metadata_options
+    dr_validation_read_enabled       = false
   }
 }
 

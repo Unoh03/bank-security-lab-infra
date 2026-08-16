@@ -125,6 +125,18 @@ resource "aws_cloudwatch_log_group" "waf_edge" {
   }
 }
 
+# This is a short-lived hot copy for local Wazuh polling. The existing S3
+# destination remains the persistent CloudFront evidence and Athena source.
+resource "aws_cloudwatch_log_group" "cloudfront_wazuh" {
+  provider          = aws.global
+  name              = "${local.name}-cloudfront-access-wazuh"
+  retention_in_days = var.cloudfront_wazuh_log_retention_days
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 resource "aws_cloudwatch_log_delivery_destination" "cloudfront_s3" {
   provider      = aws.global
   name          = "${local.name}-cloudfront-access-s3"
@@ -132,6 +144,20 @@ resource "aws_cloudwatch_log_delivery_destination" "cloudfront_s3" {
 
   delivery_destination_configuration {
     destination_resource_arn = aws_s3_bucket.security_logs.arn
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_cloudwatch_log_delivery_destination" "cloudfront_wazuh" {
+  provider      = aws.global
+  name          = "${local.name}-cloudfront-access-wazuh"
+  output_format = "json"
+
+  delivery_destination_configuration {
+    destination_resource_arn = aws_cloudwatch_log_group.cloudfront_wazuh.arn
   }
 
   lifecycle {

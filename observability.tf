@@ -7,10 +7,32 @@ data "terraform_remote_state" "foundation" {
 }
 
 locals {
-  security_log_bucket_name = data.terraform_remote_state.foundation.outputs.security_log_bucket_name
-  security_log_bucket_arn  = data.terraform_remote_state.foundation.outputs.security_log_bucket_arn
-  security_log_group_names = data.terraform_remote_state.foundation.outputs.security_log_group_names
-  security_log_group_arns  = data.terraform_remote_state.foundation.outputs.security_log_group_arns
+  security_log_bucket_name         = data.terraform_remote_state.foundation.outputs.security_log_bucket_name
+  security_log_bucket_arn          = data.terraform_remote_state.foundation.outputs.security_log_bucket_arn
+  security_log_group_names         = data.terraform_remote_state.foundation.outputs.security_log_group_names
+  security_log_group_arns          = data.terraform_remote_state.foundation.outputs.security_log_group_arns
+  cloudfront_wazuh_logging_enabled = var.enable_edge_access_logging && local.capital_one_lab_enabled
+  cloudfront_access_log_record_fields = [
+    "date",
+    "time",
+    "x-edge-location",
+    "sc-bytes",
+    "c-ip",
+    "cs-method",
+    "cs(Host)",
+    "cs-uri-stem",
+    "sc-status",
+    "x-edge-request-id",
+    "x-host-header",
+    "cs-protocol",
+    "cs-bytes",
+    "time-taken",
+    "x-forwarded-for",
+    "ssl-protocol",
+    "ssl-cipher",
+    "x-edge-response-result-type",
+    "c-country"
+  ]
 }
 
 check "observability_foundation_contract" {
@@ -22,9 +44,18 @@ check "observability_foundation_contract" {
       local.security_log_group_names.dvwa != "" &&
       local.security_log_group_names.dvwa_dr != "" &&
       local.security_log_group_names.waf != "" &&
-      data.terraform_remote_state.foundation.outputs.cloudfront_log_delivery_destination_arn != ""
+      local.security_log_group_names.cloudfront != "" &&
+      data.terraform_remote_state.foundation.outputs.cloudfront_log_delivery_destination_arn != "" &&
+      data.terraform_remote_state.foundation.outputs.cloudfront_wazuh_log_delivery_destination_arn != ""
     )
     error_message = "Apply the reviewed Foundation observability resources before planning the Daily Runtime."
+  }
+}
+
+check "capital_one_cloudfront_wazuh_logging" {
+  assert {
+    condition     = !local.capital_one_lab_enabled || var.enable_edge_access_logging
+    error_message = "capital-one-lab requires enable_edge_access_logging so the five-source Wazuh evidence contract can be completed."
   }
 }
 
@@ -46,27 +77,18 @@ resource "aws_cloudwatch_log_delivery" "cloudfront_access" {
   delivery_destination_arn = data.terraform_remote_state.foundation.outputs.cloudfront_log_delivery_destination_arn
   # The persistent destination uses JSON. Delimiters are valid only for
   # plain, w3c, or raw output formats.
-  record_fields = [
-    "date",
-    "time",
-    "x-edge-location",
-    "sc-bytes",
-    "c-ip",
-    "cs-method",
-    "cs(Host)",
-    "cs-uri-stem",
-    "sc-status",
-    "x-edge-request-id",
-    "x-host-header",
-    "cs-protocol",
-    "cs-bytes",
-    "time-taken",
-    "x-forwarded-for",
-    "ssl-protocol",
-    "ssl-cipher",
-    "x-edge-response-result-type",
-    "c-country"
-  ]
+  record_fields = local.cloudfront_access_log_record_fields
+}
+
+# Standard logging is not the real-time alert trigger. This second delivery is
+# enabled only for the approved lab profile and supplies Edge evidence to Wazuh
+# while the S3 delivery above remains the persistent Athena source.
+resource "aws_cloudwatch_log_delivery" "cloudfront_wazuh" {
+  count                    = local.cloudfront_wazuh_logging_enabled ? 1 : 0
+  provider                 = aws.global
+  delivery_source_name     = aws_cloudwatch_log_delivery_source.cloudfront_access[0].name
+  delivery_destination_arn = data.terraform_remote_state.foundation.outputs.cloudfront_wazuh_log_delivery_destination_arn
+  record_fields            = local.cloudfront_access_log_record_fields
 }
 
 # Start with AWS managed rules in COUNT mode. This records what would match

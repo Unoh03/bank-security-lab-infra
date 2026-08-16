@@ -82,6 +82,20 @@ variable "security_log_retention_days" {
   }
 }
 
+variable "cloudfront_wazuh_log_retention_days" {
+  description = "Short retention for the CloudFront access-log copy delivered to CloudWatch Logs for local Wazuh polling."
+  type        = number
+  default     = 3
+
+  validation {
+    condition = contains(
+      [1, 3, 5, 7, 14, 30],
+      var.cloudfront_wazuh_log_retention_days
+    )
+    error_message = "cloudfront_wazuh_log_retention_days must be a short retention value supported by CloudWatch Logs."
+  }
+}
+
 variable "enable_project_s3_data_events" {
   description = "Opt in to scoped S3 object data events for an approved security experiment. This can add CloudTrail data-event charges."
   type        = bool

@@ -54,6 +54,7 @@ output "security_cloudwatch_log_group_name" {
 
 output "security_log_group_names" {
   value = {
+    cloudfront         = aws_cloudwatch_log_group.cloudfront_wazuh.name
     cloudtrail         = aws_cloudwatch_log_group.cloudtrail.name
     eks_primary        = aws_cloudwatch_log_group.eks_primary.name
     dvwa               = aws_cloudwatch_log_group.dvwa_primary.name
@@ -65,6 +66,7 @@ output "security_log_group_names" {
 
 output "security_log_group_arns" {
   value = {
+    cloudfront         = aws_cloudwatch_log_group.cloudfront_wazuh.arn
     cloudtrail         = aws_cloudwatch_log_group.cloudtrail.arn
     eks_primary        = aws_cloudwatch_log_group.eks_primary.arn
     dvwa               = aws_cloudwatch_log_group.dvwa_primary.arn
@@ -76,6 +78,16 @@ output "security_log_group_arns" {
 
 output "cloudfront_log_delivery_destination_arn" {
   value = aws_cloudwatch_log_delivery_destination.cloudfront_s3.arn
+}
+
+output "cloudfront_wazuh_log_delivery_destination_arn" {
+  description = "CloudWatch Logs destination used only by the capital-one-lab CloudFront access-log copy."
+  value       = aws_cloudwatch_log_delivery_destination.cloudfront_wazuh.arn
+}
+
+output "cloudfront_wazuh_log_retention_days" {
+  description = "Short retention contract for the CloudFront access-log copy polled by local Wazuh."
+  value       = var.cloudfront_wazuh_log_retention_days
 }
 
 output "security_alert_topic_arn" {
@@ -148,6 +160,12 @@ output "wazuh_log_sources" {
       prefix      = local.wazuh_cloudtrail_prefix
       account_id  = data.aws_caller_identity.current.account_id
       regions     = [var.primary_region]
+      encryption  = "SSE-S3"
+    }
+    alb = {
+      bucket_name = aws_s3_bucket.security_logs.id
+      prefix      = local.wazuh_alb_prefix
+      region      = var.primary_region
       encryption  = "SSE-S3"
     }
     cloudwatch = {
