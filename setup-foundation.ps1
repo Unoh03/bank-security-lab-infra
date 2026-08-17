@@ -3,6 +3,7 @@
 param(
     [string]$ConfirmSetup = '',
     [string]$ConfirmCapitalOneDetection = '',
+    [string]$ConfirmWazuhPushTransport = '',
     [string]$TerraformRoot = '',
     [string]$AwsProfile = 'terra-user',
     [string]$Region = 'ap-northeast-2',
@@ -15,6 +16,7 @@ param(
     [switch]$EnableProjectS3DataEvents,
     [switch]$EnableCapitalOneDetection,
     [switch]$EnableWazuhLogReader,
+    [switch]$EnableWazuhPushTransport,
     [string]$WazuhReaderTrustedPrincipalArn = '',
     [string]$GitHubRepository = 'Unoh03/Uns-DVWA',
     [string]$ArgoDeployKeyPath = "$HOME\.ssh\argocd-uns-dvwa",
@@ -36,6 +38,7 @@ $foundationVars = Join-Path $foundationRoot 'terraform.tfvars'
 $enableProjectS3DataEventsValue = if ($EnableProjectS3DataEvents.IsPresent) { 'true' } else { 'false' }
 $enableCapitalOneDetectionValue = if ($EnableCapitalOneDetection.IsPresent) { 'true' } else { 'false' }
 $enableWazuhLogReaderValue = if ($EnableWazuhLogReader.IsPresent) { 'true' } else { 'false' }
+$enableWazuhPushTransportValue = if ($EnableWazuhPushTransport.IsPresent) { 'true' } else { 'false' }
 
 if ($EnableCapitalOneDetection.IsPresent -and
     -not $EnableProjectS3DataEvents.IsPresent) {
@@ -64,6 +67,12 @@ if ($EnableWazuhLogReader.IsPresent) {
     Write-Warning 'The optional read-only Wazuh Reader Role is enabled for the explicitly named bootstrap principal.'
 } elseif ($WazuhReaderTrustedPrincipalArn) {
     throw 'WazuhReaderTrustedPrincipalArn was provided without -EnableWazuhLogReader.'
+}
+if ($EnableWazuhPushTransport.IsPresent -and -not $EnableWazuhLogReader.IsPresent) {
+    throw 'Wazuh Push transport requires -EnableWazuhLogReader so the local shadow consumer has an explicit read-only role.'
+}
+if ($EnableWazuhPushTransport.IsPresent) {
+    Write-Warning 'The DVWA Push shadow transport is enabled. Every event already stored in the approved DVWA log group will be forwarded to the Primary SQS queue.'
 }
 
 function Get-GitHubRepositoryMetadata {
@@ -238,7 +247,8 @@ try {
         "-var=expected_account_id=$ExpectedAccountId",
         "-var=enable_project_s3_data_events=$enableProjectS3DataEventsValue",
         "-var=enable_capital_one_s3_detection=$enableCapitalOneDetectionValue",
-        "-var=enable_wazuh_log_reader=$enableWazuhLogReaderValue"
+        "-var=enable_wazuh_log_reader=$enableWazuhLogReaderValue",
+        "-var=enable_wazuh_push_transport=$enableWazuhPushTransportValue"
     )
     if ($EnableWazuhLogReader.IsPresent) {
         $foundationPlanArguments += "-var=wazuh_reader_trusted_principal_arn=$WazuhReaderTrustedPrincipalArn"
@@ -259,6 +269,11 @@ try {
         $ConfirmCapitalOneDetection -cne 'ENABLE CAPITAL ONE DETECTION') {
         Write-Host "No AWS or GitHub change was made. Capital One detection also requires -ConfirmCapitalOneDetection 'ENABLE CAPITAL ONE DETECTION'."
         exit 3
+    }
+    if ($EnableWazuhPushTransport.IsPresent -and
+        $ConfirmWazuhPushTransport -cne 'ENABLE WAZUH PUSH') {
+        Write-Host "No AWS or GitHub change was made. Wazuh Push also requires -ConfirmWazuhPushTransport 'ENABLE WAZUH PUSH'."
+        exit 4
     }
 
     Invoke-NativePassthrough -FilePath 'terraform' -ArgumentList @(

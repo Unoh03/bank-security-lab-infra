@@ -1,10 +1,11 @@
 # Capital One SOC 시연 Terraform 단계별 실행 계획
 
-> **상태:** Draft v1.7 — CloudFront Wazuh Hot Copy·ALB Reader 계약 Source/Plan/Runtime 완료
-> **기준 시점:** 2026-08-16
-> **현재 단계:** Gate 4 Terraform 지원 — Foundation·Daily Delivery·Wazuh CloudFront Record 검증 완료
+> **상태:** Draft v1.9 — 5-Source Polling As-built 완료, DVWA Push Shadow Source·검증·Plan 완료
+> **기준 시점:** 2026-08-17
+> **현재 단계:** Gate 4 Terraform 지원 — DVWA Push 비파괴 Plan 완료, 비용 검토·명시적 Apply 대기
 > **번호 구분:** 이 문서의 `T0~T6`는 Terraform 구현 단계다. 상위 계획의 `Gate 0~8`은 시연 Evidence 단계이며 같은 번호끼리 같은 작업이 아니다.
 > **상위 계획:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)
+> **저지연 전달 정본:** [`observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md`](./observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md)
 > **기존 관측성 현황:** [`OBSERVABILITY-CURRENT-STATUS.md`](./OBSERVABILITY-CURRENT-STATUS.md)
 
 이 문서는 전체 SOC 시연 중 **Terraform이 책임질 부분만** 실제 파일과 실행 순서로
@@ -345,7 +346,7 @@ GuardDuty S3 Protection
 → Sample Finding은 공격 성공 Evidence로 사용하지 않음
 ```
 
-### 3.6 Wazuh는 기존 원본 Source를 직접 읽는다
+### 3.6 As-built — Wazuh가 기존 원본 Source를 직접 읽는다
 
 SIEM은 **Wazuh**, 배치는 **Local Docker single-node**로 결정했다. 별도 Elastic
 Security·ELK Stack과 AWS상의 Wazuh EC2를 함께 만들지 않는다. 2026-08-16 현재 Wazuh
@@ -377,12 +378,16 @@ CloudFront 보존일을 추가하고 `daily-common.ps1`이 Source별 Region·Ret
 수정한 뒤 PowerShell Parser, Terraform Validate, Wazuh Foundation Contract Test와 Runtime
 Profile Test를 통과했다.
 
-초기 경로에는 S3→SQS, Firehose, EventBridge API Destination을 추가하지 않는다. Wazuh의
-공식 `bucket type="cloudtrail"`·`bucket type="alb"`와 `service type="cloudwatchlogs"`
-Polling을 사용한다. CloudFront는 Wazuh 전용 S3 Type이 없으므로 기존 S3 Evidence를
-유지하면서 같은 Delivery Source에 CloudWatch Logs Destination 하나만 병렬로 추가한다.
-CloudWatch Alarm은 기존 SNS 사람 알림에 남고 Wazuh 입력이나 Shuffle Trigger로
-복제하지 않는다.
+2026-08-16에 5/5 Runtime을 닫은 초기 경로는 S3→SQS, Firehose, EventBridge API
+Destination을 추가하지 않았다. Wazuh의 공식 `bucket type="cloudtrail"`·`bucket
+type="alb"`와 `service type="cloudwatchlogs"` Polling을 사용했고, CloudFront만 기존 S3
+Evidence와 병렬인 3일 CloudWatch Logs Destination을 추가했다. CloudWatch Alarm은 기존
+SNS 사람 알림에 남겼다. 이 내용은 **당시 As-built와 Runtime Evidence**로 계속 유효하다.
+
+다만 이는 빠른 최초 탐지의 Target Architecture는 아니다. 2026-08-17 Wazuh 입력 상태를
+다시 대조한 결과 CloudWatch Log Stream 48개를 추적하고 있었다. 전역 `1m` Poll은 최소
+`GetLogEvents` 약 69,120회/일·2,073,600회/30일에 Log Group 조회와 S3 List를 더하므로
+채택하지 않았고, AWS Wodle 원본과 Runtime을 `10m`으로 복구했다.
 
 구현한 Terraform Resource는 다음으로 제한한다.
 
@@ -465,6 +470,69 @@ Source별 Region을 고정한다. 이 값은 Terraform Resource가 아니라 Waz
 AWS에 SIEM 서버를 배포하면 EC2·EBS·Network·Backup까지 범위가 커지므로 핵심 시연의
 기본안으로 채택하지 않는다.
 
+### 3.7 Target — 리전별 Event-driven Push + Local Queue Bridge
+
+원본 Archive와 AWS Native Alarm을 유지하면서, AWS Log 도착 뒤 Wazuh Poll 대기만 없애는
+구조로 전환한다. 상세 Schema·IAM·중복·장애·비용 계약은
+[`WAZUH-PUSH-TRANSPORT-DESIGN.md`](./observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md)를
+정본으로 사용한다.
+
+```text
+us-east-1
+  WAF·CloudFront CWL → Subscription → Edge Lambda → Edge SQS → DLQ
+
+ap-northeast-2
+  DVWA·CloudTrail CWL → Subscription → Primary Lambda → Primary SQS → DLQ
+  ALB S3 ObjectCreated ────────────────────────────────→ Primary SQS
+
+Local Docker Host
+  Queue별 Long Poll → Event Ledger + 안정 Live JSONL → Wazuh localfile(JSON)
+```
+
+Terraform은 Foundation에서 다음 지속 Resource만 책임진다.
+
+- 기본 `false`인 `enable_wazuh_push_transport`
+- 서울·버지니아 Standard SQS와 각 DLQ·Queue Policy
+- 서울·버지니아 Forwarder Lambda·실행 Role·Log Group
+- 승인된 네 CloudWatch Log Group의 Subscription Filter와 Lambda Permission
+- Security Log S3의 `alb/primary/` ObjectCreated Notification
+- Local Consumer의 Queue Read/Delete와 ALB Prefix Object Read Role
+- Queue Backlog·DLQ·Lambda Error Alarm과 비민감 Output
+
+CloudWatch Logs Subscription은 Log Group과 같은 Region의 Forwarder를 사용한다. S3 Event
+Notification의 Queue도 Bucket과 같은 서울 Region에 둔다. Local Bridge는 Queue마다 별도
+20초 Long Poll Worker를 두며, Host Spool 쓰기 성공 뒤에만 메시지를 삭제한다.
+
+Subscription Filter는 `command.execution`·`GetObject` 같은 탐지 조건으로 Event를
+잘라내지 않는다. 승인된 Log Group의 전체 Event를 Lambda로 보내되, Queue Payload는
+안전한 감사 필드 Allowlist만 보존하고 원문은 SHA-256으로만 식별한다. 위험 판정은 Wazuh
+Rule이 담당한다. Terraform의 Filter 경계는 Source ARN·Region·ALB Prefix이고, 탐지
+경계는 Wazuh `100100`·`100101`·`100103` 및 이후 Custom Rule이다.
+
+Push와 Poll을 같은 Source에 동시에 Live 입력하지 않는다. DVWA Shadow Spool로 먼저
+누락·중복·Offline Catch-up을 검증하고, Source별 Cutover 때 해당 Poll 입력만 끈다. 기존
+`10m` 설정은 수동 Rollback 계약으로 보존한다.
+
+이 전환은 `Foundation Source를 한 번에 전부 Apply`하는 작업이 아니다. DVWA만 P1에서
+측정한 뒤 WAF → CloudTrail → ALB → CloudFront 순서로 확장한다. 각 단계는 기본 Toggle
+Off 0-change, 비파괴 Saved Plan, 명시적 Apply 승인, Runtime 3회 Evidence를 별도로 가진다.
+
+2026-08-17 DVWA 1-Source 구현·검증 결과:
+
+- 기본 `enable_wazuh_push_transport = false`에서 AWS Resource 변경 `0`
+- 활성 Plan은 `9 add / 1 in-place update / 0 destroy`
+- 생성 범위는 서울 SQS·DLQ·Queue Policy, Lambda·Role·Policy·Log Group,
+  DVWA Subscription·Lambda Permission뿐이다.
+- 기존 Wazuh Reader Policy 갱신은 Primary Queue의 Receive/Delete 권한만 추가한다.
+- Forwarder 단위 Test 4개, Push 정적 계약, 기존 Wazuh Foundation 계약,
+  `terraform fmt -check`, `terraform validate`, `git diff --check`를 통과했다.
+- 초기 Resource Apply 뒤 Payload Allowlist Lambda만 `0 add / 1 update / 0 destroy`로
+  갱신했고, 같은 활성 입력의 Post-Apply Plan은 `No changes`였다.
+- Local Bridge·Wazuh Live JSONL·Rule `100102`를 연결하고 무해 Event 3회 모두 Alert를
+  확인했다. 총 지연은 6.439초·3.427초·3.761초이며 각 Take ID는 JSONL·Alert에서 1건이다.
+- 실제 `command.execution → Rule 100103`, Offline Catch-up·장애 중복, 기존 DVWA Poll
+  Cutover와 나머지 4개 Source는 아직 수행하지 않았다.
+
 ---
 
 ## 4. 파일별 변경 장부
@@ -501,6 +569,16 @@ AWS에 SIEM 서버를 배포하면 EC2·EBS·Network·Backup까지 범위가 커
 | `observability.tf` | 기존 CloudFront Delivery Source를 재사용하는 `capital-one-lab` 전용 두 번째 Delivery | Gate 4 Terraform 지원 |
 | `outputs.tf` | 선택한 Profile의 CloudFront Wazuh Delivery 활성 여부 Output | Gate 4 Terraform 지원 |
 | `tests/test-wazuh-foundation-contract.ps1` | 기본 비활성·No Access Key·No Delete·5-Source·Lab 전용 Delivery 정적 Test | Gate 4 Terraform 지원 |
+| `foundation/main.tf`·`.terraform.lock.hcl` | Lambda Package를 위한 `hashicorp/archive` Provider 고정 | Push P0 |
+| `foundation/variables.tf` | 기본 `false`인 DVWA Push Toggle | Push P0 |
+| `foundation/wazuh-push.tf` | 현재 Primary DVWA용 서울 Queue·DLQ·Policy, Forwarder Lambda·Subscription. 나머지 Source·Alarm은 후속 | Push P0~P3 |
+| `foundation/lambda/wazuh_push_forwarder.py` | CWL gzip/base64 해제·안전 필드 Allowlist 정규화·원문 SHA-256·과대 Event 격리 | Push P1~P3 |
+| `foundation/outputs.tf` | Queue URL·ARN, Source별 Push 상태의 비민감 계약 | Push P0~P3 |
+| `foundation/wazuh.tf` | Push 활성 시 기존 Reader Role에 Primary Queue Receive/Delete 최소 권한 추가 | Push P1 |
+| `setup-foundation.ps1` | Push 활성화와 Apply에 별도 정확한 확인문 요구 | Push P1 |
+| `tools/Start-WazuhPushShadowBridge.ps1` | 임시 STS·Queue Long Poll·단일 Writer·Event ID Ledger·안정 Live JSONL·내구 기록 성공 뒤 Delete | Push P1~P2 |
+| `tests/test-wazuh-push-contract.ps1` | Default Off·리전·IAM·재귀 방지·DLQ·No Public Inbound 계약 | Push P0 |
+| `tests/test_wazuh_push_forwarder.py` | 전체 Event 운반, 안전 Payload Allowlist, Source Guard, 안정 Event ID, Control Message 무시 | Push P1 |
 
 자동 Containment와 수동 Reset Workflow는 `D:\DVWA` 저장소의 책임이다. 이 문서에서
 그 상태 전환 순서는 고정하지만 Terraform Resource로 구현하거나 Terraform Apply로
@@ -894,6 +972,24 @@ T5 뒤에 이 체크리스트를 충족하려고 취약 Profile을 다시 열지
 - [ ] 최종 채택 TAKE와 폐기 TAKE가 ID·시간창으로 구분된다.
 - [ ] Evidence Bundle에 `manifest.json`과 Hash가 남는다.
 
+### Push P0~P5 — Gate 4 저지연 전달 전환
+
+이 단계는 기존 T0~T6 공격·복구 순서를 다시 실행하는 것이 아니다. 이미 검증한 5-Source
+Polling을 As-built로 두고, Gate 4의 **전달 지연만 Source별로 교체**한다.
+
+| 단계 | Terraform 범위 | Runtime Gate |
+|---|---|---|
+| P0 | Toggle·Schema·IAM·Queue/DLQ·Alarm 정적 계약, Default Off Plan | AWS 변경 없음 |
+| P1 | 서울 Queue·DLQ·DVWA Forwarder·전체 Event Subscription·안전 Payload Allowlist | Local Bridge·Live JSONL·Rule `100102` 3회, 총 3.427~6.439초 완료 |
+| P2 | Local Consumer·최소 Reader 권한·운영 Alarm | 실제 Rule `100103` 3회, Offline Catch-up 뒤 DVWA Poll Cutover |
+| P3 | WAF·CloudTrail·ALB·CloudFront Resource를 한 Source씩 추가 | Source별 Field·Dashboard·기존 Rule 호환 뒤 Poll Off |
+| P4 | 사용하지 않는 Poll Reader 권한 축소·운영 Alarm | 5개 Source Push 상태표·Rollback Drill |
+| P5 | Terraform 범위 밖 Wazuh Alert Output | Shuffle Dry Run·`event_id` 중복 대응 차단 |
+
+P1 이후의 각 Apply는 이전 단계의 비용·지연·실패 Evidence를 통과한 뒤 별도 승인한다.
+CloudWatch Logs Subscription은 보통 Log 수신 뒤 수분 안에 전달되지만 at-least-once이므로,
+속도만 확인하고 중복·DLQ·노트북 Offline 복구를 생략하지 않는다.
+
 ---
 
 ## 6. 검증 명령 계층
@@ -968,10 +1064,12 @@ Gate 4의 SIEM, Gate 5의 SOAR, Gate 6·7의 GitHub·Argo 구현은 별도 작�
 | 대표 탐지 | CloudTrail Metric Filter → Alarm → SNS | T2 결정 |
 | SIEM | **Wazuh 확정, 별도 ELK 미구축** | 2026-08-12 사용자 결정 |
 | SIEM 위치 | **Local Docker single-node** | 세 Service 기동·CloudTrail Dashboard 집계 확인 |
-| AWS→SIEM 전달 | **CloudTrail·Primary ALB S3 + CloudFront·WAF·DVWA CloudWatch Logs 직접 Read** | 다섯 Source Raw Runtime 확인, 탐지·Timeline·사용성은 별도 대기 |
+| AWS→SIEM 전달 As-built | **CloudTrail·Primary ALB S3 + CloudFront·WAF·DVWA CloudWatch Logs 10m 직접 Read** | 다섯 Source Raw Runtime 확인 |
+| AWS→SIEM 전달 Target | **리전별 CWL Subscription·Lambda·SQS + ALB S3 Notification + Local Bridge** | 1m Poll 호출량 검토 뒤 P0~P4 단계 전환 결정 |
 | Wazuh Runtime Credential | **로컬 전용 IAM User 장기 Key 예외** | Git 밖 Profile·Read-only Mount, 종료 후 폐기 |
 | Terraform Reader Role | Source·Apply 존재, 현재 Wazuh Runtime 경로는 아님 | Bucket 최상위 List 요구 반영 뒤 재검증 |
-| S3→SQS·Firehose·EventBridge | **초기 미사용** | Polling 실패나 규모 요구가 생길 때만 재검토 |
+| S3→SQS | **ALB `alb/primary/` ObjectCreated에만 단계 도입** | DVWA·WAF·CloudTrail 선행 Push 검증 뒤 P3 |
+| Firehose·EventBridge API Destination | **미사용 유지** | 현재 5-Source·Local Wazuh 범위에는 추가 이점보다 운영 복잡도가 큼 |
 | Node 교체 | Karpenter Drift / 승인된 수동 절차 | 현재 Runtime 동작 확인 |
 
 결정된 Wazuh 경로 외의 SIEM 후보나 전달 경로를 동시에 Terraform에 추가하지 않는다.
@@ -990,10 +1088,16 @@ Terraform 부분은 다음이 모두 충족돼야 완료다.
 - [x] SIEM에 필요한 AWS 권한이 최소 범위이고 장기 Access Key를 Terraform으로 만들지 않는다.
 - [x] Wazuh Reader Role에 S3·CloudWatch Write/Delete 권한이 없다.
 - [x] Wazuh가 비활성인 기본 Foundation Plan에는 Reader Resource가 없다.
-- [x] Reader 확장은 EventBridge·SQS·Firehose를 만들지 않고, 승인된 CloudFront 3일 Hot Copy용 Log Group·Destination만 추가한다.
+- [x] 초기 Reader 확장은 EventBridge·SQS·Firehose를 만들지 않고, 승인된 CloudFront 3일 Hot Copy용 Log Group·Destination만 추가했다.
 - [x] Foundation CloudFront Wazuh Resource를 승인된 Plan으로 Apply하고 Post-Apply 0-change를 확인한다.
 - [x] Daily `capital-one-lab`이 기존 CloudFront Delivery Source를 두 번째 Destination에 연결한다.
 - [x] CloudFront 실제 요청 Record를 Wazuh Raw Archive에서 확인해 5/5 Runtime을 닫는다.
+- [x] 1분 Poll 후보의 48 Stream 최소 호출량을 계산하고 Wazuh 원본·Runtime을 10분으로 복구한다.
+- [x] Push Toggle 기본 Off Plan이 0-change이고, P1 DVWA Resource에 Delete·Replace가 없다.
+- [x] 무해 DVWA Push Event 3회에서 누락 0·Rule `100102`·최대 6.439초를 확인한다.
+- [ ] 실제 `command.execution` Push Rule `100103` 3회와 완료 기준 180초 이내를 확인한다.
+- [ ] 노트북 Offline Catch-up·DLQ·Source별 Poll Rollback을 검증한다.
+- [ ] WAF → CloudTrail → ALB → CloudFront를 Source별로 전환하고 사용하지 않는 Reader 권한을 축소한다.
 - [ ] 수동 Reset은 DVWA 한 값만 되돌리고 Terraform·IAM·IMDS를 변경하지 않는다.
 - [ ] Reset 후 새 세션·Alarm OK·새 TAKE로 재촬영을 시작할 수 있다.
 - [ ] 복구 Plan이 실습 Policy 제거와 hardened Metadata를 명확히 보여준다.
@@ -1011,8 +1115,8 @@ Foundation·Daily Apply, 공격 정탐, Gate 2 Coverage, 정상 GetObject 대조
 Description Runtime 적용과 Post-Apply 0-change까지 끝났다. Gate 3을 위해 같은 공격이나
 GetObject를 다시 실행할 필요는 없다.
 
-중앙 관제 제품은 Wazuh로 결정했고 입력 계약은 CloudTrail·Primary ALB의 S3 직접 Read와
-CloudFront·WAF·Primary DVWA의 CloudWatch Logs 직접 Read로 좁혔다. Local Stack과 로컬
+중앙 관제 제품은 Wazuh로 결정했고 As-built 입력 계약은 CloudTrail·Primary ALB의 S3
+직접 Read와 CloudFront·WAF·Primary DVWA의 CloudWatch Logs 직접 Read다. Local Stack과 로컬
 전용 Reader를 이용해 CloudTrail·WAF·Primary ALB·DVWA·CloudFront 5/5 Source의 실제
 Record를 Raw Archive에서 확인했다. TAKE `capital-one-20260813T082735Z`의 실제 `GetObject`는 Rule
 `100100`·Level 12 Alert가 됐고 Alert와 Raw 문서의 CloudTrail `eventID`도 일치했다.
@@ -1039,8 +1143,11 @@ Local Docker·WSL Preflight·Wazuh Stack 기동 완료
 → Archive 증가량 측정·7일 Retention 검증
 ```
 
-기존 Source를 바꾸거나 SQS·Firehose·EventBridge를 추가하는 대안은 실제 Polling 실패
-Evidence가 생긴 뒤에만 별도 Plan으로 검토한다.
+다음 작업은 기존 5/5 수집이나 완료한 P1 전송 검증을 다시 만드는 것이 아니다. `10m`
+Fallback을 유지한 채 실제 `command.execution`을 Push Rule `100103`으로 확인하고,
+Offline Catch-up·장애 중복·Queue 비용 경계를 검증한다. 그 결과로 DVWA Poll Cutover 여부를
+결정한다. 해당 Gate를 통과하기 전에는 WAF·CloudTrail·ALB·CloudFront Push Resource를
+추가하지 않는다.
 
 Containment 구현 전에는 Alarm이 실제 `OK`로 복귀했는지 확인하고 새 TAKE를 사용한다.
 취약 Runtime의 영구 복구는 최종 촬영 확인 전에는 수행하지 않되, 통제권 상실·자리

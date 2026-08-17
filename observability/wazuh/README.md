@@ -61,3 +61,71 @@ Role로 발급된 Session이므로 같은 Role을 다시 Assume하게 만들면 
 첫 실행 뒤 날짜를 과거로 바꿔도 이미 건너뛴 더 오래된 S3 로그는 자동으로 다시 읽히지
 않는다. 과거 로그 재수집은 중복 Alert 위험이 있으므로 별도 승인된 `reparse` 절차로만
 수행한다.
+
+## Primary DVWA 저지연 Push
+
+2026-08-17 현재 Primary DVWA 한 Source만 다음 경로가 Runtime으로 연결됐다.
+
+```text
+DVWA CloudWatch Logs
+→ Subscription → Lambda 안전 Allowlist → SQS
+→ Start-WazuhPushShadowBridge.ps1
+→ Event별 Ledger + wazuh-push-live.jsonl
+→ Wazuh localfile → Rule 100102·100103
+```
+
+Subscription은 위험 Event만 고르지 않지만 Lambda Payload는 안전 감사 필드만 남긴다.
+원본 `message`·`log`, Credential, Cookie, Command 원문·응답은 Queue·로컬 파일에 저장하지
+않고 SHA-256만 남긴다. 전체 원문 조사는 기존 CloudWatch·S3와 10분 Poll을 사용한다.
+
+Bridge 시작:
+
+```powershell
+Set-Location 'D:\terraform\aws_terraform_build_code'
+.\tools\Start-WazuhPushShadowBridge.ps1 `
+  -ConfirmConsume 'CONSUME WAZUH PUSH'
+```
+
+Bridge는 `terra-user`를 직접 소비 권한으로 쓰지 않고, Terraform Reader Role의 최대 1시간
+임시 STS Session을 Process 환경에만 넣었다가 종료 시 복구한다. 동시에 두 Bridge를 켜면
+Writer Lock에서 실패한다.
+
+무해 전송 검증:
+
+```powershell
+.\observability\wazuh\Invoke-WazuhPushValidation.ps1 `
+  -ConfirmRun 'SEND WAZUH PUSH VALIDATION'
+```
+
+Rule `100102`는 `SAFE_VALIDATION_EVENT`가 Wazuh까지 도착했다는 전달 검증용 Level 3이다.
+실제 `command.execution + ec2_imds`의 Push 탐지는 Rule `100103` Level 10이며 아직 Runtime
+3회 검증 전이다. 최종 무해 검증 3회의 총 지연은 6.439초·3.427초·3.761초였다.
+
+Bridge가 Live JSONL을 Flush한 직후 Ledger Rename 전에 비정상 종료되면 재전달로 한 건이
+중복될 수 있다. 이는 유실보다 중복을 허용한 at-least-once 경계이며 exactly-once 주장이
+아니다.
+
+## Dashboard 미니 실습 Preflight
+
+`Test-WazuhMiniDrill.ps1`은 Local Wazuh의 초보자용 Dashboard 실습을 시작하기 전 사용하는
+읽기 전용 검사다. 필요하면 Stack을 시작하고 다음 항목을 확인한다.
+
+- Manager·Indexer·Dashboard 3개 Service Running
+- `AWS 보안관제 현황`, `AWS 보안 사건 상세`
+- `[AWS-SOC]` Visualization 14개와 Saved Search 2개
+- Saved Search의 안전한 6개 Field·최신순 정렬·불필요한 Exists Filter 없음
+- ALB 응답 상태의 코드 오름차순 정렬
+- `Last 7 days` 안의 Edge·WAF·ALB·Workload·AWS 접근과 Rule `100100` Evidence 존재
+
+```powershell
+.\observability\wazuh\Test-WazuhMiniDrill.ps1 -StartStack
+```
+
+`WAZUH_MINI_DRILL_READY=yes`가 출력돼야 보존 Event 기반 실습을 시작한다. 이 검사는 새
+AWS Event를 만들거나 Wazuh 설정을 변경하지 않는다. 보존된 다섯 Source Record는 여러
+날짜의 검증 실행에서 수집됐으므로 동일한 한 공격의 완전한 Timeline 증거로 사용하지
+않는다.
+
+`-BackupPath`를 지정하면 같은 `.kibana_1`용 Raw 복구 Backup과 SHA-256을 만든다. 이 파일은
+동일 Local Stack의 장애 조사·복구용이며 Wazuh Dashboard UI에서 Import하는 공식 Saved
+Objects Export 형식이 아니다.

@@ -86,8 +86,8 @@ Assert-Match $wazuh 'cloudfront\s*=\s*\{[\s\S]*?aws_cloudwatch_log_group\.cloudf
     'The Reader source contract does not include the CloudFront Wazuh log group.'
 Assert-NotMatch $wazuh 's3:(PutObject|DeleteObject)|logs:(PutLogEvents|DeleteLogStream)|resource\s+"aws_iam_(user|access_key)"|s3:\*|logs:\*' `
     'The Wazuh Reader grants write/delete/wildcard access or creates a long-lived IAM identity.'
-Assert-NotMatch $wazuh 'aws_(sqs|kinesis_firehose|cloudwatch_event)' `
-    'The initial Wazuh Reader must not add SQS, Firehose, or EventBridge resources.'
+Assert-NotMatch $wazuh 'resource\s+"aws_(sqs|kinesis_firehose|cloudwatch_event)' `
+    'The Reader policy file must not define SQS, Firehose, or EventBridge resources.'
 
 Assert-Match $outputs 'output\s+"wazuh_log_reader_role_arn"' `
     'The optional Wazuh Reader Role ARN output is missing.'

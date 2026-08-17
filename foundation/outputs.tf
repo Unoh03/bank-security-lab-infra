@@ -151,6 +151,29 @@ output "wazuh_log_reader_role_arn" {
   value       = try(aws_iam_role.wazuh_log_reader[0].arn, null)
 }
 
+output "wazuh_push_primary_queue_url" {
+  description = "Primary-region SQS URL consumed by the local Wazuh shadow bridge. Null while Push is disabled."
+  value       = try(aws_sqs_queue.wazuh_push_primary[0].id, null)
+}
+
+output "wazuh_push_transport" {
+  description = "Non-sensitive state and identifiers for the opt-in DVWA Push shadow transport."
+  value = {
+    enabled             = var.enable_wazuh_push_transport
+    mode                = "shadow"
+    source              = "dvwa"
+    source_region       = var.primary_region
+    source_log_group    = aws_cloudwatch_log_group.dvwa_primary.name
+    forwards_all_events = true
+    payload_mode        = "safe_allowlist"
+    raw_message_stored  = false
+    queue_arn           = try(aws_sqs_queue.wazuh_push_primary[0].arn, null)
+    dlq_arn             = try(aws_sqs_queue.wazuh_push_primary_dlq[0].arn, null)
+    lambda_name         = try(aws_lambda_function.wazuh_push_primary[0].function_name, null)
+    subscription_name   = try(aws_cloudwatch_log_subscription_filter.wazuh_push_dvwa[0].name, null)
+  }
+}
+
 output "wazuh_log_sources" {
   description = "Non-sensitive source contract used to configure the local Wazuh manager."
   value = {

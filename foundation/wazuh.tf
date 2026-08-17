@@ -99,6 +99,23 @@ data "aws_iam_policy_document" "wazuh_log_reader" {
       for source in values(local.wazuh_cloudwatch_log_groups) : "${source.arn}:log-stream:*"
     ]
   }
+
+  dynamic "statement" {
+    for_each = var.enable_wazuh_push_transport ? [1] : []
+
+    content {
+      sid    = "ConsumePrimaryWazuhPushQueue"
+      effect = "Allow"
+      actions = [
+        "sqs:ChangeMessageVisibility",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:ReceiveMessage",
+      ]
+      resources = [aws_sqs_queue.wazuh_push_primary[0].arn]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "wazuh_log_reader" {

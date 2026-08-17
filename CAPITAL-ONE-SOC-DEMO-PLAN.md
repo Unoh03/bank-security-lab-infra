@@ -1,14 +1,15 @@
 # Capital One 기반 보안 관제·자동 대응 시연 계획
 
-> **상태:** Draft v1.4 — Gate 4 공격 로그 5/5 Source Runtime 확인, 안전 Audit·초보자용 화면 대기
-> **기준 시점:** 2026-08-16
-> **현재 절차 Gate:** Gate 4 — 5-Source 중앙 수집 확인, 안전 Audit·사건 Timeline·초보자 사용성 검증 중
-> **최근 Runtime Evidence:** CloudFront/DVWA 무해 Probe 2건이 같은 경로로 Wazuh Archives Index에서 검색됨
+> **상태:** Draft v1.6 — Gate 4의 5/5 수집·화면 구현 완료, 저지연 Push 전달 재설계 중
+> **기준 시점:** 2026-08-17
+> **현재 절차 Gate:** Gate 4 — 화면·보존 Event는 검증했고, 10분 Polling을 저지연 Push로 단계 전환하기 위한 P0 설계 중
+> **최근 Runtime Evidence:** Wazuh Dashboard 2·Visualization 14·Saved Search 2와 필수 Evidence 6개 조건의 읽기 전용 Preflight 통과
 > **Terraform 진행:** T1·T2 Source, T3 Plan-only, T4 탐지·대조군·Alert 필드와 CloudFront Hot Copy Runtime 검증 완료
 > **번호 구분:** `T0~T6`는 Terraform 구현 순서이고 `Gate 0~8`은 시연 Evidence 검증 순서다. 같은 번호끼리 같은 작업이 아니다.
 > **기존 구현 현황:** [`OBSERVABILITY-CURRENT-STATUS.md`](./OBSERVABILITY-CURRENT-STATUS.md)
 > **기존 관측성 계획:** [`OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](./OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)
 > **Terraform 실행 계획:** [`CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md`](./CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md)
+> **저지연 전달 설계:** [`observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md`](./observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md)
 > **기존 제한 시나리오:** [`observability/scenarios/README.md`](./observability/scenarios/README.md)
 
 이 문서는 기존 관측성 구현을 폐기하거나 다시 설명하기 위한 문서가 아니다.
@@ -625,12 +626,12 @@ CloudTrail STS·S3 ─────┘                                   Shuffle
 다섯 Source와 Wazuh 입력의 대응은 다음과 같다. `현재 상태`는 설정 존재가 아니라 실제
 Record 도착과 탐지 단계까지 구분한다.
 
-| 순서 | Source | 현재 저장 위치 | Gate 4 수집 방식 | 역할 | 현재 상태 |
+| 순서 | Source | 현재 저장 위치 | 현재 As-built 수집 방식 | 역할 | 현재 상태 |
 |---:|---|---|---|---|---|
 | 1 | CloudFront | Foundation Security Log S3 `AWSLogs/<ACCOUNT_ID>/CloudFront/` | 3일 병렬 CloudWatch Logs Destination → Wazuh `cloudwatchlogs` | 요청이 CDN Edge에 도착한 사실 | Raw Archive·JSON Field·Archives Index Runtime 확인 |
 | 2 | WAF | `aws-waf-logs-aws-topology-edge`, `us-east-1` | Wazuh `service type="cloudwatchlogs"` | 요청 검사 결과·Action·Rule Label | Raw Archive Runtime 확인 |
 | 3 | Primary ALB | Security Log S3 `alb/primary/AWSLogs/.../elasticloadbalancing/ap-northeast-2/` | Wazuh `bucket type="alb"` + `path` | 요청이 Load Balancer를 거쳐 Target에 도달한 사실 | Raw Archive·ALB Field Parsing Runtime 확인 |
-| 4 | DVWA·Apache·안전 Audit | `/aws/eks/aws-topology-primary/dvwa`, `ap-northeast-2` | Wazuh `service type="cloudwatchlogs"` | 요청 도달·Pod 출력·Command Injection 실행 결과 분류 | 기존 Pod Log 수집 완료, 새 Audit Runtime 전 |
+| 4 | DVWA·Apache·안전 Audit | `/aws/eks/aws-topology-primary/dvwa`, `ap-northeast-2` | Wazuh `service type="cloudwatchlogs"` | 요청 도달·Pod 출력·Command Injection 실행 결과 분류 | 새 Audit Image 배포·CloudWatch·Wazuh Raw·Index Runtime 확인 |
 | 5 | CloudTrail | Foundation Security Log S3 `AWSLogs/<ACCOUNT_ID>/CloudTrail/` | Wazuh `bucket type="cloudtrail"` | 탈취 Role의 STS·S3 API 사용과 `GetObject` 확정 근거 | Raw·Rule `100100` Alert Runtime 확인 |
 
 CloudFront Standard Logging v2 JSON은 설치된 Wazuh `custom` Bucket Loader가 기대하는
@@ -675,7 +676,7 @@ Source와 혼합해 Gate 4 완료 조건을 불필요하게 늘리지 않는다.
 | CloudFront 통과 | CloudFront Access Log | 3일 CloudWatch Hot Copy → Raw Archive·JSON Field·Archives Index Runtime 확인 |
 | WAF 검사 | 현재 Filter가 보존하는 `COUNT`·`BLOCK` Event | CloudWatch Logs → Raw Archive 실제 요청 Record 확인 |
 | ALB 통과 | Primary ALB Access Log | S3 → Wazuh Raw Archive 수집과 Request·Status·Client/Target IP·`trace_id` Parsing Runtime 확인 |
-| DVWA 요청·Command Injection | Apache·DVWA Log → CloudWatch Logs | 기존 Pod Record 수집 완료. 안전 Audit 코드는 정적 검증만 완료하고 Image 배포 전 |
+| DVWA 요청·Command Injection | Apache·DVWA Log → CloudWatch Logs | 새 안전 Audit Image 배포와 `command.execution`·`ec2_imds` Wazuh Runtime 확인 |
 | DVWA → IMDS | Runner의 Role·Credential 획득 결과 | CloudTrail 대상이 아니며 현재 네트워크 로그로 직접 증명하지 못함 |
 | 탈취 Credential로 STS 호출 | CloudTrail Management Event | CloudTrail 입력 범위지만 시나리오 전용 Alert 없음 |
 | 탈취 Credential로 S3 읽기 | CloudTrail S3 Data Event | **Raw 수집·Rule `100100`·Level 12 Runtime 검증 완료** |
@@ -689,18 +690,69 @@ DVWA Pod가 아니라 노트북 실행 환경을 가리킨다. Credential 값은
 
 현재 완료된 Wazuh 시연 범위는 다음이다.
 
-> CloudTrail·WAF·DVWA 세 Source의 실제 Raw Event를 수집하고, CloudTrail을 근거로 탈취
-> Node Role의 보호 대상 S3 접근을 탐지해 동일 Event의 Raw 문서와 Custom Alert를
-> 중앙 화면에서 대조한다.
+> CloudFront·WAF·ALB·DVWA·CloudTrail 다섯 Source의 실제 Raw Event와 DVWA 안전 Audit를
+> 수집하고, CloudTrail을 근거로 탈취 Node Role의 보호 대상 S3 접근을 Rule `100100`·
+> Level 12로 탐지했다. 일반 현황과 사건 상세 Dashboard를 구현해 검색식 없이 요약
+> Panel과 안전한 탐지 근거까지 이동할 수 있다.
 
 아직 완료되지 않은 전체 관제 범위는 다음이다.
 
-> CloudFront·WAF·ALB·DVWA·CloudTrail 다섯 Source를 한곳에서 조회해 공격 Timeline을
-> 구성하고, 검색 문법 없이 사람이 사건·위험도·다음 조치를 이해한다.
+> 보존 Event 기반 안내형 실습과 다른 조원의 3분 무검색 Test로 실제 사용성을 검증하고,
+> 새 대표 시나리오 한 번에서 다섯 Source를 같은 시간창으로 다시 모아 현재의 다중 실행
+> Evidence와 구분한다.
 
-첫 구현에서는 새 Firehose, S3→SQS, EventBridge→Wazuh Target을 만들지 않는다. 기존
-Source를 Wazuh가 Read-only로 Polling한다. WAF를 S3로 바꾸면 현재 Live Viewer와
-Grafana CloudWatch 경로를 깨뜨릴 수 있으므로 변경하지 않는다.
+2026-08-16에 5/5 Raw 수집을 닫은 첫 구현은 새 Firehose·S3→SQS·EventBridge Target을
+만들지 않고 기존 Source를 Wazuh가 Read-only로 Polling했다. 이는 **현재 As-built와 보존
+Evidence**로 유지한다. WAF 원본 Log Group도 Live Viewer·Grafana CloudWatch 경로가 쓰므로
+S3로 바꾸지 않는다.
+
+그러나 최초 의심 탐지 지연을 줄이기 위해 전역 Poll 주기를 `10m → 1m`으로 바꾸는 실험을
+검토한 결과, 현재 CloudWatch 입력 상태 DB의 추적 Stream 48개를 매분 반복 조회하게 된다.
+최소 `GetLogEvents`만 약 69,120회/일·2,073,600회/30일이고, 여기에 Log Group 조회와 S3
+List가 더해진다. 실행 가능 여부와 좋은 운영 설계는 다르므로 1분 Poll은 채택하지 않았고
+Host·Container 원본을 `10m`으로 복구했다.
+
+#### 4.1.3 Target — 저지연 Push 전달
+
+Target Architecture는 원본 저장 위치를 바꾸지 않고 AWS Log 도착 이후의 추가 Poll 대기만
+제거한다. 상세 계약은
+[`WAZUH-PUSH-TRANSPORT-DESIGN.md`](./observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md)를
+정본으로 사용한다.
+
+```text
+us-east-1
+  WAF·CloudFront CWL → Subscription → Edge Lambda → Edge SQS → DLQ
+
+ap-northeast-2
+  DVWA·CloudTrail CWL → Subscription → Primary Lambda → Primary SQS → DLQ
+  ALB S3 ObjectCreated ────────────────────────────────→ Primary SQS
+
+Local
+  Queue별 Long Poll → Event Ledger + 안정 Live JSONL → Wazuh localfile(JSON) → Rule·Dashboard
+```
+
+리전별 Queue 두 개를 두어 CloudWatch Logs·S3 Destination의 Region 경계를 단순하게 지킨다.
+노트북이 꺼져도 Queue가 Event를 보존하고, Bridge는 Host Ledger·Live JSONL 기록 성공 뒤에만
+메시지를 삭제한다. `event_id` Ledger가 정상 재전달을 건너뛰지만, JSONL Flush 직후
+비정상 종료 시 한 건 중복 가능성이 있으므로 exactly-once를 주장하지 않는다.
+
+Push의 조건은 `위험 Event인가`가 아니라 `승인된 Source인가`다. 선택한 Log Group의 전체
+Event를 Lambda로 전달하고, 위험 여부는 Wazuh Rule에서 판정한다. 다만 Queue·로컬에는
+Credential·Cookie·Command 원문과 응답을 복제하지 않고 안전 감사 필드만 Allowlist한다.
+전체 원문 비교·재분석은 기존 CloudWatch Logs·S3 Archive와 10분 Poll이 담당한다. 비용
+경계는 Source·Region·ALB Prefix와 Source별 Toggle로 통제한다.
+
+속도 목표도 Source 역할별로 분리한다.
+
+- DVWA 의미 조건: Poll Rule `100101`, Push Rule `100103`. 빠른 의심 Trigger의 Stretch
+  60초, 완료 기준 180초 이내
+- WAF: 빠른 보조 신호. AWS Log 수신 뒤 Wazuh 전달 시간을 별도 측정
+- CloudTrail Rule `100100`: 침해 확인. CloudTrail 원본 지연과 Queue 이후 지연을 분리
+- ALB·CloudFront: 경로 복원 Evidence. 최초 실시간 Trigger로 사용하지 않음
+
+전환 중 같은 Source의 Poll과 Push를 동시에 Live Alert로 넣지 않는다. Shadow Spool에서
+전달·중복·Offline Catch-up을 검증한 뒤 Source 하나씩 Poll을 끄며, 기존 `10m` 설정은 동시
+수집기가 아니라 수동 Rollback 경로로 보존한다.
 
 첫 수집을 시작하기 전에 S3와 CloudWatch Logs 입력 모두 `only_logs_after=2026-AUG-12`,
 승인 Account, Source별 Region과 Prefix를 고정한다. WAF·CloudFront 병렬 Log Group은
@@ -834,6 +886,30 @@ Account ID·Bucket·Client IP·Request ID는 내부 조사 화면에서만 필�
 공개 Screenshot·영상에서는 마스킹한다. Credential·Cookie·Command 원문·응답 원문은
 Dashboard에 넣지 않는다.
 
+#### 4.5.1 보존 Event 기반 안내형 미니 실습
+
+다른 조원의 3분 합격 시험 전에 운호가 Dashboard 읽는 법을 배우는 안내형 실습을 한 번
+진행한다. 이 단계는 Dashboard 사용법 학습이며 새 공격·AWS Apply·Rule 수정은 하지 않는다.
+
+```text
+Local Wazuh 3개 Service와 Saved Object Preflight
+→ AWS 보안관제 현황을 Last 7 days로 조회
+→ 중요 경보와 최근 경보에서 조사 시작
+→ AWS 보안 사건 상세를 Last 7 days로 조회
+→ Workload·보호 데이터 접근·5-Source Evidence 확인
+→ Rule 100100의 Service·API·Object Key 설명
+→ 관측 공백과 자동 대응 미연결을 포함해 한 문장으로 사건 설명
+```
+
+Preflight는 `observability/wazuh/Test-WazuhMiniDrill.ps1`로 고정한다. 이 Script는 Stack을
+선택적으로 시작하고, Dashboard 2개·Visualization 14개·Saved Search 2개, 안전한 Saved
+Search Field·정렬, ALB 코드 정렬, 보존 Evidence 존재를 읽기 전용으로 확인한다.
+
+현재 보존 건수는 Edge 6, WAF 8, ALB 12, Workload 2, AWS 데이터 접근 1, Rule `100100`
+Alert 1건이다. 그러나 AWS 데이터 접근은 8월 13일, Edge·Workload 대표 Record는 8월
+16일에 생성됐다. 따라서 이 실습은 **화면 사용법과 Evidence 해석 연습**이며, 동일한 한
+요청이 다섯 Source를 모두 만들었다는 Runtime 상관 증거로 사용하지 않는다.
+
 #### 4.6 완료 조건
 
 Source 완전성:
@@ -842,7 +918,7 @@ Source 완전성:
 - [x] WAF CloudWatch Logs의 실제 요청 Record를 Wazuh Raw Archive에서 확인
 - [x] ALB S3 Access Log를 Wazuh `alb` 입력으로 연결하고 실제 Record·주요 Field 확인
 - [x] DVWA CloudWatch Logs의 실제 Pod Record를 Wazuh Raw Archive에서 확인
-- [ ] 새 DVWA 안전 Audit Image를 배포하고 실행 결과 Event의 Wazuh 도착 확인
+- [x] 새 DVWA 안전 Audit Image를 배포하고 실행 결과 Event의 Wazuh 도착 확인
 - [x] CloudFront 병렬 CloudWatch Logs를 3일 보존·`capital-one-lab` 전용으로 확정하고 비파괴 Foundation Plan 확인
 - [x] CloudFront 실제 요청 Record를 Wazuh Raw Archive·Archives Index에서 확인
 - [x] 다섯 필수 Source 모두 Wazuh에서 검색 가능
@@ -859,16 +935,29 @@ Source 완전성:
 
 초보자 사용성:
 
-- [ ] 검색식 없이 사건을 확인하는 한글 Saved View·Dashboard 구현
-- [ ] 사건 요약·공격 경로·Timeline·탐지 근거·대응 상태·다음 조치 표시
-- [ ] Raw Event·Alert Drill-down 제공
+- [x] 검색식 없이 사건을 확인하는 한글 Saved View·Dashboard 구현
+- [x] 사건 요약·공격 경로·수집 흐름·탐지 근거·대응 상태·다음 조치 표시
+- [x] Raw Event·Alert Drill-down 제공
 - [ ] 다른 조원의 3분 무검색 사용성 Test 통과
 - [ ] 새 Alert가 `amazon` Group 적용 뒤 AWS 전용 Events 화면에 표시됨
+
+저지연 전달:
+
+- [x] `1m` Poll 후보의 Stream 수·최소 호출량을 계산하고 영구안에서 제외
+- [x] Wazuh Host·Container AWS Wodle을 `10m`으로 복구
+- [x] Rule `100101`의 양성·Resource 대조군·Route 대조군 정적 Test
+- [x] DVWA Push Schema·IAM·Queue/DLQ·기본 Toggle Off 정적 계약
+- [x] DVWA Push OFF AWS Resource 0-change와 ON `9 add / 1 update / 0 destroy` 비파괴 Plan
+- [x] 안전 Payload Allowlist Lambda Apply·Post-Apply 0-change
+- [x] DVWA Push → Live JSONL → Rule `100102` 무해 Event 3회 누락·정상 실행 중복 0, 최대 6.439초
+- [ ] DVWA 실제 Push Rule `100103` Alert 3회에서 완료 기준 180초 이내
+- [ ] 노트북 10분 Off 뒤 Queue Catch-up과 중복 Alert 0
+- [ ] WAF → CloudTrail → ALB → CloudFront 순서의 Source별 Cutover
 
 운영·보존·위생:
 
 - [x] Custom Rule Host 원본·Bind Mount·Hash 일치·문법 검사
-- [ ] Wazuh 재시작 뒤 설정·Rule·수집 Event 보존
+- [x] Wazuh 재시작 뒤 설정·Rule·수집 Event·Saved Object 보존
 - [ ] Archive 하루 증가량 측정 뒤 7일 Retention 적용·검증
 - [ ] Credential·Webhook·기본 Password가 Repository와 Evidence에 없음
 
@@ -878,7 +967,7 @@ Gate 4는 공격·탐지 로그와 사람이 읽을 수 있는 사건 화면까�
 `다음 조치`가 Shuffle을 가리키는 것만으로 자동 대응이 완료된 것은 아니다.
 
 ```text
-Gate 4  공격 Source 5개 + 사건 Timeline + 초보자용 Dashboard
+Gate 4  공격 Source 5개 + 저지연 전달 + 사건 Timeline + 초보자용 Dashboard
 Gate 5  Wazuh Alert → Shuffle 검증·중복 차단 Dry Run
 Gate 6  승인된 GitHub 한 줄 변경
 Gate 7  Argo CD·EKS 배포 Evidence + 재공격 실패
@@ -1112,7 +1201,8 @@ Argo CD가 담당한 것과 Terraform이 담당한 것은 무엇인가
 | 대표 탐지 신호 | **CloudTrail GetObject Custom Rule 확정·Runtime 정탐 검증** | 2026-08-12 완료 |
 | 중앙 관제 제품 | **Wazuh 확정, 별도 ELK 미구축** | 2026-08-12 사용자 결정 |
 | SIEM 위치 | **Local Docker single-node** | Wazuh 4.14.7 세 Service 기동·CloudTrail Dashboard 집계 확인 |
-| Gate 4 필수 AWS→SIEM 입력 | **CloudFront + WAF + ALB + DVWA + CloudTrail** | 5/5 Raw Runtime 확인, 탐지·Timeline·사용성은 별도 대기 |
+| Gate 4 필수 AWS→SIEM 입력 | **CloudFront + WAF + ALB + DVWA + CloudTrail** | 5/5 Raw·Custom Alert·Dashboard 구현, 안내형·3분 사용성 Test 대기 |
+| AWS→SIEM 전달 방식 | **10m Poll 원본 조사 + DVWA 저지연 Push 검증** | Primary DVWA Lambda·SQS·Local Bridge·Live JSONL·Rule `100102` 3회 완료, 실제 Rule `100103`·Poll Cutover 대기 |
 | EKS Control Plane Log | **Gate 7 배포·대응 Evidence** | `api`·`audit`·`authenticator` 활성, Argo 배포 시간창 Runtime 대기 |
 | Wazuh Runtime Credential | **로컬 전용 IAM User 장기 Key 예외** | Git 밖 Profile·Read-only Mount, 종료 후 비활성화·삭제 |
 | Terraform Reader Role | Source·Apply 존재, 현재 Runtime 경로는 아님 | Wazuh Bucket 최상위 List 요구 반영 뒤 재검증 |
@@ -1129,12 +1219,14 @@ Argo CD가 담당한 것과 Terraform이 담당한 것은 무엇인가
 ## 11. 지금 바로 할 한 가지
 
 Gate 3과 Wazuh Local Docker Preflight, Reader Terraform Apply·AssumeRole·Post-Apply
-0-change, CloudTrail 중앙 수집·Custom Alert, WAF·ALB·DVWA·CloudFront Raw Archive 연결을
-완료했다.
+0-change, CloudTrail 중앙 수집·Custom Alert, WAF·ALB·DVWA·CloudFront Raw Archive 연결,
+DVWA 안전 Audit와 초보자용 Dashboard 구현을 완료했다. DVWA Push는 AWS Resource,
+안전 Payload Allowlist, Local Bridge·Live JSONL, 무해 Rule `100102` 3회까지 완료했다.
+다음 한 가지는 **실제 `command.execution`을 Push Rule `100103`으로 검증하는 것**이다.
 TAKE `capital-one-20260813T082735Z`에서 S3 `GetObject` 원본과 Rule `100100`·Level 12
-Alert를 동일한 CloudTrail `eventID`로 확인했다. 즉 CloudTrail 기반 양성 탐지 장면은
-촬영 가능하고 필수 5-Source도 중앙 수집되지만, 이 결과를 사건 Timeline·탐지·초보자용
-Dashboard 완료로 확대하지 않는다.
+Alert를 동일한 CloudTrail `eventID`로 확인했다. CloudTrail 기반 양성 탐지와 필수
+5-Source 중앙 수집, 화면 구현은 확인됐지만, 사람이 실제로 설명할 수 있다는 사용성은
+내일 안내형 실습과 이후 다른 조원의 3분 Test로 별도 검증한다.
 
 ```text
 Gate 3: 정탐 + 정상 대조군 + Alert Runtime 필드 + Post-Apply 0-change 완료
@@ -1148,7 +1240,14 @@ Gate 3: 정탐 + 정상 대조군 + Alert Runtime 필드 + Post-Apply 0-change �
 → CloudFront 병렬 CloudWatch Logs 3일·Lab 전용 Source·비파괴 Foundation Plan 완료
 → Foundation Apply·Daily `capital-one-lab` Delivery·Wazuh CloudFront Record 확인 완료
 → 새 DVWA 안전 Audit Image 배포·Wazuh Event 확인
-→ 필수 5-Source 사건 Timeline·한글 Dashboard 구현
+→ 필수 5-Source Filter·한글 Dashboard 구현·읽기 전용 Preflight 완료
+→ 1m Poll 후보 폐기·10m 복구·Push Target 설계 완료
+→ P0 Event Schema·IAM·Queue/DLQ·기본 Toggle Off 정적 계약 완료
+→ DVWA P1 Shadow Transport 비파괴 Plan 완료
+→ DVWA P1 Apply·안전 Allowlist·Live JSONL·Rule 100102 무해 Event 3회 완료
+→ [다음] 실제 command.execution → Push Rule 100103 3회
+→ Offline Catch-up·장애 중복 검증 뒤 DVWA Poll Cutover 결정
+→ 보존 Event 기반 운호 안내형 미니 실습
 → 다른 조원의 3분 무검색 사용성 Test
 → 다음 새 Alert에서 amazon Group 화면 노출·정상 대조군 오탐 검증
 → Archive 증가량 측정 뒤 7일 Retention 검증
@@ -1157,10 +1256,10 @@ Gate 3: 정탐 + 정상 대조군 + Alert Runtime 필드 + Post-Apply 0-change �
 현재 확인된 범위는 `Command Injection → IMDS → Node Role Credential → 고정 가짜 S3
 GetObject → CloudTrail → Metric Filter → Alarm`과 같은 TAKE의 WAF·DVWA·GuardDuty
 Coverage 판정, `CloudFront·WAF·ALB·DVWA·CloudTrail → Wazuh Raw Archive`, CloudTrail
-Custom Alert다. Pod→IMDS 직접 네트워크 로그는 현재 방식으로 수집되지 않는다. 새 DVWA
-안전 Audit Runtime, 필수 5-Source Timeline, 초보자용 관제 화면, Wazuh
-정상 대조군, SOAR, GitHub 변경, Argo CD·EKS 배포 Evidence, 재공격 실패는 아직 구현하거나
-검증하지 않았다.
+Custom Alert와 안전 Audit Runtime, 초보자용 관제 화면이다. Pod→IMDS 직접 네트워크 로그는
+현재 방식으로 수집되지 않는다. 동일한 한 실행의 필수 5-Source Timeline, 안내형·3분
+사용성 Test, Wazuh 정상 대조군, SOAR, GitHub 변경, Argo CD·EKS 배포 Evidence, 재공격
+실패는 아직 구현하거나 검증하지 않았다.
 Watchdog Hard Deadline은 각 `daily-up.ps1` Session의 실제 출력과 Session State를 기준으로
 확인한다. 작업을 중단하면 과거 문서의 예약 시각을 믿고 기다리지 말고
 `daily-down.ps1`로 Daily Runtime을 종료한다.

@@ -142,6 +142,12 @@ variable "enable_wazuh_log_reader" {
   default     = false
 }
 
+variable "enable_wazuh_push_transport" {
+  description = "Create the opt-in DVWA CloudWatch Logs to Lambda to SQS shadow transport. The subscription forwards every event already stored in the approved DVWA log group."
+  type        = bool
+  default     = false
+}
+
 variable "wazuh_reader_trusted_principal_arn" {
   description = "Explicit same-account IAM user or role ARN allowed to bootstrap a temporary Wazuh reader session. Required when enable_wazuh_log_reader is true."
   type        = string
