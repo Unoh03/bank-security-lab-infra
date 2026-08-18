@@ -1,7 +1,24 @@
-# SOC Lab 운영 인계 — 사용자가 해야 하는 일만
+# SOC Lab Legacy v1 운영 인계 — 현재 실행 금지
 
-이 문서는 구현 설명서가 아니라, Cloud 계정과 실제 쓰기 권한 때문에 자동으로 넘을 수
-없는 경계만 모은 실행 순서다. 소스 파일 존재나 정적 Test 성공은 E2E 완료가 아니다.
+> **SUPERSEDED / 실행 금지:** 이 문서는 과거 Custom Shuffle v1 설계의 역사 기록이다.
+> 아래 App Upload·Gate B5·PAT·`ResponseMode contain`·GitHub Dispatch·E2E·Reset 명령은
+> 현재 계약과 충돌하므로 실행하지 않는다. 현재 기준은
+> [대응 시나리오](CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md) →
+> [시연 계획](CAPITAL-ONE-SOC-DEMO-PLAN.md) →
+> [E2E Blueprint](CAPITAL-ONE-SOC-E2E-BLUEPRINT.md) 순서다.
+
+이 문서는 삭제되지 않은 v1 결정·실패 Evidence다. 현재 운영 설명서나 실행 Runbook이
+아니며, 소스 파일 존재나 정적 Test 성공은 E2E 완료가 아니다.
+
+## 정본이 허용하는 다음 작업 — 아래 Legacy 명령은 사용하지 않음
+
+1. 실제 DVWA `command.execution → Wazuh Rule 100103` 독립 3 TAKE를 `observe-only`로 검증한다.
+2. TAKE별 지연·중복·누락과 비밀정보 비노출을 확인한다.
+3. Bridge 중단 중 Event를 만든 뒤 재시작하여 offline catch-up을 검증한다.
+4. DVWA Poll 경로가 그대로 동작하는지 확인한다.
+
+이 Gate가 닫히기 전에는 PAT 생성·Private App Upload·Containment·Remediation·Reset을
+구현하거나 실행하지 않는다.
 
 ## 2026-08-18 취침 전 인계 상태
 
@@ -14,9 +31,9 @@
   `be7eb1f9a5f4c6662b253c086083660a1cd50ae9120ff774efd2e8ed0f61c6d8`
 - Dispatcher ZIP SHA-256:
   `e767a948c2890fd0dbb14be59755f6853607870aec5a0252eb856ac9d8eabc98`
-- 이 새 Dispatcher는 GitHub Dispatch 요청에 `return_run_details=true`를 고정해,
-  수락된 Workflow Run ID와 URL을 HTTP 200 응답으로 받도록 구현됐다. 실제 GitHub Runtime
-  응답은 첫 Production Dispatch에서 검증한다. 이전 Bundle은 쓰지 않는다.
+- 당시 Dispatcher는 GitHub Dispatch 요청에 `return_run_details=true`를 고정했다.
+  이후 확인한 API `2026-03-10` 공식 계약은 이 Parameter를 제거하고 항상 HTTP 200 Run
+  Details를 반환하므로, 이 Legacy Bundle은 Production Binding에 사용하지 않는다.
 - 2026-08-18 GitHub read-only 확인: `Unoh03/Uns-DVWA`는 Private·기본 Branch `main`이며,
   Repository 기본 `GITHUB_TOKEN` 권한은 `read`다. 이는 기본값이고, 두 전환 Workflow는
   각 Workflow에만 `permissions: contents: write`를 명시한다. Private Free Plan에서는 Branch
@@ -38,7 +55,7 @@
 
 이 결과는 로컬 계약과 실패 차단을 증명하지만 Shuffle Cloud와 실제 E2E 성공을 대신하지 않는다.
 
-## 먼저 현재 상태 확인
+## Legacy v1 상태 확인 — 현재 실행 금지
 
 아래 명령은 AWS, GitHub, Shuffle, Docker를 변경하지 않고 로컬 준비 상태만 보여준다.
 `dvwa-local-scope`는 예상한 일곱 파일과 생성 캐시 외의 변경이 섞이면 READY를 거부한다.
@@ -54,7 +71,9 @@ Cloud 설정을 마친 뒤에는 read-only Export 검증까지 포함한다.
 .\tools\Test-SocLabReadiness.ps1 -Online
 ```
 
-## 사용자만 할 수 있는 최초 1회 작업
+## Legacy v1 최초 1회 작업 — 현재 실행 금지
+
+> 아래 절은 당시 계획을 보존한 역사 기록이다. 명령과 순서를 현재 Runtime에 사용하지 않는다.
 
 1. `D:\DVWA`의 변경을 검토하고 커밋·푸시한다. 의도된 대상은 다음 일곱 파일이다.
    Runtime:
@@ -156,9 +175,9 @@ GitHub 호출 Action이 보이면 실행 전에 중단한다.
   -ConfirmRun 'RUN SHUFFLE GATE B5'
 ```
 
-## 매 촬영 TAKE에서 사용자가 승인할 것
+## Legacy v1 촬영 절차 — 현재 실행 금지
 
-다음은 실제 비용·공격·외부 쓰기가 있으므로 자동 승인하지 않는다.
+다음은 폐기된 v1 절차이며, 실제 비용·공격·외부 쓰기까지 포함하므로 실행하지 않는다.
 
 1. `daily-up`의 AWS Apply와 `capital-one-lab` 활성화
 2. 가짜 Training Object 준비
@@ -168,8 +187,8 @@ GitHub 호출 Action이 보이면 실행 전에 중단한다.
 6. 필요 시 별도 수동 Reset Workflow
 7. 종료 후 AWS Destroy
 
-Cloud 최초 설정이 끝난 뒤 한 TAKE의 명령 순서는 다음과 같다. 각 명령의 Preview와
-Plan을 먼저 보고, 실제 비용·공격·외부 쓰기 승인은 사용자가 그 자리에서 결정한다.
+아래 명령은 역사 보존용이다. 현재 계약에서 `low → impossible`은 Containment가 아닌
+Remediation이고 v2 Reset은 Quarantine을 마지막에 해제해야 하므로 그대로 실행하면 안 된다.
 
 ```powershell
 Set-Location 'D:\terraform\aws_terraform_build_code'
@@ -249,7 +268,7 @@ E2E 일반 오류는 `E2E_FAILED`로 닫히지만, 공격 중 PowerShell Process
 그때는 다시 공격하거나 Runtime 파일을 지우지 말고 Evidence와 원격 Shuffle·GitHub 상태를
 먼저 확인한다.
 
-## 보증 경계
+## Legacy v1 보증 경계
 
 - 지금 미리 보증 가능한 것: 소스 계약, 안전장치, 단위·정적 Test, 패키지 구조,
   실패 시 중단 조건, Evidence 형식.

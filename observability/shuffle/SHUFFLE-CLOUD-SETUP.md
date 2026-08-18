@@ -1,7 +1,18 @@
-# Shuffle Cloud SOC Workflow 구축 절차
+# Shuffle Cloud SOC Workflow Legacy v1 절차 — 현재 실행 금지
 
-이 문서는 Shuffle 화면을 대충 따라 만드는 설명서가 아니라,
-`CAPITAL-ONE-SOC-CONTAINMENT-v1`을 **검증 가능한 두 단계**로 만드는 절차다.
+> **SUPERSEDED / 실행 금지:** 이 문서는 `CAPITAL-ONE-SOC-CONTAINMENT-v1`의 역사 기록이다.
+> Gate B5의 Stub·Dedupe 검증 아이디어는 참고할 수 있지만, Private App Upload와
+> Production Dispatch는 현재 실행하지 않는다. 현재 대응 의미는
+> [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](../../CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md),
+> v2 계약은 [`CAPITAL-ONE-SOC-E2E-BLUEPRINT.md`](../../CAPITAL-ONE-SOC-E2E-BLUEPRINT.md)가 정본이다.
+
+v1의 `.github/workflows/soc-contain-dvwa.yml`은 `low → impossible`을 Containment로
+취급하므로 현재 계약에 맞지 않는다. v2 Target은 Workload Quarantine과 제한된 IAM 영향
+차단을 먼저 수행하고, `low → impossible`은 느린 증거 확인 뒤 별도 GitOps Remediation으로
+수행한다.
+
+이 문서는 Shuffle 화면을 대충 따라 만드는 설명서가 아니라, 당시
+`CAPITAL-ONE-SOC-CONTAINMENT-v1`을 검증 가능한 두 단계로 만들려던 절차를 보존한다.
 
 기준 파일:
 
@@ -171,23 +182,27 @@ Webhook 응답에는 Execution ID가 보장되지 않으므로 동시성 판정�
 Shuffle Datastore Action의 이름이나 문서 설명만으로 원자성을 확정하지 않는다.
 위 동시 실행 결과가 정확히 맞을 때만 통과다.
 
-## 5. Production Dispatch로 전환
+## 5. Legacy v1 Production Dispatch — 현재 실행 금지
 
-Gate B5 통과 후 `dispatch_github_containment`의 Stub 구현만 고정 GitHub 호출로
-교체한다.
+아래 절은 폐기된 v1 계약의 기록이다. Gate B5가 통과해도 현재는
+`dispatch_github_containment`를 GitHub 호출로 교체하지 않는다.
+
+> **현재 공식 계약 정정:** GitHub REST API `2026-03-10`은 Workflow Dispatch 응답을 항상
+> HTTP 200과 Run Details로 반환하며 `return_run_details` Parameter를 제거했다. 아래 v1
+> Dispatcher 계약은 이 API 버전과 충돌하므로 재사용하지 않는다.
 
 ```text
 Repository: Unoh03/Uns-DVWA
 Workflow: .github/workflows/soc-contain-dvwa.yml
 Ref: main
 GitHub API version: 2026-03-10
-Request: return_run_details=true
+Legacy request: return_run_details=true (현재 API에서는 제거됨)
 Response: HTTP 200 + workflow_run_id, run_url, html_url
 ```
 
-`return_run_details=true`가 빠지면 정상 Dispatch도 기존 계약대로 HTTP 204를 반환하므로,
-Dispatcher가 정확한 Run ID를 받아 후속 Argo 검증과 결합할 수 없다. Private App Source가
-이 Boolean을 고정해 보내며 Shuffle 사용자가 입력하는 동적 Parameter가 아니다.
+현재 Target은 `return_run_details` 없이 API `2026-03-10`을 호출하고 HTTP 200의
+`workflow_run_id`, `run_url`, `html_url`을 검증해야 한다. 기존 Private App Source는 이
+Boolean을 고정해 보내므로 수정·새 Version·새 Bundle 검증 전에는 Binding하지 않는다.
 
 허용 Input은 네 개뿐이다.
 
@@ -294,7 +309,7 @@ App Authentication 조회는 값 확인용으로 사용하지 않는다. 현재 
 않는다. 다만 서버가 응답 본문을 네트워크로 전송하는 사실 자체까지 로컬 코드가 없앨 수
 있는 것은 아니다.
 
-## 6. 로컬 설정
+## 6. Legacy v1 로컬 설정 — 현재 실행 금지
 
 Cloud 값이 준비되면 공개 식별자는 다음 도구로 저장한다.
 Shuffle Cloud는 계정 지역별 API Origin이 다를 수 있으므로 `/admin` 지역 표시와 현재
@@ -326,7 +341,7 @@ Shuffle Trigger Authentication에 사용한다. `Copy-SocLabWebhookHeader.ps1`�
 파일에 쓰지 않고, Windows의 `ExcludeClipboardContentFromMonitorProcessing` 형식으로
 History·Cloud 동기화를 제외한 뒤 기본 120초 후 아직 같은 값일 때만 Clipboard를 비운다.
 
-## 7. 완료 판정
+## 7. Legacy v1 완료 판정 — 현재 완료 기준 아님
 
 다음은 완료가 아니다.
 

@@ -7,6 +7,8 @@
 > **최종 범위:** Capital One 기반 대표 시나리오의 CloudFront·WAF·ALB·DVWA·CloudTrail 5개 Source
 >
 > **현재 구현 범위:** Primary DVWA 1개 Source만 `CloudWatch Logs → Lambda → 서울 SQS → Local Bridge → Wazuh JSONL·Rule`
+>
+> **대응 의미 정본:** [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](../../CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md). 이 문서는 전달·탐지까지만 정의하며 Containment·Remediation을 재정의하지 않는다.
 
 ## 1. 결론
 
@@ -26,7 +28,7 @@ Regional SQS 2개
 → Host Event Ledger + 안정된 Live JSONL에 기록
 → Wazuh localfile(JSON)
 → Custom Rule·Dashboard
-→ Gate 5 Shuffle
+→ Shuffle observe-only Gate
 ```
 
 AWS 쪽은 Event가 생길 때 Queue로 밀어 넣고, 노트북은 48개 Log Stream을 반복 조회하지
@@ -292,7 +294,8 @@ Bridge 종료 뒤 Primary Queue의 Visible·In-flight·Delayed와 DLQ의 동일 
 
 - [ ] Wazuh Alert → Shuffle Dry Run
 - [ ] `event_id` 기준 중복 대응 차단
-- [ ] 승인된 DVWA Containment 이후에만 GitHub·Argo Gate 진행
+- [ ] Rule `100103` 실제 Runtime Gate 통과 뒤에만 v2 대응 계약으로 이동
+- [ ] Workload/IAM Containment와 GitOps Remediation을 별도 Gate·Workflow로 유지
 
 ## 11. 구현 소유권
 

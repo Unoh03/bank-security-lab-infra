@@ -1,8 +1,8 @@
 # Capital One 기반 보안 관제·자동 대응 시연 계획
 
-> **상태:** Draft v1.6 — Gate 4의 5/5 수집·화면 구현 완료, 저지연 Push 전달 재설계 중
-> **기준 시점:** 2026-08-17
-> **현재 절차 Gate:** Gate 4 — 화면·보존 Event는 검증했고, 10분 Polling을 저지연 Push로 단계 전환하기 위한 P0 설계 중
+> **상태:** Draft v2.0 — 대응 시나리오 정합성 확정, DVWA 저지연 Trigger Runtime 검증 중
+> **기준 시점:** 2026-08-18
+> **현재 절차 Gate:** Gate 4 — 10분 Evidence 경로는 유지하고, 실제 DVWA `command.execution`의 저지연 Rule `100103`을 먼저 검증한다.
 > **최근 Runtime Evidence:** Wazuh Dashboard 2·Visualization 14·Saved Search 2와 필수 Evidence 6개 조건의 읽기 전용 Preflight 통과
 > **Terraform 진행:** T1·T2 Source, T3 Plan-only, T4 탐지·대조군·Alert 필드와 CloudFront Hot Copy Runtime 검증 완료
 > **번호 구분:** `T0~T6`는 Terraform 구현 순서이고 `Gate 0~8`은 시연 Evidence 검증 순서다. 같은 번호끼리 같은 작업이 아니다.
@@ -11,20 +11,27 @@
 > **Terraform 실행 계획:** [`CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md`](./CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md)
 > **저지연 전달 설계:** [`observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md`](./observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md)
 > **기존 제한 시나리오:** [`observability/scenarios/README.md`](./observability/scenarios/README.md)
+> **침해 대응 정본:** [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](./CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md)
+
+> [!IMPORTANT]
+> 빠른 Containment는 `DVWA Workload Quarantine + 허용된 IAM 영향 차단`이다.
+> `low → impossible`은 그 뒤에 배포하는 **애플리케이션 보안 설정 패치(Remediation)** 다.
+> 현재 공유 Karpenter Node Role에는 전체 Deny를 자동 적용하지 않으며, Lab Prefix 임시
+> Deny 또는 전용 Principal처럼 Blast Radius가 고정된 경우만 허용한다. 대응 구현은 실제
+> `command.execution → Rule 100103` Gate를 닫은 뒤 시작한다.
 
 이 문서는 기존 관측성 구현을 폐기하거나 다시 설명하기 위한 문서가 아니다.
 이미 구축한 로그·탐지·GitOps 기반을 이용해 다음 한 장면을 끝까지 완성하기 위한
 새 기준 계획서다.
 
 ```text
-공격 성공과 가짜 개인정보 유출
-→ 공격으로 인한 로그·경보 발생
-→ 중앙 관제 화면에서 분석·분류
-→ 자동 대응 Workflow 실행
-→ GitHub에 검토된 보안 설정 Commit
-→ Argo CD가 새 설정 배포
-→ 동일 공격 재시도 실패
-→ 최종 촬영 확인 뒤 Terraform 영구 복구
+공격 성공과 가짜 개인정보 접근
+→ Rule 100103 저지연 탐지
+→ Workload·IAM 영향의 좁고 가역적인 Containment
+→ 느린 Evidence로 공격 경로·성공 여부 조사
+→ low → impossible 보안 설정 패치와 Argo 배포
+→ 동일 공격 실패·정상 기능 검증
+→ Terraform 영구 복구와 Recovery
 ```
 
 ---
@@ -33,19 +40,20 @@
 
 ### 0.1 한 문장 목표
 
-> 공격을 성공시킨 뒤 그 흔적으로 경보를 만들고, 검증된 자동 대응을 GitOps로
-> 배포한 다음, 같은 공격이 실패하는 것까지 증명한다.
+> 공격을 저지연으로 탐지해 침해 확산을 먼저 제한하고, 느린 Evidence로 범위를 조사한
+> 뒤 검증된 설정 패치와 영구 복구를 배포해 같은 공격이 실패하는 것까지 증명한다.
 
 ### 0.2 최종 시연 흐름
 
 ```text
 공격 성공
-→ 로그 확인
-→ 탐지 경보
-→ SOAR 대응 요청
-→ GitHub 보안 설정 변경
+→ Rule 100103 저지연 경보
+→ DVWA Workload Quarantine
+→ 허용된 범위의 IAM 영향 차단
+→ 5-Source Timeline 조사
+→ low → impossible 보안 설정 패치
 → Argo CD 배포
-→ 같은 공격 재시도 실패
+→ 격리와 패치 효과를 분리한 재검증
 ```
 
 ### 0.3 도구별 역할
@@ -55,10 +63,11 @@
 | WAF·애플리케이션 로그·CloudTrail | 공격과 AWS 활동의 흔적을 기록한다. |
 | GuardDuty·탐지 규칙 | 수집된 흔적이 공격 조건에 맞는지 판단해 경보를 만든다. |
 | Wazuh SIEM | 여러 원본 로그를 한곳에서 조회·분석하고 Custom Rule로 Alert를 만든다. |
-| Shuffle SOAR | Wazuh Alert를 검증하고 사전에 허용된 대응 절차를 요청한다. |
-| GitHub Actions | 허용된 보안 설정 한 가지를 검증·변경해 Commit한다. |
-| Argo CD | GitHub의 변경을 감지해 EKS에 새 설정을 배포한다. |
-| Terraform | IAM·IMDS·Node 같은 근본 원인을 사람 승인 후 복구한다. |
+| Shuffle SOAR | Wazuh Alert를 검증하고 사전 허용된 격리·조사·Remediation 절차를 조정한다. |
+| GitHub Actions | 고정된 Workload 격리와 `low → impossible` 설정 패치를 별도 변경으로 검증·Commit한다. |
+| Argo CD | 검토된 NetworkPolicy·애플리케이션 설정 변경을 EKS에 배포한다. |
+| AWS IAM 대응 | 공유 Role이면 Lab Prefix 영향만 차단하고, 전용 Principal일 때만 사전 승인된 격리를 수행한다. |
+| Terraform | IAM 최소 권한·IMDSv2·Node 같은 근본 원인을 사람 승인 후 복구한다. |
 
 ### 0.4 Gate를 쉽게 읽는 법
 
@@ -69,8 +78,8 @@ Gate 2  실제로 남은 로그 확인
 Gate 3  경보를 울릴 탐지 조건 결정
 Gate 4  관제 화면에 경보 표시
 Gate 5  변경 없는 자동 대응 모의 실행
-Gate 6  GitHub 보안 설정 자동 변경
-Gate 7  Argo CD 배포 후 재공격 실패 확인
+Gate 6  Workload·IAM 영향 Containment 검증
+Gate 7  설정 패치·Argo 배포·Recovery 검증
 Gate 7-R  촬영 실패 시 사람 승인으로 재촬영 상태 복원
 Gate 8  근본 원인 복구와 팀 전체 연습
 ```
@@ -78,51 +87,56 @@ Gate 8  근본 원인 복구와 팀 전체 연습
 Gate는 별개의 기능 목록이 아니라 앞 단계의 결과를 확인하고 다음 단계로 넘어가기
 위한 중간 완료 조건이다. Gate 1~3에서 공격 재현, 로그 Coverage, 정탐·정상 대조군,
 Alert 필드 Runtime 검증까지 닫았다. Gate 0의 공개본 위생 체크는 최종 촬영 전 다시
-확정한다. 중앙 관제 제품은 Wazuh로 선택했고, 새 통제 Event에서 CloudTrail Raw Event와
-Rule `100100`·Level 12 Alert가 동일 `eventID`로 연결되는 것까지 확인했다. 다음은
-새 DVWA 안전 Audit Runtime, 초보자용 관제 화면, 정상 접근의
-Wazuh 오탐 검증이다.
+확정한다. 중앙 관제 제품은 Wazuh로 선택했고, CloudTrail Raw Event와 Rule `100100`이
+동일 `eventID`로 연결되는 것과 DVWA Push Rule `100102` 무해 전달 3회를 확인했다. 현재
+다음 한 가지는 실제 `command.execution → Rule 100103` 반복 검증이다.
 
 ### 0.5 빠른 차단과 영구 대응의 차이
 
 ```text
-DVWA 보안 레벨 변경
-= 교육용 환경에서 새로운 공격 진입을 빠르게 막는 시연용 Containment
+Workload Quarantine + 허용된 IAM 영향 차단
+= 공격 확산과 추가 접근을 줄이는 즉시·가역적 Containment
 
-IAM 최소 권한·IMDSv2 강제·Node 교체·애플리케이션 수정
-= 실제 원인을 제거하는 실무형 영구 대응
+DVWA low → impossible
+= 취약 동작을 닫는 애플리케이션 보안 설정 패치(Remediation)
+
+IAM 최소 권한·IMDSv2 강제·Node 교체·코드 수정
+= 근본 원인을 제거하고 정상 상태로 복구하는 영구 대응
 ```
 
-빠른 차단만으로 이미 유출된 자격증명이 무효화됐다고 주장하지 않는다. 최종 시연은
-두 대응의 목적과 한계를 구분해 설명한다.
+Lab Prefix 임시 Deny는 이미 유출된 자격증명 전체를 무효화하지 않는다. 공유 Node Role
+전체를 자동 Deny하지 않으며, 세 단계의 목적과 한계를 각각 설명한다.
 
 ### 0.6 촬영·재촬영 상태 수명주기
 
-촬영 실패를 Git History 삭제나 Terraform 재적용으로 복구하지 않는다. 촬영 중에는
-취약한 Infrastructure Profile을 유지하고 DVWA의 애플리케이션 상태만 앞으로 가는
-새 Commit으로 전환한다.
+촬영 실패를 Git History 삭제나 Terraform 재적용으로 복구하지 않는다. Reset은 자동
+대응의 역방향이 아니라 통제된 Lab을 새 TAKE용으로 다시 여는 수동 절차다.
+
+확신도와 대응 단계를 한 Status에 섞지 않는다.
 
 ```text
-PREPARED
-capital-one-lab + DVWA low + Alarm OK + 새 TAKE_ID·ExperimentId
-        │
-        ▼
-CONTAINED
-DVWA impossible + Argo Synced·Healthy + 동일 Payload 실패
-        │
-        ├─ 촬영 승인 → FINALIZE → Terraform hardened
-        │
-        └─ 촬영 실패 → MANUAL RETAKE RESET
-                         impossible → low 새 Commit
-                         → Argo 새 Pod
-                         → 새 세션·새 ID·Alarm OK 확인
-                         → PREPARED
+사건 확신도
+UNASSESSED → SUSPECTED(Rule 100103) → CONFIRMED(예상 CloudTrail GetObject 성공)
+                                └──→ DISPROVED(조사로 공격 가설 기각)
+
+대응 단계
+PREPARED → DETECTED → CONTAINED → INVESTIGATING → REMEDIATED → RECOVERED → CLOSED
+                         │
+                         └─ 재촬영 결정 → MANUAL RETAKE RESET
+                                            Quarantine 유지 중 impossible → low
+                                            → Lab IAM 권한 복원
+                                            → 새 Pod·Wazuh READY·새 TAKE
+                                            → Quarantine을 마지막에 해제 → PREPARED
 ```
 
-수동 Reset은 이미 노출된 임시 자격증명을 폐기하거나 IAM·IMDS를 복구하지 않는다.
-오직 다음 촬영을 위해 DVWA의 교육용 취약 상태를 다시 여는 작업이다. 같은 촬영
-시간창을 벗어나거나 노트북을 떠나야 하면 `low`로 Reset해 두지 않고 Daily Runtime을
-내리거나 승인된 `hardened` 복구를 수행한다.
+`CONFIRMED`가 늦게 도착해도 이미 `CONTAINED`인 사실을 덮어쓰거나 Containment를 다시
+실행하지 않는다. 최종 촬영 승인 뒤에는 Terraform hardened 복구와 Recovery 검증을 거쳐
+`CLOSED`로 끝낸다.
+
+수동 Reset은 이전 Credential을 재사용하지 않고 기존 Evidence를 삭제하지 않는다.
+오직 다음 촬영을 위해 격리·Lab 권한·DVWA 설정을 승인된 순서로 복원한다. 같은 촬영
+시간창을 벗어나거나 노트북을 떠나야 하면 `low`를 공개 상태로 두지 않고 다시 격리하거나
+Daily Runtime을 내린다.
 
 ---
 
@@ -161,9 +175,10 @@ Capital One 사고 기반 EKS 노드 IAM 자격증명 탈취·자동 대응 시�
 - [x] 공격과 직접 연결되는 원본 로그가 보존된다.
 - [ ] SIEM 또는 중앙 탐지 계층에서 경보가 발생한다.
 - [ ] 경보 근거와 공격 Timeline을 사람이 설명할 수 있다.
-- [ ] 자동 대응이 사전에 정한 GitHub Workflow만 실행한다.
-- [ ] GitHub Commit 후 Argo CD가 변경을 자동 배포한다.
-- [ ] 새 세션에서 같은 공격을 반복하면 IMDS 자격증명 획득이 실패한다.
+- [ ] 자동 대응이 DVWA Workload와 승인된 IAM 영향 범위만 가역적으로 격리한다.
+- [ ] `low → impossible` 설정 패치가 별도 Remediation Commit으로 배포된다.
+- [ ] Argo CD가 각 예상 Commit SHA를 자동 배포한다.
+- [ ] 격리 효과와 설정 패치 효과를 분리해 같은 공격 실패를 확인한다.
 - [ ] 수동 Reset으로 새 촬영을 준비하고 동일 흐름을 다시 시작할 수 있다.
 - [ ] 최종 촬영 확인 뒤 Terraform으로 IAM·IMDS의 근본 원인을 복구한다.
 - [ ] DVWA 전용 시연 조치와 실제 환경의 대응 방법을 명확히 구분한다.
@@ -177,9 +192,10 @@ Capital One 사고 기반 EKS 노드 IAM 자격증명 탈취·자동 대응 시�
 ```text
 대표 공격 1개
 탐지 규칙 1개
-자동 대응 Workflow 1개
-수동 재촬영 Reset Workflow 1개
-GitOps 보안 설정 변경 1개
+Workload Containment 1개
+제한된 IAM 영향 차단 1개
+애플리케이션 설정 패치 1개
+수동 재촬영 Reset 1개
 재공격 검증 1회
 재촬영 준비 Rehearsal 1회
 팀원 전원 반복 실습
@@ -205,10 +221,11 @@ SOAR에 광범위한 AWS·GitHub 관리자 권한 부여
 ```text
 1. Command Injection 대체 진입점을 실제 SSRF 모듈로 교체
 2. 두 번째 대표 시나리오
-3. 기존 탈취 자격증명까지 무효화하는 AWS 측 자동 격리
-4. Shuffle SOAR 고도화
-5. n8n·AI 분석 보조
-6. CNAPP 조사
+3. 공유 Node Role을 DVWA 전용 Role·Node 경계로 분리
+4. Lab Prefix 차단을 실제 Principal·Session Containment로 확장
+5. Shuffle SOAR 고도화
+6. n8n·AI 분석 보조
+7. CNAPP 조사
 ```
 
 ---
@@ -254,11 +271,11 @@ DVWA의 `impossible` Command Injection 구현은 입력을 IPv4 네 옥텟으로
 기존 `; curl ...` Payload가 실행되지 않는다.
 
 현재 GitHub Actions는 `deploy/dvwa/values.yaml`만 변경된 Commit을 Image Build
-대상에서 제외한다. 따라서 자동 대응은 새 Image를 만들지 않고 다음처럼 구성할 수
-있다.
+대상에서 제외한다. 따라서 이 기능은 새 Image를 만들지 않는 **Remediation 배포**에
+재사용할 수 있다.
 
 ```text
-검토된 대응 Workflow
+검토된 Remediation Workflow
 → defaultSecurityLevel: low → impossible
 → GitHub Bot Commit
 → Argo CD가 Helm 값 변경 감지
@@ -302,57 +319,68 @@ WAF·ALB·Application·CloudTrail·GuardDuty
                          ▼
                   SIEM·중앙 탐지 계층
                          │
-              Alert + Incident Context
+       ┌─────────────────┴──────────────────┐
+       │ Rule 100103 빠른 Trigger          │ 5-Source 느린 Evidence
+       ▼                                    ▼
+SOAR Allowlist·중복 차단              Incident 조사·확인
+       │
+       ├─ DVWA Workload Quarantine
+       ├─ 허용된 IAM 영향 차단
+       └─ Incident confidence=SUSPECTED
                          │
                          ▼
-                  SOAR 대응 Workflow
+              low → impossible Remediation
                          │
                          ▼
-        제한된 GitHub Actions Dispatch
+                 GitHub Commit·Argo Sync
                          │
                          ▼
-       values.yaml 보안 값 변경·Bot Commit
+             격리/패치 분리 검증·Recovery
                          │
                          ▼
-                Argo CD Auto Sync
-                         │
-                         ▼
-               새 DVWA Pod 배포
-                         │
-                         ▼
-                 동일 공격 재시도 실패
+               Terraform 영구 원인 복구
 ```
 
 ---
 
-## 5. 대응을 두 단계로 분리한다
+## 5. 대응을 세 단계로 분리한다
 
-### 5.1 자동 대응: 즉시 Containment
+세부 조건과 Reset 순서는
+[`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](./CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md)를
+정본으로 사용한다.
 
-첫 구현은 애플리케이션의 취약 기능을 GitOps로 잠근다.
+### 5.1 즉시 대응: 좁고 가역적인 Containment
+
+Rule `100103`의 첫 유효 Alert는 다음 두 영향만 제한한다.
+
+```text
+1. 고정 Label의 DVWA Workload Quarantine NetworkPolicy
+2. validation/* Lab 데이터 접근의 임시 Explicit Deny
+   또는 DVWA 전용 Principal의 사전 승인된 Containment
+```
+
+현재 DVWA 권한은 공유 Primary Karpenter Node Role에 붙어 있으므로 Role 전체 Deny를
+자동화하지 않는다. 공유 Role 상태에서는 `validation/*` 영향 차단까지만 자동화하고,
+Credential 전체 무효화라고 표현하지 않는다. NetworkPolicy도 EKS CNI가 실제로 강제하고
+Positive/Negative Test가 통과하기 전에는 `observe_only`로 유지한다.
+
+### 5.2 취약 동작 제거: 애플리케이션 Remediation
+
+증거를 보존하고 범위를 확인한 뒤 GitOps로 다음 보안 설정 패치를 배포한다.
 
 ```text
 defaultSecurityLevel: low
 → defaultSecurityLevel: impossible
 ```
 
-> **중요:** 이 방법은 DVWA가 교육용으로 제공하는 `defaultSecurityLevel` 기능을
-> 이용한 **시연 전용 Containment**다. 일반 애플리케이션이나 실제 운영 환경에는
-> 같은 스위치가 존재하지 않으므로, 이를 실무의 보편적인 자동 대응 방법이라고
-> 설명하지 않는다.
+이는 새 Pod·새 세션에서 동일 Command Injection 실행을 막는 **DVWA 전용 보안 설정
+패치**다. NetworkPolicy 격리, 유출 Credential 폐기, IAM Principal 차단과는 다른 조치다.
+재공격 검증에서는 격리 때문에 실패한 것과 이 설정 패치 때문에 실패한 것을 구분한다.
 
-이 대응이 보장하는 것은 다음이다.
+### 5.3 영구 대응과 Recovery: Terraform 보안 복구
 
-```text
-새 Pod·새 세션에서 동일 Command Injection Payload 실행 차단
-→ 새로운 IMDS 자격증명 탈취 경로 차단
-```
-
-이 대응만으로 이미 유출된 임시 자격증명이 즉시 무효화됐다고 주장하지 않는다.
-
-### 5.2 영구 대응: Terraform 보안 복구
-
-다음 항목은 Argo CD가 아니라 Terraform의 책임이다.
+다음 항목은 임시 격리나 애플리케이션 설정 패치가 아니라 Terraform과 승인된 운영
+절차의 책임이다.
 
 ```text
 httpTokens: required
@@ -378,7 +406,7 @@ Source Diff
 → 기존 자격증명 AccessDenied·재공격 Test
 ```
 
-### 5.3 실무 환경에서 필요한 대응
+### 5.4 실무 환경에서 필요한 대응
 
 실제 환경에서는 취약점 화면의 보안 레벨을 바꾸는 대신, 사고 범위와 서비스 영향에
 따라 다음 대응을 조합해야 한다.
@@ -395,16 +423,16 @@ Source Diff
 9. 로그·증거 보존과 Incident 기록
 ```
 
-이 계획의 DVWA 자동 조치는 위 항목 중 `취약 애플리케이션 기능의 즉시 차단`을
-작게 모형화한 것이다. 자격증명 무효화와 IAM·IMDS·NetworkPolicy 보강은 별도
-영구 대응으로 검증한다.
+이 계획은 Workload와 Identity 영향을 먼저 제한하고, `low → impossible` 설정 패치와
+영구 IAM·IMDS 복구를 뒤이어 수행하는 축소형 Incident Response다. 모든 자동화는 Lab
+대상·가역성·Blast Radius 검증을 전제로 한다.
 
 발표에서는 다음처럼 설명한다.
 
-> 이번 자동 조치는 DVWA에 내장된 교육용 보안 레벨을 GitOps로 전환해 새로운
-> 공격 진입을 차단한 시연입니다. 실제 환경에서는 동일한 스위치가 없으므로,
-> 워크로드 격리와 자격증명 무효화, IAM 최소 권한, IMDSv2 강제, 애플리케이션
-> Patch를 조직의 승인 절차에 따라 수행해야 합니다.
+> Rule 100103 뒤에는 DVWA Workload와 Lab 데이터 접근 영향을 먼저 제한했습니다.
+> 이후 `low → impossible`은 취약 동작을 닫는 애플리케이션 보안 설정 패치로 배포했고,
+> IAM 최소 권한·IMDSv2·Node 복구는 별도 영구 대응으로 검증했습니다. 공유 Role 전체를
+> 무조건 자동 차단하거나 설정 패치를 Credential 폐기로 과장하지 않았습니다.
 
 ---
 
@@ -522,9 +550,12 @@ CloudTrail의 시간·Role·고정 Key·성공 조건이다.
 → SNS
 ```
 
-GuardDuty Finding과 WAF·Application Event는 발생하면 조사 Timeline을 보강하지만
-확정 경보의 필수 입력으로 두지 않는다. 실제 공격과 무관한 Sample Finding으로
-성공을 주장하지 않는다.
+CloudTrail Rule `100100`은 보호 대상 S3 접근 성공을 확인하는 **침해 확인·Evidence
+경보**로 유지한다. DVWA Push Rule `100103`은 `command.execution + ec2_imds`라는
+고신뢰 공격 시도를 빠르게 알리고, 좁고 가역적인 DVWA Containment를 시작하는 별도
+Trigger다. 이 Trigger만으로 Credential 탈취나 S3 접근 성공까지 확인됐다고 주장하지
+않는다. GuardDuty Finding과 WAF Event는 조사 Timeline을 보강하지만 자동 Containment의
+단독 Trigger로 사용하지 않는다.
 
 완료 조건:
 
@@ -714,45 +745,51 @@ Host·Container 원본을 `10m`으로 복구했다.
 
 #### 4.1.3 Target — 저지연 Push 전달
 
-Target Architecture는 원본 저장 위치를 바꾸지 않고 AWS Log 도착 이후의 추가 Poll 대기만
-제거한다. 상세 계약은
+Target Architecture는 모든 Evidence Source를 실시간으로 복제하는 구조가 아니다.
+**빠른 Containment Trigger·대응 경로**와 **느리고 꼼꼼한 Evidence 경로**를 분리한다. 상세 구현 이력과
+전달 계약은
 [`WAZUH-PUSH-TRANSPORT-DESIGN.md`](./observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md)를
-정본으로 사용한다.
+참고하되, 그 문서의 5-Source Push 확장 P3는 핵심 시연 이후 선택 작업으로 보낸다. 최종
+시연 범위와 Source 역할은 이 계획을 우선한다.
 
 ```text
-us-east-1
-  WAF·CloudFront CWL → Subscription → Edge Lambda → Edge SQS → DLQ
+빠른 Trigger와 Containment
+  DVWA 안전 Audit CWL
+  → Subscription → Primary Lambda → Primary SQS → Local Bridge
+  → Wazuh Rule 100103 → Shuffle
+  → DVWA Workload Quarantine + 허용된 IAM 영향 차단
 
-ap-northeast-2
-  DVWA·CloudTrail CWL → Subscription → Primary Lambda → Primary SQS → DLQ
-  ALB S3 ObjectCreated ────────────────────────────────→ Primary SQS
+느리고 꼼꼼한 Evidence
+  WAF·CloudFront·CloudTrail·ALB
+  → 기존 CloudWatch Logs·Security Log S3 보존
+  → Wazuh 10분 Poll → Timeline·침해 확인·사후 조사
 
-Local
-  Queue별 Long Poll → Event Ledger + 안정 Live JSONL → Wazuh localfile(JSON) → Rule·Dashboard
+Remediation·Recovery
+  low → impossible 설정 패치 → Argo 정확한 SHA
+  → 격리/패치 분리 검증 → IAM·IMDS 영구 복구
 ```
 
-리전별 Queue 두 개를 두어 CloudWatch Logs·S3 Destination의 Region 경계를 단순하게 지킨다.
-노트북이 꺼져도 Queue가 Event를 보존하고, Bridge는 Host Ledger·Live JSONL 기록 성공 뒤에만
-메시지를 삭제한다. `event_id` Ledger가 정상 재전달을 건너뛰지만, JSONL Flush 직후
-비정상 종료 시 한 건 중복 가능성이 있으므로 exactly-once를 주장하지 않는다.
+DVWA Queue는 노트북이 꺼져도 Event를 보존하고, Bridge는 Host Ledger·Live JSONL 기록
+성공 뒤에만 메시지를 삭제한다. `event_id` Ledger가 정상 재전달을 건너뛰지만, JSONL Flush
+직후 비정상 종료 시 한 건 중복 가능성이 있으므로 exactly-once를 주장하지 않는다.
 
-Push의 조건은 `위험 Event인가`가 아니라 `승인된 Source인가`다. 선택한 Log Group의 전체
-Event를 Lambda로 전달하고, 위험 여부는 Wazuh Rule에서 판정한다. 다만 Queue·로컬에는
-Credential·Cookie·Command 원문과 응답을 복제하지 않고 안전 감사 필드만 Allowlist한다.
-전체 원문 비교·재분석은 기존 CloudWatch Logs·S3 Archive와 10분 Poll이 담당한다. 비용
-경계는 Source·Region·ALB Prefix와 Source별 Toggle로 통제한다.
+Push의 전달 조건은 `위험 Event인가`가 아니라 승인된 DVWA Log Group인가다. 해당 Log
+Group의 전체 Event를 Lambda로 전달하고, 위험 여부는 Wazuh Rule에서 판정한다. 다만
+Queue·로컬에는 Credential·Cookie·Command 원문과 응답을 복제하지 않고 안전 감사 필드만
+Allowlist한다. 전체 원문 비교·재분석과 나머지 네 Source는 기존 CloudWatch Logs·S3
+Archive와 10분 Poll이 담당한다.
 
-속도 목표도 Source 역할별로 분리한다.
+Source 역할은 다음처럼 고정한다.
 
 - DVWA 의미 조건: Poll Rule `100101`, Push Rule `100103`. 빠른 의심 Trigger의 Stretch
   60초, 완료 기준 180초 이내
-- WAF: 빠른 보조 신호. AWS Log 수신 뒤 Wazuh 전달 시간을 별도 측정
-- CloudTrail Rule `100100`: 침해 확인. CloudTrail 원본 지연과 Queue 이후 지연을 분리
+- WAF: 요청 검사·Label을 설명하는 보조 Evidence. 단독 Containment Trigger로 사용하지 않음
+- CloudTrail Rule `100100`: 실제 S3 접근 성공을 확인하는 침해 확인 Evidence
 - ALB·CloudFront: 경로 복원 Evidence. 최초 실시간 Trigger로 사용하지 않음
 
-전환 중 같은 Source의 Poll과 Push를 동시에 Live Alert로 넣지 않는다. Shadow Spool에서
-전달·중복·Offline Catch-up을 검증한 뒤 Source 하나씩 Poll을 끄며, 기존 `10m` 설정은 동시
-수집기가 아니라 수동 Rollback 경로로 보존한다.
+DVWA만 Poll과 Push의 이중 Alert를 피한다. Shadow Spool에서 실제 공격 전달·중복·Offline
+Catch-up을 검증한 뒤 DVWA Poll 입력만 끄고, DVWA의 기존 `10m` 설정은 수동 Rollback
+경로로 보존한다. WAF·CloudTrail·ALB·CloudFront Poll은 Evidence 경로로 계속 사용한다.
 
 첫 수집을 시작하기 전에 S3와 CloudWatch Logs 입력 모두 `only_logs_after=2026-AUG-12`,
 승인 Account, Source별 Region과 Prefix를 고정한다. WAF·CloudFront 병렬 Log Group은
@@ -827,10 +864,16 @@ errorCode 없음
 Decoded Field 경로를 확인하고 Custom Rule에 고정한다. 즉 `aws.*` 또는 Index의
 `data.aws.*`처럼 보일 것이라고 추측해 Rule을 먼저 작성하지 않는다.
 
-완성된 Alert에서는 원본 `CloudTrail eventID`, Event 시간, Rule ID·Level, Role,
-Bucket·Key, 성공 여부를 확인할 수 있어야 한다. Shuffle의 중복 제거 기준도 재수집 때
-달라질 수 있는 Wazuh Alert ID가 아니라, Runtime에서 확인한 Decoded Field의 원본
-`CloudTrail eventID`를 사용한다.
+CloudTrail Rule `100100` Alert에서는 원본 `CloudTrail eventID`, Event 시간, Rule ID·Level,
+Role, Bucket·Key, 성공 여부를 확인할 수 있어야 한다. DVWA Rule `100103` Alert에서는 원본
+Push `event_id`, Event 시간, `command.execution`, `resource=ec2_imds`, Route와 Lab 경계를
+확인할 수 있어야 한다.
+
+Shuffle은 Source별 Event 중복 제거와 Incident 상관관계를 구분한다. DVWA Trigger는 원본
+Push `event_id`, CloudTrail 확인 Event는 원본 `CloudTrail eventID`로 각각 중복을 제거한다.
+재수집 때 달라질 수 있는 Wazuh Alert ID는 사용하지 않는다. 두 Source는 Scenario·관련
+Entity·Resource·제한된 시간창으로 같은 Incident에 연결하며, 모든 Source를 관통하는 가짜
+공통 ID가 있다고 주장하지 않는다.
 
 Wazuh가 현재 관측 공백을 자동으로 메우지는 않는다. DVWA Command Body·실행 결과와
 Pod→IMDS 네트워크 Event는 계속 미수집이며, WAF와 Apache에는 공통 Request ID도 없다.
@@ -863,7 +906,7 @@ WAF·ALB·DVWA는 시간창·Method·Path, DVWA 결과와 CloudTrail은 시간�
 어떤 요청·Role·Resource가 관련됐는가
 어느 계층에서 관측됐고 어디는 보이지 않는가
 왜 이 사건이 Alert가 됐는가
-현재 대응 상태와 다음 조치는 무엇인가
+현재 사건 확신도와 대응 단계, 다음 조치는 무엇인가
 필요할 때 어떤 원본 Event로 내려갈 수 있는가
 ```
 
@@ -873,7 +916,9 @@ WAF·ALB·DVWA는 시간창·Method·Path, DVWA 결과와 CloudTrail은 시간�
 - **공격 경로:** CloudFront → WAF → ALB → DVWA → CloudTrail의 관측 상태
 - **시간순 Timeline:** Source·행위·결과·상관 기준·관측 공백
 - **탐지 근거:** Rule `100100`·Level·Role·Object·성공 여부
-- **대응 상태:** 미조치·Shuffle 검증 중·Containment 완료 중 하나
+- **사건 확신도:** `UNASSESSED`·`SUSPECTED`·`CONFIRMED`·`DISPROVED`
+- **대응 단계:** `DETECTED`·`CONTAINMENT_DISPATCHED`·`CONTAINED`·`INVESTIGATING`·
+  `REMEDIATED`·`RECOVERY_VALIDATED`
 - **다음 조치:** 승인된 Playbook 또는 조사 Runbook
 - **원본 Drill-down:** 필요할 때만 Raw Event와 Alert 상세로 이동
 
@@ -936,7 +981,7 @@ Source 완전성:
 초보자 사용성:
 
 - [x] 검색식 없이 사건을 확인하는 한글 Saved View·Dashboard 구현
-- [x] 사건 요약·공격 경로·수집 흐름·탐지 근거·대응 상태·다음 조치 표시
+- [x] 사건 요약·공격 경로·수집 흐름·탐지 근거·사건 확신도·대응 단계·다음 조치 표시
 - [x] Raw Event·Alert Drill-down 제공
 - [ ] 다른 조원의 3분 무검색 사용성 Test 통과
 - [ ] 새 Alert가 `amazon` Group 적용 뒤 AWS 전용 Events 화면에 표시됨
@@ -952,7 +997,8 @@ Source 완전성:
 - [x] DVWA Push → Live JSONL → Rule `100102` 무해 Event 3회 누락·정상 실행 중복 0, 최대 6.439초
 - [ ] DVWA 실제 Push Rule `100103` Alert 3회에서 완료 기준 180초 이내
 - [ ] 노트북 10분 Off 뒤 Queue Catch-up과 중복 Alert 0
-- [ ] WAF → CloudTrail → ALB → CloudFront 순서의 Source별 Cutover
+- [ ] 실제 공격·복구 검증 뒤 DVWA Poll 입력만 비활성화하고 수동 Rollback 확인
+- [x] WAF·CloudTrail·ALB·CloudFront는 10분 Evidence 경로로 유지하고 Push 완료 조건에서 제외
 
 운영·보존·위생:
 
@@ -967,101 +1013,109 @@ Gate 4는 공격·탐지 로그와 사람이 읽을 수 있는 사건 화면까�
 `다음 조치`가 Shuffle을 가리키는 것만으로 자동 대응이 완료된 것은 아니다.
 
 ```text
-Gate 4  공격 Source 5개 + 저지연 전달 + 사건 Timeline + 초보자용 Dashboard
-Gate 5  Wazuh Alert → Shuffle 검증·중복 차단 Dry Run
-Gate 6  승인된 GitHub 한 줄 변경
-Gate 7  Argo CD·EKS 배포 Evidence + 재공격 실패
+Gate 4  공격 Source 5개 Evidence + DVWA 저지연 Trigger + 사건 Timeline + 초보자용 Dashboard
+Gate 5  Wazuh Alert → Shuffle 검증·중복 차단·조치 Preview
+Gate 6  Workload Quarantine + 허용된 IAM 영향 차단
+Gate 7  low → impossible Remediation + Argo·Recovery 검증
 ```
 
 ### Gate 5 — SOAR Dry Run
 
-SOAR는 처음부터 GitHub를 변경하지 않는다.
+SOAR는 처음부터 GitHub·Kubernetes·IAM을 변경하지 않는다. 먼저 빠른 Trigger와 늦은
+침해 확인을 서로 다른 Event로 처리하되 하나의 Incident로 연결하고, 실제로 실행할 고정
+Target과 Rollback을 Preview하는 Dry Run을 통과한다.
 
 ```text
-Wazuh Alert 수신
-→ CloudTrail eventID·Rule ID·Role·Account·Lab Prefix 검증
-→ 같은 CloudTrail eventID 중복 실행 차단
-→ ‘실행했을 GitHub Workflow’ Preview
-→ 아무것도 변경하지 않고 종료
+빠른 Trigger / Containment Preview Branch
+  DVWA Rule 100103 수신
+  → Push event_id·command.execution·resource=ec2_imds·Route·Lab 경계 검증
+  → 같은 Push event_id 중복 실행 차단
+  → Incident를 suspected로 생성
+  → ‘실행했을 DVWA Quarantine NetworkPolicy’ Preview
+  → 공유 Role이면 ‘validation/* 임시 Deny’ Preview
+  → 전용 Principal이면 사전 승인된 IAM Containment Preview
+
+침해 확인 Branch
+  CloudTrail Rule 100100 수신
+  → CloudTrail eventID·Role·Account·validation/*·성공 조건 검증
+  → 같은 CloudTrail eventID 중복 확인 차단
+  → 관련 Entity·Resource·시간창으로 기존 Incident를 confirmed로 갱신
+  → Containment Workflow는 다시 실행하지 않음
+
+WAF 단독 Event
+  → Incident Context만 보강하고 Containment Preview를 만들지 않음
 ```
 
 완료 조건:
 
-- [ ] 허용한 Account·Role·Scenario만 통과
-- [ ] 같은 CloudTrail eventID 재수신 시 중복 실행 없음
+- [ ] 허용한 DVWA Event 의미·Route·Lab Scenario만 빠른 Branch 통과
+- [ ] 같은 DVWA Push `event_id` 재수신 시 Containment Preview 중복 없음
+- [ ] NetworkPolicy Namespace·Selector·예외·Rollback이 고정돼 있음
+- [ ] IAM 조치가 공유 Role 전체 Deny인지 Lab Prefix 영향 차단인지 명시됨
+- [ ] NetworkPolicy 미강제·IAM Blast Radius 미확정이면 `observe_only`로 실패 안전하게 종료
+- [ ] 허용한 CloudTrail Account·Role·Object·성공 조건만 확인 Branch 통과
+- [ ] 같은 CloudTrail `eventID` 재수신 시 확인 Event 중복 없음
+- [ ] 늦은 CloudTrail 확인이 기존 Containment를 다시 실행하지 않음
+- [ ] WAF 단독 Event가 Containment Preview를 만들지 않음
 - [ ] Credential·원본 Log를 GitHub로 전달하지 않음
 - [ ] 실패·Timeout·재시도 기록
 
-### Gate 6 — GitOps 자동 Containment
+### Gate 6 — 제한된 자동 Containment
 
 권장 구조:
 
 ```text
 SOAR
-→ 제한된 workflow_dispatch 또는 repository_dispatch
-→ 사전 검토된 GitHub Actions
-→ deploy/dvwa/values.yaml 한 값만 검증·변경
-→ Bot Commit to main
-→ Argo CD Auto Sync
+→ 고정된 DVWA Workload Quarantine 요청
+→ 사전 검토된 NetworkPolicy만 GitOps Commit
+→ Argo CD가 정확한 Commit SHA 배포
+→ 별도 고정 Branch에서 IAM 영향 차단
+   - 공유 Role: validation/* 임시 Explicit Deny
+   - 전용 Principal: 사전 승인된 Principal Containment
 ```
 
 금지:
 
 ```text
-SOAR가 임의 파일·임의 Branch를 수정
-LLM이 생성한 Patch를 무검토 Push
-Terraform Apply를 GitHub Commit처럼 취급
-Alert 하나만으로 광범위한 IAM 관리자 작업 수행
+SOAR가 임의 Namespace·Selector·Role·Policy·파일·Branch를 입력
+LLM이 생성한 NetworkPolicy·IAM Policy를 무검토 적용
+NetworkPolicy YAML 존재만으로 격리 성공 선언
+공유 Karpenter Node Role 전체에 자동 Deny
+Alert 하나만으로 Terraform Apply나 광범위한 IAM 관리자 작업 수행
 ```
 
-Workflow 안전 조건:
+Containment 안전 조건:
 
-- [ ] 변경 전 값이 정확히 `low`인지 확인
-- [ ] 변경 후 값이 정확히 `impossible`인지 확인
-- [ ] 다른 파일 Diff가 있으면 실패
-- [ ] 이미 `impossible`이면 성공으로 종료하는 Idempotency
-- [ ] Commit에 Incident/Finding 식별자 포함, 민감정보 제외
-- [ ] 자동 Containment와 Reset이 같은 `concurrency` 그룹을 사용
+- [ ] NetworkPolicy Controller·EKS VPC CNI enforcing 상태를 Runtime으로 확인
+- [ ] 대상은 `namespace=dvwa`, `app.kubernetes.io/name=dvwa`,
+      `app.kubernetes.io/instance=dvwa`로 고정
+- [ ] 공격 Egress가 차단되고 다른 Namespace·정상 관측 경로가 유지됨
+- [ ] 적용 전후 Commit·Argo Revision·정책 UID·Test 결과를 보존
+- [ ] 공유 Role IAM 조치는 `validation/*`에만 영향
+- [ ] 전용 Principal이 아니면 Principal 전체 자동 Containment 금지
+- [ ] 같은 TAKE 재수신 시 NetworkPolicy·IAM 조치 중복 없음
+- [ ] 모든 임시 조치에 정확한 역방향 Rollback과 사람 승인 경계 존재
 
-재촬영 Reset은 자동 대응 Workflow에 역방향 옵션을 추가하지 않고 별도의 수동
-Workflow로 만든다.
+현재 Source의 `soc-contain-dvwa.yml`은 `low → impossible` 옛 계약이므로 이 Gate의
+Containment 구현으로 사용하지 않는다. 새 계약으로 교체·검증하기 전 Production Dispatch를
+연결하지 않는다.
 
-```text
-workflow_dispatch만 허용
-→ 운영자가 Invoke-SocLabReset.ps1의 정확한 확인문을 직접 입력
-→ TAKE_ID + 정확한 확인문 검증
-→ 현재 값이 impossible인지 확인
-→ deploy/dvwa/values.yaml의 한 값만 low로 변경
-→ 새 Reset Commit을 main에 Push
-→ Argo CD Auto Sync
-```
-
-현재 저장소는 Private + GitHub Free이므로 `environment:`만 적어 Required Reviewer
-승인을 강제할 수 없다. 따라서 현재 구현의 사람 승인 경계는 Reset Script의 명시 실행과
-`RESET SOC LAB TO LOW` 확인문이다. 향후 지원 Plan으로 전환해 실제 Required Reviewer를
-설정한 뒤에만 GitHub Environment 승인을 보장한다고 표현한다.
-
-Reset 안전 조건:
-
-- [ ] `impossible → low` 외의 변경을 거부
-- [ ] 이미 `low`이면 변경 없이 성공 종료
-- [ ] 임의 Branch·파일·값 입력을 받지 않음
-- [ ] 과거 Containment Commit을 삭제·강제 Push·History Rewrite하지 않음
-- [ ] Commit에 `TAKE_ID`를 넣고 Credential·원본 Event는 넣지 않음
-
-### Gate 7 — Argo CD 배포·재공격 검증
+### Gate 7 — Remediation·Argo CD·Recovery 검증
 
 관찰 순서:
 
 ```text
-GitHub Commit
+Containment Evidence 보존
+→ low → impossible Remediation Commit
 → Argo CD OutOfSync 또는 새 Revision 감지
 → Syncing
 → EKS Control Plane Audit에서 배포 API Event 확인
 → Deployment Rollout
 → Healthy·Synced
 → 새 Pod·새 세션 확인
-→ 동일 Payload 재시도
+→ 필요한 Test 경로만 제한적으로 복구
+→ 동일 Payload와 정상 기능 재검증
+→ Terraform 영구 복구 뒤 임시 격리 해제
 ```
 
 완료 조건:
@@ -1070,10 +1124,12 @@ GitHub Commit
 - [ ] EKS Control Plane `audit`에서 Argo 배포 관련 API Event를 같은 시간창으로 확인
 - [ ] Pod Template의 `DEFAULT_SECURITY_LEVEL=impossible`
 - [ ] 새 Pod Ready
-- [ ] 동일 Command Injection Payload가 실행되지 않음
+- [ ] NetworkPolicy 격리와 무관하게 `impossible` 설정에서 동일 Payload가 실행되지 않음
 - [ ] 정상 로그인·페이지 접근 Regression 통과
-- [ ] 차단 사실과 기존 Credential 무효화를 혼동하지 않음
-- [ ] DVWA 전용 조치임을 시연 화면과 설명에서 명시
+- [ ] IAM 임시 Deny 또는 영구 복구 상태에서 기존 Credential의 `validation/*` 접근이 실패
+- [ ] Workload Containment·IAM 영향 차단·애플리케이션 Remediation을 구분
+- [ ] 임시 격리 해제 시각·주체·정상 기능 결과를 Evidence에 보존
+- [ ] DVWA 전용 설정 패치임을 시연 화면과 설명에서 명시
 
 ### Gate 7-R — 실패한 촬영의 수동 재준비
 
@@ -1083,29 +1139,34 @@ GitHub Commit
 ```text
 촬영 실패 판정·TAKE_ID 종료 기록
 → 수동 Reset 승인
-→ impossible → low Reset Commit
-→ Argo CD가 Reset Commit 배포
-→ 새 Pod Ready·Synced·Healthy
-→ 새 브라우저 세션에서 low 확인
+→ 기존 Quarantine 유지
+→ impossible → low Reset Commit과 Argo 배포
+→ Lab Prefix IAM 임시 Deny 또는 전용 Lab 권한 복원
+→ 새 Pod Ready·Synced·Healthy·low 확인
 → 공격 Process의 임시 AWS Credential 정리 Evidence + 현재 Reset Process 잔존 없음 확인
 → 이번 TAKE 뒤 Alarm의 ALARM → 실제 OK 복귀 History 확인
 → 기존 TAKE CLOSED
-→ Stop-SocLab -StopWazuh 후 Start-SocLab으로 새 TAKE_ID·UTC 시간창 발급
+→ Wazuh·Bridge READY와 새 TAKE_ID·UTC 시간창 발급
+→ Quarantine을 마지막에 해제
 → 다음 촬영 시작
 ```
 
-CloudWatch Alarm Action은 보통 상태 전환 때 실행되므로 계속 `ALARM`인 상태에서
-다시 공격하면 두 번째 자동 조치가 시작되지 않을 수 있다. 데모를 맞추기 위해
-`SetAlarmState`로 강제 OK 처리하지 않고 실제 평가로 `OK`가 된 것을 확인한다.
+CloudWatch Alarm은 AWS Native 탐지·사람 알림 Evidence이며 Shuffle Containment의
+Trigger가 아니다. 계속 `ALARM`이면 다음 TAKE의 독립된 Native Alarm 전환 Evidence를
+만들 수 없으므로, `SetAlarmState`로 강제 OK 처리하지 않고 실제 평가로 `OK`가 된 것을
+확인한다. DVWA Rule `100103`의 빠른 Containment는 이 Alarm 상태에 의존하지 않는다.
 
 완료 조건:
 
 - [ ] Reset Commit만으로 새 Image Build 없이 Rollout됐다.
 - [ ] 새 Pod·새 세션의 기본값이 `low`다.
+- [ ] IAM 복원 대상이 `validation/*` 또는 전용 Lab Principal로 한정됐다.
+- [ ] Quarantine 해제 전 Wazuh·Bridge·새 TAKE가 READY다.
 - [ ] 공격 Process가 임시 AWS Credential 환경변수를 지웠고 Reset Process에도 남아 있지 않다.
 - [ ] 이전 로그는 삭제하지 않고 실패한 `TAKE_ID`로 구분했다.
 - [ ] 이번 TAKE 이후 Alarm History에 `ALARM → OK`가 있고 현재도 실제 `OK`다.
-- [ ] 새 CloudTrail `eventID`가 독립된 두 번째 Wazuh Alert·대응을 만들 수 있다.
+- [ ] 새 DVWA Push `event_id`가 독립된 두 번째 Rule `100103` Alert·대응을 만들 수 있다.
+- [ ] 새 CloudTrail `eventID`가 그 TAKE의 독립된 확인 Alert가 되고 대응을 중복 실행하지 않는다.
 - [ ] `TAKE_ID`는 촬영·Evidence 묶음 표식이며 보안 Event 고유 ID를 대신하지 않는다.
 
 ### Gate 8 — 영구 대응·전체 Rehearsal
@@ -1114,6 +1175,7 @@ CloudWatch Alarm Action은 보통 상태 전환 때 실행되므로 계속 `ALAR
 - [ ] 최종 촬영 승인 뒤에는 수동 Reset을 실행하지 않음
 - [ ] Terraform 보안 설정 복구 Plan 검토
 - [ ] 승인된 Apply 후 IMDS·S3 Negative Test
+- [ ] 임시 IAM Deny와 Quarantine을 영구 통제 확인 뒤 해제
 - [ ] 네 명 모두 공격·탐지·대응 흐름 반복
 - [ ] 각자 정탐 근거와 한계를 설명
 - [ ] 전체 소요시간 측정
@@ -1130,19 +1192,20 @@ Timestamp와 구간 전환을 명시한다.
 
 | 장면 | 화면 | 반드시 보여줄 Evidence |
 |---:|---|---|
-| 0 | 촬영 Slate | `TAKE_ID`·UTC 시작·DVWA low·Alarm OK |
+| 0 | 촬영 Slate | `TAKE_ID`·UTC 시작·DVWA low·Alarm OK·Wazuh/Bridge READY |
 | 1 | 시나리오·취약 Profile | 실습 범위와 가짜 데이터 |
 | 2 | DVWA 공격 | 통제된 Payload 실행 |
 | 3 | IMDS·S3 결과 | Credential 원문 없이 Role·가짜 CSV 접근 성공 |
 | 4 | 원본 로그 | 공격 시각·Role·S3 Event |
 | 5 | SIEM Alert | Rule·Severity·정탐 근거 |
-| 6 | SOAR 실행 | 검증·중복 차단·GitHub Dispatch |
-| 7 | GitHub | Bot Commit과 한 줄 Diff |
-| 8 | Argo CD | Revision·Syncing·Healthy·새 Pod |
-| 9 | 재공격 | 같은 Payload 실패 |
-| 10 | 결과 | DVWA 전용 자동 Containment와 실제 환경의 영구 대응 구분 |
+| 6 | SOAR·Containment | 검증·중복 차단·Workload Quarantine·허용된 IAM 영향 차단 |
+| 7 | 느린 조사 | WAF·ALB·CloudFront·CloudTrail Timeline과 Incident 확인 |
+| 8 | Remediation | `low → impossible` 설정 Patch Commit과 정확한 Diff |
+| 9 | Argo CD | Revision·Syncing·Healthy·새 Pod |
+| 10 | 재공격·정상 기능 | 격리와 Patch 효과를 구분한 실패·Regression |
+| 11 | 결과 | Containment·Remediation·영구 대응·Recovery 구분 |
 
-장면 0~9가 모두 유효한지 확인하기 전에는 Terraform 영구 복구 장면을 촬영하지
+장면 0~10이 모두 유효한지 확인하기 전에는 Terraform 영구 복구 장면을 촬영하지
 않는다. 중간 장면이 실패하면 해당 `TAKE_ID`를 실패로 표시하고 Gate 7-R로 돌아간다.
 최종 사용할 구간을 확인한 뒤에만 영구 복구를 수행하고 장면 10에 연결한다.
 
@@ -1168,7 +1231,7 @@ GitHub Token·Webhook Secret
 | 2 | CloudTrail·GuardDuty·WAF·Application Coverage | Gate 2 |
 | 3 | 탐지 규칙·SIEM Alert | Gate 3·4 |
 | 4 | SOAR 수신·Dry Run·중복 방지 | Gate 5 |
-| 5 | GitHub 자동 Containment·수동 Reset·Argo 검증 | Gate 6·7·7-R |
+| 5 | Workload·IAM 영향 Containment·Remediation·Argo 검증 | Gate 6·7 |
 | 6 | E2E Rehearsal·재촬영 Reset 연습·팀원 교대 실습 | Gate 7-R |
 | 7 | 최종 영상 확인 → Terraform 영구 복구 → Evidence 정리 | Gate 8·최종 완료 |
 
@@ -1189,7 +1252,8 @@ Public S3가 아닌데 왜 데이터가 읽혔는가
 SIEM과 SOAR의 역할 차이는 무엇인가
 왜 SOAR가 임의 코드를 Push하면 안 되는가
 Argo CD가 담당한 것과 Terraform이 담당한 것은 무엇인가
-자동 Containment가 막은 것과 아직 막지 못한 것은 무엇인가
+Workload Containment와 IAM 영향 차단이 각각 막은 것은 무엇인가
+`low → impossible` 설정 패치가 격리와 다른 이유는 무엇인가
 수동 Reset이 되돌린 것과 되돌리지 않은 것은 무엇인가
 왜 다음 촬영 전에 Alarm의 OK 복귀와 새 세션이 필요한가
 동일 공격 실패를 어떻게 검증했는가
@@ -1204,20 +1268,22 @@ Argo CD가 담당한 것과 Terraform이 담당한 것은 무엇인가
 
 | 결정 | 후보 | 결정 시점 |
 |---|---|---|
-| 대표 탐지 신호 | **CloudTrail GetObject Custom Rule 확정·Runtime 정탐 검증** | 2026-08-12 완료 |
+| 대표 신호 역할 | **DVWA Rule `100103`은 빠른 Containment Trigger / CloudTrail Rule `100100`은 침해 확인** | CloudTrail Runtime 완료, DVWA 실제 공격 Runtime 대기 |
 | 중앙 관제 제품 | **Wazuh 확정, 별도 ELK 미구축** | 2026-08-12 사용자 결정 |
 | SIEM 위치 | **Local Docker single-node** | Wazuh 4.14.7 세 Service 기동·CloudTrail Dashboard 집계 확인 |
 | Gate 4 필수 AWS→SIEM 입력 | **CloudFront + WAF + ALB + DVWA + CloudTrail** | 5/5 Raw·Custom Alert·Dashboard 구현, 안내형·3분 사용성 Test 대기 |
-| AWS→SIEM 전달 방식 | **10m Poll 원본 조사 + DVWA 저지연 Push 검증** | Primary DVWA Lambda·SQS·Local Bridge·Live JSONL·Rule `100102` 3회 완료, 실제 Rule `100103`·Poll Cutover 대기 |
+| AWS→SIEM 전달 방식 | **5-Source 10m Evidence + DVWA 저지연 Trigger** | DVWA Rule `100102` 3회 완료, 실제 Rule `100103`·DVWA Poll Cutover 대기; 나머지 4개 Source는 Poll 유지 |
 | EKS Control Plane Log | **Gate 7 배포·대응 Evidence** | `api`·`audit`·`authenticator` 활성, Argo 배포 시간창 Runtime 대기 |
 | Wazuh Runtime Credential | **로컬 전용 IAM User 장기 Key 예외** | Git 밖 Profile·Read-only Mount, 종료 후 비활성화·삭제 |
 | Terraform Reader Role | Source·Apply 존재, 현재 Runtime 경로는 아님 | Wazuh Bucket 최상위 List 요구 반영 뒤 재검증 |
-| SOAR 제품 | **Shuffle 확정** | Wazuh 공식 Webhook 연동, Gate 5 Runtime 전 |
-| GitHub 호출 방식 | `workflow_dispatch` / `repository_dispatch` | 권한 설계 후 |
-| 자동 대응 값 | **`defaultSecurityLevel=impossible` 확정** | DVWA 전용 시연 Containment |
-| 재촬영 Reset | **수동 `workflow_dispatch`, `impossible → low`만 허용** | Gate 6 구현 |
+| SOAR 제품·입력 역할 | **Shuffle 확정, Rule `100103`은 Containment Trigger·Rule `100100`은 확인** | Wazuh 공식 Webhook 연동, Gate 5 Runtime 전 |
+| Workload Containment | **DVWA 전용 Quarantine NetworkPolicy** | CNI enforcement·실제 차단·Rollback 검증 뒤 활성 |
+| IAM 영향 차단 | **공유 Role은 `validation/*` 임시 Deny, 전용 Principal만 전체 Containment** | Blast Radius·Rollback 검증 뒤 활성 |
+| Remediation | **`defaultSecurityLevel=low → impossible` 보안 설정 패치** | Containment와 분리된 GitOps Workflow로 재검증 |
+| GitHub 호출 방식 | 고정 `workflow_dispatch`; 임의 Target Input 금지 | 각 대응 계약 확정 뒤 |
+| 재촬영 Reset | **수동 전용, Quarantine을 마지막에 해제** | Gate 7-R 구현 |
 | 실제 SSRF 모듈 | 핵심 E2E 이후 선택적 Upgrade | 현재 보류 |
-| AWS 측 자동 격리 | 미구현 / 제한된 별도 단계 | 핵심 완료 후 |
+| 공유 Role 전체 자동 격리 | **금지** | 전용 Role·Node 경계가 생기면 재검토 |
 | 두 번째 시나리오 | S3 공개 설정 / SQLi | 핵심 완료 후 |
 
 ---

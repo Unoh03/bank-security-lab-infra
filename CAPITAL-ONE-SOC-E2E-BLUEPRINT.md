@@ -1,25 +1,29 @@
 # Capital One 기반 SOC 자동화 E2E Blueprint
 
-> 상태: **FROZEN v1.2 — 구현 기준, E2E 미완료**
+> 상태: **TARGET v2.0 — 대응 계약 정합성 확정, E2E 미완료**
 >
 > 기준 시각: 2026-08-18 KST
 >
-> Freeze 기록: 사용자가 전체 흐름 검토와 Shuffle Cloud 결정을 마친 뒤
-> 2026-08-18의 명시적 진행 지시로 동결했다.
+> 대응 의미 정본:
+> [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](./CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md)
 >
-> v1.1 보정: READY의 DLQ=0 검사를 광범위한 Bootstrap 권한으로 우회하지 않도록,
+> v1.1 기록: READY의 DLQ=0 검사를 광범위한 Bootstrap 권한으로 우회하지 않도록,
 > 기존 Wazuh Reader Role에 Primary Push DLQ의 `GetQueueAttributes/GetQueueUrl`만
 > 추가하고 DLQ URL을 비민감 Output으로 제공한다. 수신·삭제 권한은 추가하지 않는다.
 >
-> v1.2 보정: 구조 Schema와 운영 Allowlist를 분리하고, `observe_only`는 Dedupe 전에
+> v1.2 기록: 구조 Schema와 운영 Allowlist를 분리하고, `observe_only`는 Dedupe 전에
 > 종료한다. Gate B5 원자성 Stress는 공식 Execute API로 수행하고 Webhook Header는
 > 별도 Smoke로 검증한다. GitHub Artifact에는 최초 Dispatch Alert의
 > `alert_body_sha256`를 보존한다.
 >
-> 이 문서는 대표 시연의 구성요소, 계약, 실패 경계, 검증 Evidence를 동결한 단일
-> 구현 기준이다. 동결은 설계 승인이지 구현 완료가 아니다. 현재 Runtime은 이 문서에
-> 고정되지 않으므로 각 Gate에서 다시 검증하며, 별도 다음 작업 전에는 Goal 생성,
-> Shuffle 연동, GitHub Workflow 추가, Terraform Apply, 실제 공격을 시작하지 않는다.
+> v2.0 정정: `low → impossible`을 Containment에서 Remediation으로 이동했다. 즉시
+> Containment는 DVWA Workload Quarantine과 허용된 IAM 영향 차단이다. 공유 Karpenter
+> Node Role 전체 자동 Deny는 금지하며, NetworkPolicy enforcement와 Blast Radius를
+> Runtime으로 증명하기 전에는 `observe_only`만 허용한다.
+>
+> 이 문서는 대표 시연의 Hop별 Target 계약과 실패 경계를 정의한다. Target은 Source
+> 존재나 Runtime 완료를 뜻하지 않는다. 실제 Source와 Runtime Evidence가 충돌하면
+> Source·Runtime을 우선하고 이 문서를 고친다.
 
 ---
 
@@ -27,15 +31,17 @@
 
 ### 0.1 단일 구현 기준
 
-이 문서가 동결된 뒤에는 다음 문서를 구현의 직접 지시서로 사용하지 않는다.
+문서 역할은 다음처럼 고정한다.
 
-- CAPITAL-ONE-SOC-DEMO-PLAN.md
-- CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md
-- observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md
+- `CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`: 대응 의미와 순서의 정본
+- `CAPITAL-ONE-SOC-DEMO-PLAN.md`: 전체 Gate·촬영 범위·현재 우선순위
+- 이 문서: Hop별 Interface·상태·Evidence Target
+- `CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md`: AWS Source·영구 복구 실행 경계
+- `observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md`: AWS→Wazuh 전달 계약
 
-위 문서는 결정 과정과 과거 Gate의 근거로 보존한다. 서로 충돌하면 이 Blueprint가
-대표 E2E의 최신 기준이다. 단, 실제 Source와 Runtime Evidence가 이 문서와 충돌하면
-Source와 Runtime이 우선하며 Blueprint를 먼저 수정한다.
+과거 `FROZEN v1.2`의 `low → impossible Containment`와 이를 직접 호출하는 Production
+Dispatch 계약은 폐기했다. 현재 Source에 남은 이름과 Workflow는 Legacy 구현 장부로만
+취급하고 v2 Gate를 통과하기 전에는 활성 대응 경로로 사용하지 않는다.
 
 ### 0.2 사실 상태 표기
 
@@ -56,9 +62,10 @@ Source와 Runtime이 우선하며 Blueprint를 먼저 수정한다.
 - Rule 100103 저지연 탐지
 - Wazuh에서 Shuffle로 전달할 최소 Alert 계약
 - TAKE_ID 검증과 중복 대응 차단
-- GitHub의 제한된 low → impossible 변경
-- Argo CD의 정확한 Commit 배포 확인
-- 재공격 실패, 정상 기능 유지, 수동 Reset
+- DVWA Workload Quarantine과 허용된 IAM 영향 차단
+- `low → impossible` 보안 설정 Remediation
+- Argo CD의 각 정확한 Commit 배포 확인
+- 격리/패치 분리 검증, 정상 기능 유지, 수동 Reset
 - 보고서용 Evidence
 
 제외:
@@ -68,7 +75,8 @@ Source와 Runtime이 우선하며 Blueprint를 먼저 수정한다.
 - 24시간 운영과 고가용성
 - Wazuh의 AWS 이전
 - 두 번째 공격 시나리오
-- 광범위한 IAM 격리나 AWS 자원 자동 차단
+- 공유 Karpenter Node Role 전체 자동 Deny
+- 전용 Principal 없이 Credential 전체 자동 폐기를 주장하는 것
 - 추가 Dashboard 미관 개선
 - 실제 기업의 범용 치료 코드를 가장하는 것
 
@@ -79,8 +87,8 @@ Source와 Runtime이 우선하며 Blueprint를 먼저 수정한다.
 ### 1.1 한 문장 목표
 
 노트북에서 SOC를 한 번 시작한 뒤, 교육용 DVWA 침투가 저지연으로 탐지되고,
-허용된 자동 대응만 GitOps로 배포되어 같은 공격은 실패하지만 정상 기능은 유지되는
-장면을 처음부터 끝까지 재현한다.
+Workload·IAM 영향을 먼저 제한한 다음 느린 Evidence로 조사하고, 검토된 설정 패치와
+영구 복구를 배포해 같은 공격은 실패하지만 정상 기능은 유지되는 장면을 재현한다.
 
 ### 1.2 최종 장면
 
@@ -92,15 +100,17 @@ Source와 Runtime이 우선하며 Blueprint를 먼저 수정한다.
       → CloudWatch Logs → Lambda → SQS → Local Bridge
       → Wazuh Rule 100103 Alert 2건
       → Shuffle은 같은 TAKE_ID를 한 사건으로 분류
-      → GitHub containment Workflow 호출은 정확히 1회
-      → deploy/dvwa/values.yaml의 low만 impossible로 변경
-      → 일반 Push로 main에 새 Commit 생성
-      → Argo CD가 그 Commit SHA를 Synced + Healthy로 배포
-      → 새 Pod Ready
-      → 동일 공격 재시도 실패
-      → 정상적인 숫자 IP Ping과 로그인은 유지
+      → 고정 DVWA Quarantine 요청 1회
+      → 공유 Role이면 validation/* IAM 영향 차단 또는 사람 승인 대기
+      → 느린 CloudTrail·WAF·ALB·CloudFront로 Incident 확인·보강
+      → 별도 Remediation에서 values.yaml의 low만 impossible로 변경
+      → Argo CD가 각 예상 Commit SHA를 Synced + Healthy로 배포
+      → 격리 효과와 설정 패치 효과를 분리해 동일 공격 실패 확인
+      → 정상 로그인과 허용 기능 유지
     사용자: 필요할 때 별도 Reset Workflow 수동 실행
-      → impossible만 low로 복원
+      → Quarantine을 유지한 채 impossible을 low로 복원
+      → Lab IAM 권한·새 Pod·새 TAKE·Wazuh READY 확인
+      → Quarantine을 마지막에 해제
 
 ### 1.3 완료로 인정하지 않는 것
 
@@ -121,7 +131,7 @@ Source와 Runtime이 우선하며 Blueprint를 먼저 수정한다.
 
 | 경로 | 목적 | Source |
 |---|---|---|
-| 빠른 대응 경로 | 수초 단위 탐지와 자동 Containment | DVWA Push → Rule 100103 |
+| 빠른 대응 경로 | 수초 단위 탐지와 좁고 가역적인 Containment | DVWA Push → Rule 100103 |
 | 조사·보존 경로 | 사건 전후의 원본 확인과 보고서 Evidence | 기존 5-Source 10분 Poll |
 
 기존 CloudTrail, WAF, ALB, CloudFront, DVWA Poll은 제거하지 않는다. 다만 대표 자동
@@ -157,11 +167,13 @@ Source와 Runtime이 우선하며 Blueprint를 먼저 수정한다.
 | Rule 100103 Alert | 2 |
 | Shuffle 실행 | 2까지 허용 |
 | 신규 사건 판정 | 1 |
-| GitHub containment dispatch | 1 |
-| low → impossible Commit | 1 |
+| Containment orchestration | 1 |
+| Workload Quarantine 적용 | 1 |
+| IAM 영향 차단 | 0 또는 1; 공유 Role 안전 조건 미충족 시 승인 대기 |
+| low → impossible Remediation Commit | 1 |
 
 두 Alert를 중복이라고 삭제하면 안 된다. 서로 다른 Source Event지만 동일한 사건이므로
-Wazuh에는 둘 다 보존하고, Shuffle의 대응만 TAKE_ID로 한 번 수행한다.
+Wazuh에는 둘 다 보존하고, Shuffle의 Containment orchestration만 TAKE_ID로 한 번 수행한다.
 
 ### 2.4 Wazuh 기본 Shuffle 연동 대신 Custom Integration을 사용한다
 
@@ -180,7 +192,7 @@ Wazuh 기본 name=shuffle 연동은 Rule 필터링은 가능하지만 Wazuh Aler
 정확히 한 번의 대응은 단일 제품의 보장으로 주장하지 않는다.
 
 1. Shuffle Datastore에서 TAKE_ID 중복 차단
-2. GitHub Workflow에서 상태 전이와 변경 파일을 다시 검증
+2. 각 실행 계층에서 고정 Target·현재 상태·변경 Diff·Rollback을 다시 검증
 
 Shuffle 공식 API는 Set Cache 응답에서 기존 Key 여부를 반환한다. 그러나 동시 실행의
 원자적 exactly-once 보장은 문서만으로 확정하지 않는다. 같은 Payload 10개를 동시에
@@ -188,43 +200,47 @@ Shuffle 공식 API는 Set Cache 응답에서 기존 Key 여부를 반환한다. 
 
 ### 2.6 Reset은 SOAR가 호출하지 않는다
 
-Reset은 별도 workflow_dispatch만 허용한다. 현재 Private + GitHub Free 저장소에서는
-Environment Required Reviewer를 강제할 수 없으므로 `environment:`를 승인 장치로 쓰지
-않는다. 사용자의 Reset Script 직접 실행과 정확한 확인 문자열, impossible → low 전이
-검증을 현재 승인 경계로 삼는다.
+Reset은 SOAR·Wazuh Alert가 호출할 수 없다. 별도 수동 진입점과 정확한 확인 문자열을
+사용하며, Quarantine을 유지한 채 `impossible → low`와 Lab IAM 권한을 복원한다. 새 Pod,
+Alarm 실제 `OK`, Wazuh·Bridge READY, 새 TAKE를 확인한 뒤 Quarantine을 마지막에 해제한다.
+현재 Private + GitHub Free 저장소에서는 Environment Required Reviewer를 강제할 수 없으므로
+`environment:`만 승인 장치로 쓰지 않는다.
 
 ---
 
 ## 3. As-built Snapshot
 
-아래는 2026-08-18 조사 시점의 상태다. 이후에는 다시 확인해야 한다.
+아래는 2026-08-18 현재 Source와 이번 세션의 읽기 전용 Runtime 확인을 분리한 상태다.
 
 | 영역 | 확인 상태 | 근거와 의미 |
 |---|---|---|
-| Daily Runtime | Runtime 확인 | minimal + capital-one-lab, Terraform State에 Daily 자원 존재 |
-| Watchdog | Runtime 확인 | Active, On, 해당 Session Hard Deadline은 2026-08-18 03:47 KST |
-| Foundation Push | Runtime/State 확인 | DVWA 1 Source, safe_allowlist, raw message 미저장, SQS/DLQ/Lambda 활성 |
-| 5-Source Poll | Source 확인 | CloudTrail, ALB, WAF, DVWA, CloudFront를 10분 주기로 구성 |
-| Wazuh | Runtime 확인 | Manager, Indexer, Dashboard 4.14.7 실행 중 |
-| Wazuh Rule | Source 확인 | 100101, 100102, 100103, 100100 존재 |
-| Rule 100103 | 부분 Runtime 확인 | 1 Alert 확인. 3회 연속 저지연 검증은 아님 |
-| Local Bridge | 부분 Runtime 확인 | Spool/Ledger/Live JSONL과 SQS 삭제 후 보존 구현. STS 자동 갱신 없음 |
-| DVWA 감사 Event | Source 확인 | 안전 필드와 request_id는 있으나 take_id를 생성하지 않음 |
-| Baseline Runner | Source/Runtime 확인 | 공격 성공과 가짜 S3 read 확인. HTTP Header로 TAKE_ID를 보내지 않음 |
-| Shuffle | 미구현 | 설치·계정·Workflow·Credential 없음 |
-| GitHub containment/reset | 미구현 | 현재 해당 Workflow 없음 |
-| Argo CD | Source/과거 Runtime 확인 | main 자동 Sync, prune, selfHeal. 정확한 SHA 확인 로직은 daily-up에 존재 |
+| Daily Runtime | 현재 재확인 필요 | 각 실행의 Active Session과 Watchdog Deadline을 다시 읽어야 함 |
+| Foundation Push | Source/과거 Runtime 확인 | DVWA 1 Source, safe allowlist, SQS/DLQ/Lambda와 Rule `100102` 3회 Evidence |
+| 5-Source Poll | Source/과거 Runtime 확인 | CloudTrail, ALB, WAF, DVWA, CloudFront 10분 Evidence 경로 |
+| Wazuh | Runtime 확인 | 4.14.7 Manager·Indexer·Dashboard 실행, Port `127.0.0.1` 바인딩 |
+| Wazuh 입력·Integration | Runtime 확인 | Push JSONL localfile과 `custom-shuffle-soc`가 현재 Manager 설정에 존재 |
+| Rule `100103` | 부분 Runtime 확인 | 합성 Alert 여러 건과 과거 실제 Alert 1건; 실제 AWS 3 TAKE 저지연 검증 아님 |
+| Local Bridge | Source/Runtime 재확인 필요 | Ledger·Live JSONL·Heartbeat Source 존재; 현재 정확한 Host Process·Mount를 Gate에서 재확인 |
+| DVWA 감사 Event | Source 확인 | 엄격한 `X-SOC-TAKE-ID` 검증과 `take_id` 감사 필드 존재 |
+| Baseline Runner | Source 확인 | 모든 공격 POST에 `X-SOC-TAKE-ID`를 전달 |
+| Shuffle | Source/부분 Runtime | Validator·Dispatcher·Workflow 계약과 검증 Evidence 존재; v2 Production 대응은 미완료 |
+| Legacy GitHub Workflow | Source 확인 | `soc-contain-dvwa.yml`과 `soc-reset-dvwa.yml` 존재, 그러나 v1 보안 레벨 전이 계약 |
+| Workload Containment | 미구현 | DVWA Quarantine NetworkPolicy Source·enforcement Evidence 없음 |
+| IAM Impact Containment | 미구현 | 현재 실습 권한은 공유 Primary Karpenter Node Role에 연결 |
+| Argo CD | Source/과거 Runtime 확인 | main auto-sync, prune, selfHeal과 정확한 SHA 검증 기반 존재 |
 
 ### 3.1 Rule 100103의 정확한 현재 Evidence
 
-보존 Alert 1건에서 확인된 시각:
+과거 실제 Alert 1건에서 확인된 시각:
 
 - Source Event: 2026-08-17 13:41:54Z
 - Bridge 수신: 2026-08-17 14:20:58Z
 - Wazuh Alert 처리: 2026-08-17 14:20:59Z
 
-이는 Rule 100103이 실제 Event를 탐지할 수 있다는 증거다. Bridge가 공격 뒤 늦게
-수신했으므로 저지연 E2E 증거로 사용하지 않는다.
+이는 Rule `100103`이 실제 Event 의미를 탐지할 수 있다는 증거다. Bridge가 공격 뒤 늦게
+수신했고 당시 Event에는 현재 TAKE 계약이 완성되지 않았으므로 저지연 E2E 증거로 사용하지
+않는다. 현재 Manager에는 합성 `command.execution` Alert도 있지만 실제 AWS 전달 증거를
+대신하지 않는다.
 
 ### 3.2 현재 주요 공백
 
@@ -233,55 +249,47 @@ Environment Required Reviewer를 강제할 수 없으므로 `environment:`를 �
 - Bridge Heartbeat와 READY 계약 없음
 - TAKE_ID가 DVWA Event에 들어가지 않음
 - Wazuh → Shuffle Sanitizer와 Webhook 없음
-- Shuffle의 Allowlist, Dedup, GitHub 호출 없음
-- GitHub의 제한된 Containment와 Reset 없음
-- 정확한 Commit을 기다리는 전용 E2E Verifier 없음
-- 재공격 실패와 정상 기능 유지 자동 판정 없음
+- 실제 AWS `command.execution → Rule 100103` 독립 3 TAKE 없음
+- Offline Catch-up·DLQ·DVWA Poll Rollback Runtime 없음
+- NetworkPolicy enforcing·Quarantine Positive/Negative Test 없음
+- 공유 Node Role에 안전한 IAM 영향 차단·Rollback 없음
+- v2 Shuffle observe-only와 Containment Target 계약 Runtime 없음
+- `low → impossible`을 Remediation으로 호출하는 별도 Workflow·E2E 없음
+- 새 Reset 순서와 격리/패치 분리 검증 없음
 
 ---
 
 ## 4. Target Topology
 
-    ┌──────────────────────────── Laptop / Student SOC ────────────────────────────┐
-    │                                                                              │
-    │  Start-SocLab ── READY/ACTIVE_TAKE ── Capital One Runner                     │
-    │       │                                      │ X-SOC-TAKE-ID                 │
-    │       ├─ Docker Wazuh Manager/Indexer/Dashboard                              │
-    │       ├─ Local Bridge + Heartbeat + STS Rotation                             │
-    │       ├─ Wazuh Custom Integration ───────────────┐                           │
-    │       └─ E2E Evidence Collector                  │ sanitized HTTPS            │
-    └─────────────────────────────────────────────────┼────────────────────────────┘
-                                                      ▼
-    User → CloudFront/WAF/ALB → EKS/DVWA → CloudWatch Logs
-                                      │
-                                      ▼
-                         Subscription → Lambda Allowlist
-                                      │
-                                      ▼
-                               SQS + DLQ
-                                      │
-                                      ▼
-                         Local Bridge → Wazuh Rule 100103
-                                                      │
-                                                      ▼
-                                         Shuffle Webhook / Workflow
-                                      validate → allow → dedupe
-                                                      │ exactly once
-                                                      ▼
-                                         GitHub workflow_dispatch
-                                      values.yaml low → impossible
-                                                      │ normal commit/push
-                                                      ▼
-                                         Argo CD main auto-sync
-                                                      │
-                                                      ▼
-                                           EKS new Pod Ready
+    ┌────────────────────────── Laptop / Student SOC ──────────────────────────┐
+    │ Start-SocLab ─ READY/ACTIVE_TAKE ─ Capital One Runner                    │
+    │      ├─ Docker Wazuh Manager/Indexer/Dashboard                           │
+    │      ├─ Local Bridge + Heartbeat + STS Session                           │
+    │      ├─ Wazuh Custom Integration ── sanitized HTTPS ─────────────┐        │
+    │      └─ E2E Evidence Collector                                  │        │
+    └─────────────────────────────────────────────────────────────────┼────────┘
+                                                                      ▼
+    User → CloudFront/WAF/ALB → EKS/DVWA → CWL → Lambda → SQS → Rule 100103
+                                                                      │
+                                                                      ▼
+                                                    Shuffle validate/allow/dedupe
+                                                        │             │
+                                              Workload Quarantine     IAM impact
+                                              fixed NetworkPolicy     bounded action
+                                                        │             │
+                                                        └──────┬──────┘
+                                                               ▼
+                                                confidence=SUSPECTED
 
-    조사·보존 경로:
+    조사·확인 경로:
     CloudTrail + WAF + ALB + CloudFront + DVWA
-      → 기존 S3/CloudWatch 원본
-      → Wazuh 10분 Poll
-      → 사후 상관분석과 보고서 Evidence
+      → 기존 S3/CloudWatch 원본 → Wazuh 10분 Poll
+      → 같은 Incident Timeline → CloudTrail 성공 시 confidence=CONFIRMED
+
+    Remediation·Recovery 경로:
+    low → impossible 보안 설정 Patch → Git Commit → Argo exact SHA
+      → 새 Pod → 격리/패치 분리 Test → Terraform IAM·IMDS 복구
+      → 임시 격리 해제 → RECOVERED
 
 ---
 
@@ -296,7 +304,7 @@ Environment Required Reviewer를 강제할 수 없으므로 `environment:`를 �
 5. Bridge를 단일 Background Process로 기동한다.
 6. Bridge가 SQS 접근, Spool 쓰기, Heartbeat 생성을 성공해야 한다.
 7. Rule 100102 안전 Probe 1건으로 AWS → Wazuh 전달을 확인한다.
-8. Shuffle Workflow 활성, GitHub Workflow 존재, Argo 현재 상태를 읽기 전용 확인한다.
+8. Shuffle observe-only Workflow와 Legacy Production Dispatch 비활성 상태를 확인한다.
 9. DVWA의 현재 값이 low인지 확인한다.
 10. 새 TAKE_ID를 생성하고 Shuffle Allowlist에 만료 시각과 함께 등록한다.
 11. READY JSON과 사람이 읽을 한 줄을 출력한다.
@@ -310,80 +318,88 @@ Environment Required Reviewer를 강제할 수 없으므로 `environment:`를 �
 5. Wazuh는 두 Event를 Rule 100103으로 각각 Alert화한다.
 6. Custom Integration은 각 Alert를 최소 Schema로 재작성해 Shuffle에 보낸다.
 7. Shuffle은 Account, Scenario, Rule, TAKE Allowlist, 만료를 검증한다.
-8. 첫 Alert만 Dedup Key 신규가 되어 containment를 진행한다.
+8. 첫 Alert만 Dedup Key 신규가 되어 Containment orchestration을 진행한다.
 9. 두 번째 Alert는 DUPLICATE_SUPPRESSED로 종료한다.
-10. GitHub는 지정 Workflow와 main만 호출받는다.
-11. Workflow는 low → impossible 외의 변경을 거부하고 일반 Push한다.
+10. NetworkPolicy enforcement와 IAM Blast Radius가 미검증이면 `OBSERVE_ONLY`로 종료한다.
+11. 조건이 충족되면 고정 DVWA Quarantine만 적용하고 정확한 Argo Revision을 확인한다.
+12. 공유 Role에서는 `validation/*` 임시 Deny 또는 사람 승인만 허용한다.
+13. 느린 Source는 Incident를 보강하되 Containment를 다시 실행하지 않는다.
 
 ### 5.3 배포와 검증
 
-1. workflow_dispatch의 Run ID를 기록한다.
-2. Workflow 완료와 결과 Artifact를 조회한다.
-3. Artifact의 Commit SHA와 TAKE_ID를 검증한다.
+1. Containment 적용 결과와 느린 Incident Evidence를 보존한다.
+2. 별도 Remediation Workflow가 `low → impossible` 정확한 한 전이만 Commit한다.
+3. Workflow Run·Artifact·Commit SHA·TAKE_ID를 검증한다.
 4. Argo Application을 Hard Refresh한다.
 5. Synced, Healthy, status.sync.revision=Commit SHA를 동시에 확인한다.
-6. Error Condition이 없어야 한다.
-7. Deployment Rollout 완료와 새 Pod UID/Template Hash를 확인한다.
+6. Deployment Rollout 완료와 새 Pod UID/Template Hash를 확인한다.
+7. 필요한 Test 경로만 제한적으로 복구해 NetworkPolicy 차단과 설정 패치 효과를 분리한다.
 8. Pod의 DEFAULT_SECURITY_LEVEL이 impossible인지 확인한다.
-9. 같은 Payload를 다시 보내 invalid IP가 반환되고 IMDS Marker가 없음을 확인한다.
-10. 숫자 IP Ping과 로그인은 계속 성공해야 한다.
-11. 재공격과 정상 Ping 뒤 최소 120초 동안 같은 TAKE의 Rule 100103 Alert가 정확히
-    기존 2개로 유지되는지 확인한다.
-12. 같은 관찰창 뒤 Shuffle Outcome은 기존 2개 그대로이고 GitHub containment Run도
-    기존 1개뿐인지 다시 확인한 뒤에만 `REATTACK_BLOCKED`로 전이한다.
+9. 같은 Payload가 애플리케이션 계층에서 실패하고 IMDS Marker가 없음을 확인한다.
+10. 정상 로그인과 승인 기능은 계속 성공해야 한다.
+11. Terraform 영구 복구 뒤 기존 Credential의 `validation/*` 접근 실패를 확인한다.
+12. 관찰창 동안 Rule 100103·Shuffle 조치·GitHub Run이 예상 Cardinality를 유지해야 한다.
+13. 임시 격리 해제와 결과를 기록한 뒤에만 `RECOVERED`로 전이한다.
 
 ### 5.4 수동 Reset
 
-1. 사용자가 `Invoke-SocLabReset.ps1`에 정확한 확인 문자열을 입력해 시작한다.
-2. Script는 해당 TAKE의 배타적 Lock을 획득하고 이전 E2E Manifest·SHA256SUMS와
-   GitHub의 정확한 Containment Run·Artifact를 다시 검증한다.
-3. Workflow는 impossible → low만 허용한다.
-4. 이미 low면 변경 없이 성공한다.
-5. 새 Reset Commit도 일반 Push한다.
-6. Argo가 정확한 Reset SHA를 배포한 뒤에만 다음 TAKE를 발급한다.
-7. Dispatch Intent, 정확한 Run·Transition, Argo 배포, Allow 제거를 단계별 Evidence로
-   저장한다. TAKE 상태와 Active Session 상태 사이에는 Journal을 먼저 기록하므로 한쪽만
-   갱신된 채 종료돼도 재실행 시 같은 전이를 완성한다.
-8. 진행 중인 containment/Reset 상태에서는 Stop-SocLab이 Runtime 복구 상태 삭제를
-   거부한다. Stop도 같은 TAKE Lock과 상태 일치·Journal 부재를 확인한 뒤에만 Runtime을
-   정리한다. 운영자가 마지막 Evidence를 확인해 Reset 재개 또는 수동 복구를 결정한다.
-9. `gh workflow run`의 성공 여부가 불명확한 중단에서는 자동 재전송하지 않는다. 동일
-   TAKE Run 부재를 운영자가 GitHub에서 확인한 경우에만
-   `-ConfirmRetryUndispatched 'RETRY UNDISPATCHED RESET'`으로 한 번 명시 재시도한다.
-10. 공격 Evidence에서 임시 AWS Credential 환경변수 정리를 확인하고 Reset Process에도
-    같은 환경변수가 없는지 재검사한다. 값은 출력하거나 Evidence에 저장하지 않는다.
-11. 단순 현재 상태 조회가 아니라 이번 공격 시작 이후 Alarm History의 `ALARM → OK`와
-    현재 `OK`를 함께 확인한다. `SetAlarmState`로 상태를 강제하지 않는다.
-12. Reset은 기존 TAKE를 `CLOSED`로 끝낼 뿐 새 TAKE를 발급하지 않는다. 즉시 재촬영할 때는
-    `Stop-SocLab -StopWazuh`로 기존 Runtime을 정리하고 `Start-SocLab`을 다시 실행한다.
+1. 운영자가 정확한 확인 문자열로 시작하고 기존 TAKE를 `CLOSED`로 만든다.
+2. Script는 배타적 Lock, Manifest·Hash, 정확한 Containment·Remediation Run을 검증한다.
+3. Quarantine을 유지한 채 `impossible → low`만 새 Commit으로 허용한다.
+4. Argo가 정확한 Reset SHA를 배포하고 새 Pod가 `low`인지 확인한다.
+5. Lab Prefix 임시 Deny 또는 전용 Lab 권한만 복원한다.
+6. 공격·Reset Process의 AWS Credential 환경변수 잔존 없음과 Alarm 실제 `OK`를 확인한다.
+7. Wazuh·Bridge READY 뒤 새 TAKE를 발급한다.
+8. Quarantine을 마지막에 해제하고 해제 시각·정책 UID·주체를 기록한다.
+9. 각 단계의 Intent·Run·Transition·Argo·IAM·Policy Evidence를 Journal로 보존한다.
+10. 성공 여부가 불명확한 외부 Write는 자동 재전송하지 않고 운영자가 원격 상태를 대조한다.
+11. 준비 실패나 통제권 상실 시 다시 격리하거나 Daily Runtime을 종료한다.
 
 ---
 
 ## 6. TAKE_ID와 상태 수명주기
 
-### 6.1 상태
+### 6.1 서로 독립적인 세 상태 축
 
-    ISSUED
-      → READY
-      → ATTACK_STARTED
-      → DETECTED
-      → RESPONSE_DISPATCHED
-      → COMMITTED
-      → DEPLOYED
-      → REATTACK_BLOCKED
-      → E2E_SUCCEEDED
+사건 확신도와 대응 단계를 한 `status` 필드에 섞지 않는다.
 
-실패 시:
+```text
+take_status
+ISSUED → READY → ATTACK_STARTED → ACTIVE → E2E_SUCCEEDED 또는 E2E_FAILED
 
-    어느 상태에서든 → E2E_FAILED
+incident_confidence
+UNASSESSED → SUSPECTED → CONFIRMED
+                     └→ DISPROVED (조사로 공격 가설 기각)
 
-Reset:
+response_phase
+NOT_STARTED → DETECTED → CONTAINMENT_DISPATCHED → CONTAINED → INVESTIGATING
+             → REMEDIATION_DISPATCHED → REMEDIATED → RECOVERY_VALIDATED
+```
 
-    E2E_SUCCEEDED 또는 E2E_FAILED
-      → RESET_REQUESTED
-      → RESET_COMMITTED
-      → RESET_DEPLOYED
-      → CLOSED
+`incident_confidence=CONFIRMED`는 CloudTrail Rule `100100`의 예상 `GetObject` 성공
+Evidence를 뜻한다. Rule `100103`만으로 `SUSPECTED`와 Containment를 시작할 수 있지만
+Credential 탈취·S3 접근 성공을 확정하지 않는다. 늦은 확인은 `response_phase`를 뒤로
+돌리거나 Containment를 다시 실행하지 않는다. `observe_only`에서는 `response_phase`가
+`DETECTED` 또는 `INVESTIGATING`을 넘지 않는다.
+
+Reset은 `take_status`만 다음처럼 전이하고, 별도 Evidence로 Quarantine·IAM·설정 상태를
+검증한다.
+
+```text
+E2E_SUCCEEDED 또는 E2E_FAILED
+  → RETAKE_APPROVED
+  → RESET_REMEDIATION_REVERSED
+  → RESET_IAM_RESTORED
+  → RESET_READY
+  → RESET_QUARANTINE_RELEASED
+  → CLOSED
+
+어느 E2E 단계에서든 실패 → E2E_FAILED
+Reset 실패 → RESET_FAILED, Quarantine 유지
+```
+
+Runtime 구현이 이 v2 상태를 지원하기 전에는 기존 단일 `status` v1 상태 파일을
+Production 대응 완료 Evidence로 사용하지 않는다.
 
 ### 6.2 Active TAKE 계약
 
@@ -395,13 +411,15 @@ Reset:
 
 | 필드 | 규칙 |
 |---|---|
-| schema_version | 1 |
+| schema_version | 2 |
 | take_id | 엄격한 정규식 |
 | scenario_id | CAPITAL-ONE |
-| response_mode | observe_only 또는 contain |
+| response_mode | observe_only 또는 contain; contain은 v2 안전 Gate 통과 뒤에만 허용 |
 | issued_at_utc | UTC ISO 8601 |
 | expires_at_utc | 발급 뒤 최대 2시간 |
-| status | 위 상태 중 하나 |
+| take_status | TAKE 실행·성공·실패·Reset·종료 상태 |
+| incident_confidence | `UNASSESSED`, `SUSPECTED`, `CONFIRMED`, `DISPROVED` 중 하나 |
+| response_phase | 탐지·Containment·조사·Remediation·Recovery 진행 상태 |
 | account_alias | primary-lab |
 | expected_rule_id | 100103 |
 
@@ -415,7 +433,9 @@ Reset:
 | Wazuh Alert ID | Wazuh Alert 식별 |
 | TAKE_ID | 한 시연 사건과 대응 묶음 식별 |
 | CloudTrail eventID | 늦게 도착하는 AWS API Evidence 식별 |
-| Git Commit SHA | 대응 코드 상태 식별 |
+| Quarantine Commit SHA | Workload 격리 Git 상태 식별 |
+| Remediation Commit SHA | `low → impossible` 설정 패치 식별 |
+| Reset Commit SHA | 촬영용 역방향 설정 패치 식별 |
 | Argo Revision | 실제 배포된 Git 상태 식별 |
 
 서로 대체하지 않는다.
@@ -565,7 +585,7 @@ Webhook URL과 Header Key는 Git, Wazuh Alert, Evidence, 화면 캡처에 남기
 
 Workflow 이름:
 
-    CAPITAL-ONE-SOC-CONTAINMENT-v1
+    CAPITAL-ONE-SOC-RESPONSE-v2
 
 노드 순서:
 
@@ -576,11 +596,14 @@ Workflow 이름:
 5. TAKE Allowlist 조회
 6. 만료와 response_mode 확인
 7. observe_only면 Outcome Evidence 후 종료
-8. contain일 때만 TAKE Dedup Key 생성
-9. Set Cache raw `keys_existed`의 정확한 Key와 existed 분기
-10. contain이고 신규 TAKE면 고정 GitHub Workflow 호출
-11. GitHub가 반환한 정확한 Run ID 기록
-12. 결과를 Evidence API/로컬 Collector가 조회할 수 있게 보존
+8. contain이면 NetworkPolicy enforcement와 고정 Response Profile 확인
+9. 안전 조건 불충족이면 `SAFETY_GATE_BLOCKED`로 종료
+10. 안전 조건 충족 시 TAKE Dedup Key 생성
+11. Set Cache raw `keys_existed`의 정확한 Key와 existed 분기
+12. 신규 TAKE면 고정 Workload Quarantine Workflow만 호출
+13. 공유 Role IAM 조치는 `IAM_APPROVAL_REQUIRED`로 별도 Outcome 기록
+14. GitHub가 반환한 정확한 Run ID 기록
+15. 결과를 Evidence API/로컬 Collector가 조회할 수 있게 보존
 
 Shuffle은 Dispatch 수락까지만 판정한다. GitHub Run 완료, 정확한 Commit SHA, Argo CD
 배포 완료는 로컬 E2E Orchestrator가 같은 Run ID와 TAKE_ID로 이어서 검증한다. 이 경계로
@@ -591,9 +614,9 @@ Shuffle outgoing branch는 자동 `else`가 아니므로 `observe_only`와 `cont
 
 Datastore Key:
 
-    Allow: soc:v1:allow:primary-lab:CAPITAL-ONE:<take_id>
-    Dedupe: soc:v1:response:primary-lab:CAPITAL-ONE:<take_id>
-    Outcome: soc:v1:outcome:<take_id>:<raw_message_sha256>
+    Allow: soc:v2:allow:primary-lab:CAPITAL-ONE:<take_id>
+    Dedupe: soc:v2:containment:primary-lab:CAPITAL-ONE:<take_id>
+    Outcome: soc:v2:outcome:<take_id>:<raw_message_sha256>
 
 실행 결과:
 
@@ -603,23 +626,26 @@ Datastore Key:
 | REJECTED_ALLOWLIST | 허용 대상 아님 | 0 |
 | REJECTED_TAKE | 미등록 또는 만료 | 0 |
 | OBSERVE_ONLY | 탐지 반복 검증 | 0 |
+| SAFETY_GATE_BLOCKED | NetworkPolicy·Target·Rollback 미검증 | 0 |
 | DUPLICATE_SUPPRESSED | 같은 TAKE의 후속 Alert | 0 |
-| RESPONSE_DISPATCHED | 첫 유효 Alert | 1 |
-| RESPONSE_FAILED | GitHub Dispatch 응답 실패, 수락 여부 미확정 | 확인된 성공 0, 자동 재호출 금지 |
+| CONTAINMENT_DISPATCHED | 고정 Workload Quarantine 요청 | 1 |
+| IAM_APPROVAL_REQUIRED | 공유 Role의 Lab Prefix Deny 승인 대기 | 추가 자동 호출 0 |
+| RESPONSE_FAILED | Dispatch 수락 여부 미확정 | 확인된 성공 0, 자동 재호출 금지 |
 
 Wazuh HTTP 재시도와 Shuffle Workflow 재실행이 있어도 동일 TAKE의 GitHub 호출은
 증가하면 안 된다.
-`github_dispatch_count`는 `return_run_details=true`로 요청해 받은 양의
-`workflow_run_id`로 확인된 성공 Dispatch만 센다. 네트워크
-오류처럼 요청 수락 여부를 확정할 수 없는 실패는 0으로 기록하고 자동 재호출하지 않으며,
+`github_dispatch_count`는 GitHub REST API `2026-03-10`의 HTTP 200 응답에서 받은 양의
+`workflow_run_id`로 확인된 성공 Dispatch만 센다. 이 API 버전은 Run Details를 항상
+반환하므로 제거된 `return_run_details` Parameter를 보내지 않는다. 네트워크 오류처럼
+요청 수락 여부를 확정할 수 없는 실패는 0으로 기록하고 자동 재호출하지 않으며,
 해당 TAKE 전체를 실패로 종료해 운영자가 GitHub Run을 별도로 대조한다.
 
 ### 7.8 Shuffle → GitHub
 
-호출 대상은 다음 한 개로 고정한다.
+즉시 자동 호출 대상은 다음 한 개로 고정한다.
 
     Repository: Unoh03/Uns-DVWA
-    Workflow: .github/workflows/soc-contain-dvwa.yml
+    Workflow: .github/workflows/soc-quarantine-dvwa.yml
     Ref: main
 
 허용 Input:
@@ -629,9 +655,14 @@ Wazuh HTTP 재시도와 Shuffle Workflow 재실행이 있어도 동일 TAKE의 G
 - rule_id=100103
 - alert_body_sha256
 
-GitHub API `2026-03-10`의 Dispatch는 `ref`와 고정 Input만 받고 200 응답으로 Run ID와
-Run URL을 돌려준다. Shuffle은 이 Run ID를 Outcome에 기록하고, E2E Orchestrator가
-이후 GitHub·Argo 상태를 검증한다.
+Namespace, Label Selector, NetworkPolicy Path, Role ARN, Policy ARN, CIDR, 목표 값은
+Input으로 받지 않는다. 모두 검토된 Source와 `CAPITAL-ONE` Response Profile에 고정한다.
+Shuffle은 Run ID를 Outcome에 기록하고, E2E Orchestrator가 이후 GitHub·Argo 상태를
+검증한다.
+
+현재 `soc-contain-dvwa.yml`은 `low → impossible` Legacy Workflow이므로 v2 Dispatcher의
+대상이 아니다. `soc-quarantine-dvwa.yml` Source와 NetworkPolicy enforcement Gate가
+완성되기 전에는 Production Credential을 연결하지 않는다.
 
 금지:
 
@@ -640,6 +671,7 @@ Run URL을 돌려준다. Shuffle은 이 Run ID를 Outcome에 기록하고, E2E O
 - 임의 Ref
 - 수정할 Path나 목표 값을 Input으로 받는 것
 - Shell Command를 Input으로 받는 것
+- Role ARN·Policy Document·Namespace·Selector·CIDR을 Input으로 받는 것
 
 Shuffle Credential:
 
@@ -647,9 +679,11 @@ Shuffle Credential:
 - Repository Actions: write
 - 짧은 만료일과 회수 절차
 - Contents: write를 Shuffle Token에 주지 않음
-- 실제 파일 쓰기는 Workflow의 GITHUB_TOKEN contents: write만 사용
+- 실제 GitOps 파일 쓰기는 Workflow의 GITHUB_TOKEN contents: write만 사용
 - Generic HTTP Header에 PAT을 직접 쓰지 않음
-- `AWS Topology SOC GitHub Dispatcher 1.0.0`의 App Authentication으로 암호화 저장
+- Target `AWS Topology SOC GitHub Dispatcher 2.0.0`의 App Authentication으로 암호화 저장
+- API Version `2026-03-10`, HTTP 200, 양의 `workflow_run_id`, 고정 Repository Run URL만 수락
+- Legacy 1.0.0의 `return_run_details` 요청 계약은 재사용 금지
 - Private Dispatcher App 내부에서 Repository, Workflow, Ref, API URL을 고정
 - Cloud Binding 검증은 Authentication 목록에서 App·Org·Active·Encrypted·Field Key만
   사용하고 Value를 출력·저장하지 않는다. 다만 Shuffle 공식 API에는 metadata-only
@@ -657,9 +691,9 @@ Shuffle Credential:
 
 ### 7.9 Containment Workflow
 
-파일:
+Target 파일:
 
-    D:\DVWA\.github\workflows\soc-contain-dvwa.yml
+    D:\DVWA\.github\workflows\soc-quarantine-dvwa.yml
 
 Trigger:
 
@@ -669,23 +703,48 @@ Trigger:
 
 - main에서만 실행
 - 입력 정규식과 고정값 재검증
-- 변경 가능 파일은 deploy/dvwa/values.yaml 하나
-- 변경 가능 값은 defaultSecurityLevel: low → impossible 하나
-- 이미 impossible이면 변경 없이 성공
-- 다른 값이면 실패
-- 변경 전후 Byte 비교에서 정확히 한 전이 외 차이가 있으면 실패
-- git diff --name-only가 목표 파일 하나가 아니면 실패
+- 변경 가능 대상은 검토된 DVWA Quarantine NetworkPolicy 상태 하나
+- Namespace는 `dvwa`, Selector는 `app.kubernetes.io/name=dvwa`와
+  `app.kubernetes.io/instance=dvwa`로 고정
+- 정책 적용 전 EKS Network Policy enforcing Evidence 확인
+- 이미 격리 상태면 변경 없이 성공
+- 다른 Namespace·Selector·CIDR·파일 Diff가 있으면 실패
 - Force Push와 History Rewrite 금지
 - Commit Message에는 TAKE_ID만 넣고 원본 Alert나 비밀은 넣지 않음
-- 결과 Artifact에 before_sha, commit_sha, take_id, alert_body_sha256, changed,
-  diff_sha256 저장
+- 결과 Artifact에 before_sha, quarantine_commit_sha, take_id, alert_body_sha256,
+  policy_name, selector_hash, diff_sha256 저장
+- Argo exact SHA 뒤 실제 차단과 필요한 관측 경로 유지 Test
 
 동시 실행:
 
-    concurrency group: dvwa-security-level-transition
+    concurrency group: dvwa-soc-response-transition
     cancel-in-progress: false
 
-### 7.10 Reset Workflow
+IAM 영향 차단은 이 GitOps Workflow에 임의 Policy 입력으로 섞지 않는다. 현재 공유 Primary
+Karpenter Node Role에서는 `validation/*` 임시 Explicit Deny만 별도 사람 승인 대상으로
+허용한다. 전용 DVWA Principal이 생기기 전에는 Role 전체 자동 Containment가 Target이 아니다.
+
+### 7.10 Remediation Workflow
+
+현재 Source `soc-contain-dvwa.yml`의 `low → impossible` 검증 로직은 재사용할 수 있지만,
+이름·Artifact·상태 의미를 Remediation으로 바꾼 뒤 별도 Runtime Gate를 통과해야 한다.
+
+Target 파일:
+
+    D:\DVWA\.github\workflows\soc-remediate-dvwa.yml
+
+불변 조건:
+
+- Containment Evidence가 존재하는 승인 TAKE에서만 실행
+- 변경 가능 파일은 `deploy/dvwa/values.yaml` 하나
+- 변경 가능 값은 `defaultSecurityLevel: low → impossible` 하나
+- 이미 `impossible`이면 0-change 성공, 다른 값이면 실패
+- 정확한 Diff와 `remediation_commit_sha` Artifact 보존
+- Argo exact SHA·새 Pod·애플리케이션 Negative Test 확인
+- NetworkPolicy 차단과 설정 패치 실패 원인을 분리해 검증
+- Credential 폐기나 IAM Containment 완료로 표현하지 않음
+
+### 7.11 Reset Workflow
 
 파일:
 
@@ -705,13 +764,19 @@ Trigger:
 - impossible → low만 허용
 - 이미 low면 변경 없이 성공
 - 다른 값이면 실패
-- Containment와 같은 concurrency group
+- 모든 SOC 상태 변경과 같은 concurrency group
 - Force Push와 History Rewrite 금지
 - Shuffle, Wazuh, 외부 Webhook이 호출할 수 없음
 - Private Free에서 강제되지 않는 Environment Reviewer에 의존하지 않음
 - 운영자의 Reset Script 직접 실행과 정확한 확인 문자열이 사람 승인 경계
+- Quarantine이 적용된 상태에서 설정과 Lab IAM 권한을 먼저 복원
+- 새 Pod·Alarm `OK`·Wazuh·Bridge·새 TAKE 확인 뒤 Quarantine을 마지막에 해제
+- 기존 TAKE Evidence와 Alert는 삭제하지 않음
 
-### 7.11 GitHub → Argo CD → EKS
+현재 `soc-reset-dvwa.yml`은 `impossible → low`만 되돌리므로 v2 Reset의 전체 계약을
+충족하지 않는다. 확장·검증 전에는 재촬영 준비 완료로 표현하지 않는다.
+
+### 7.12 GitHub → Argo CD → EKS
 
 현재 Argo Application의 main 자동 Sync, prune, selfHeal을 재사용한다.
 
@@ -719,7 +784,7 @@ Trigger:
 
 - status.sync.status=Synced
 - status.health.status=Healthy
-- status.sync.revision=<containment commit SHA>
+- status.sync.revision=<현재 단계의 exact commit SHA>
 - Error Condition 없음
 
 추가:
@@ -727,7 +792,9 @@ Trigger:
 - kubectl rollout status deployment/dvwa 성공
 - 변경 전 Pod UID와 변경 후 Pod UID가 다름
 - 새 Pod Ready
-- Deployment Env DEFAULT_SECURITY_LEVEL=impossible
+- Quarantine 단계: 예상 NetworkPolicy와 실제 차단·허용 결과
+- Remediation 단계: Deployment Env `DEFAULT_SECURITY_LEVEL=impossible`
+- Reset 단계: `low`, 새 TAKE READY 뒤 Quarantine 해제
 
 daily-up.ps1의 기존 Hard Refresh와 정확한 Revision 대기 로직을 공통 함수로 추출하거나
 동일 계약의 전용 Verifier에서 재사용한다. 단순히 최신 main을 읽어 추측하지 않는다.
@@ -759,9 +826,9 @@ Start-SocLab이 하는 것:
 - SQS와 DLQ 상태 확인
 - Rule 100102 안전 Probe
 - Shuffle Workflow/API 읽기 확인
-- contain 모드면 Production Export, Upload한 두 Private App의 Cloud ID/Binding,
-  Active·Encrypted Dispatcher Authentication, 최신 Gate B5 Manifest 검증
-- GitHub 지정 Workflow 존재 확인
+- contain 모드면 v2 Production Export, 고정 Quarantine Target, NetworkPolicy enforcement,
+  Rollback Evidence, Dispatcher Authentication, 최신 Gate B5 Manifest 검증
+- GitHub Quarantine·Remediation·Reset Workflow의 Source/활성 상태를 역할별 확인
 - Argo 현재 Revision과 Health 확인
 - Active TAKE 발급과 Shuffle Allow 등록
 - READY Evidence 생성
@@ -789,8 +856,10 @@ Start-SocLab이 하는 것:
 | AWS Session | Wazuh Reader Role, 남은 시간 10분 이상 |
 | Queue | DLQ 0, 오래된 미처리 Message 없음 |
 | Safe Probe | Rule 100102 1건, 제한 시간 이내 |
-| Shuffle | Workflow 활성, API 인증, Upload App ID/Binding, Dispatcher Authentication 상태·소속 검증 |
-| GitHub | containment와 reset Workflow 존재 |
+| Shuffle | v2 Workflow/API·App Binding·고정 Quarantine Target; Legacy v1 Dispatch 비활성 |
+| GitHub | Quarantine·Remediation·Reset 역할이 분리되고 Legacy Target이 Production에서 제외 |
+| NetworkPolicy | EKS enforcement, 고정 대상, 실제 Deny/Allow와 Rollback Evidence |
+| IAM | 공유 Role 모드는 Lab Prefix 승인 대기, 전용 Principal만 자동 Containment |
 | Argo | Synced, Healthy, 현재 main SHA와 일치 |
 | TAKE | 등록 성공, 만료 전, 로컬/Shuffle 값 일치 |
 
@@ -866,7 +935,7 @@ Shuffle/GitHub Credential을 등록하기 전 Gate:
 
 ### 10.1 확정: Shuffle Cloud
 
-대표 E2E v1의 SOAR 배치는 **Shuffle Cloud로 확정한다.**
+대표 E2E v2의 SOAR 배치는 **Shuffle Cloud로 확정한다.**
 
 - 결정일: 2026-08-18
 - 결정 주체: 사용자
@@ -950,16 +1019,19 @@ Cloud 선택은 다음 외부 작업의 자동 승인이 아니다. 각 작업�
 | take_id 없음/오류 | Alert 가능 | 거부 | Alert 보존 | REJECTED_TAKE |
 | Shuffle Webhook 실패 | Alert 보존 | 미실행 | Wazuh Retry 후 실패 기록 | RESPONSE_FAILED |
 | 동일 TAKE 재수신 | Alert 보존 | 추가 호출 금지 | Datastore 기록 | DUPLICATE_SUPPRESSED |
+| NetworkPolicy 미강제 | Alert 보존 | 변경 금지 | Safety Evidence | SAFETY_GATE_BLOCKED |
+| 공유 Role 전체 Deny 요구 | Alert 보존 | 승인 대기 | Incident 보존 | IAM_APPROVAL_REQUIRED |
 | GitHub Token 오류 | Alert 보존 | 미실행 | Shuffle Evidence | RESPONSE_FAILED |
-| values가 low/impossible 외 | Alert 보존 | Workflow 실패 | Git 변경 없음 | INVALID_STATE |
+| Quarantine Target 불일치 | Alert 보존 | Workflow 실패 | Git 변경 없음 | SCOPE_VIOLATION |
+| Remediation 값이 low/impossible 외 | Alert 보존 | Workflow 실패 | Git 변경 없음 | INVALID_STATE |
 | 예상 외 파일 Diff | Alert 보존 | Workflow 실패 | Git 변경 없음 | SCOPE_VIOLATION |
 | Push 충돌 | Alert 보존 | Workflow 실패 | Force 금지 | PUSH_CONFLICT |
 | Argo Revision 불일치 | Commit 존재 | 다음 단계 중단 | Git 보존 | DEPLOY_MISMATCH |
 | Pod Ready 실패 | Commit 존재 | 재공격 금지 | K8s Evidence | ROLLOUT_FAILED |
-| 재공격 성공 | E2E 실패 | 자동 추가 변경 금지 | Evidence 보존 | CONTAINMENT_FAILED |
-| Reset 실패 | 기존 상태 유지 | 다음 TAKE 금지 | Evidence 보존 | RESET_FAILED |
+| 재공격 성공 | E2E 실패 | 자동 추가 변경 금지 | Evidence 보존 | REMEDIATION_FAILED |
+| Reset 실패 | Quarantine 유지 | 다음 TAKE 금지 | Evidence 보존 | RESET_FAILED |
 
-재시도는 같은 TAKE로 GitHub Workflow를 자동 재호출하지 않는다. 운영자가 Evidence를
+재시도는 같은 TAKE로 Containment Workflow를 자동 재호출하지 않는다. 운영자가 Evidence를
 확인하고 새 TAKE 또는 수동 복구를 결정한다. Reset은 `reset-dispatch-intent.json`,
 `reset-transition.json`, `reset-deploy.json`, `reset-allow-removed.json`이 입증하는 기존
 단계를 재사용한다. 재개할 때마다 저장 JSON만 믿지 않고 정확한 GitHub Run과 Artifact를
@@ -989,18 +1061,19 @@ Evidence를 보존하고 원격 Shuffle·GitHub 상태를 운영자가 확인한
 | foundation/wazuh.tf | Reader Role에 Push DLQ 상태 조회만 허용 |
 | foundation/outputs.tf | 비민감 Primary Push DLQ URL Output |
 | observability/scenarios/Invoke-CapitalOneBaseline.ps1 | X-SOC-TAKE-ID, 공격/차단 기대 모드 |
-| observability/scenarios/Test-CapitalOneContainment.ps1 | 재공격 실패와 정상 기능 검사 |
-| observability/scenarios/Invoke-CapitalOneSocE2E.ps1 | Workflow, Argo, Evidence 상태 Orchestration |
+| observability/scenarios/Test-CapitalOneContainment.ps1 | Workload·IAM 영향 차단과 격리 Rollback 검사로 재설계 |
+| observability/scenarios/Invoke-CapitalOneSocE2E.ps1 | Containment·조사·Remediation·Recovery Orchestration으로 재설계 |
 | observability/wazuh/integrations/custom-shuffle-soc | Sanitized Alert Sender |
 | observability/wazuh/templates/shuffle-integration.xml | Secret 없는 Rule 100103 Filter |
 | observability/wazuh/*.schema.json | Alert, READY, Evidence Schema |
 | observability/shuffle/apps/aws-topology-soc-validator/1.0.0 | 입력을 Code로 실행하지 않는 조직 전용 Validator App |
-| observability/shuffle/apps/aws-topology-soc-github-dispatcher/1.0.0 | GitHub 대상과 입력을 코드로 고정한 조직 전용 Dispatcher App |
+| observability/shuffle/apps/aws-topology-soc-github-dispatcher/1.0.0 | Legacy Source; `return_run_details` 계약 때문에 v2 Binding에서 제외 |
+| observability/shuffle/apps/aws-topology-soc-github-dispatcher/2.0.0 | Target: API 2026-03-10의 HTTP 200 Run Details 계약과 고정 대상 Dispatcher |
 | tools/Build-ShuffleSocAppBundle.ps1 | 두 Private App 단위 Test 후 Hash Manifest와 Upload ZIP 생성 |
 | tools/Install-ShuffleSocAppBundle.ps1 | 명시적 승인과 DPAPI API Key로 두 App을 조직에 Upload |
 | tests/*soc* | 정적 계약, Secret, 중복, 실패 경계 Test |
 
-Terraform Resource 변경:
+Gate B4를 닫기 전 Terraform Resource 변경:
 
 - 새 Resource 추가 없음
 - 기존 Reader IAM Policy에 DLQ 상태 조회 2개 Action만 추가
@@ -1008,15 +1081,24 @@ Terraform Resource 변경:
 - 기존 Foundation Push Resource 재사용
 - 다른 Source Push 전환 금지
 
+Gate B6 이후 별도 검토 대상:
+
+- EKS VPC CNI Network Policy enforcing 설정과 Rollback
+- 공유 Role의 `validation/*` 임시 Deny 실행 경계 또는 DVWA 전용 Role·Node
+- 어떠한 Apply도 Fresh Plan과 명시적 사용자 승인 없이 실행하지 않음
+
 ### 13.2 DVWA Repository
 
 | 파일 | 예정 작업 |
 |---|---|
 | dvwa/includes/dvwaAudit.inc.php | 검증된 TAKE_ID 감사 필드 |
 | tests/test_audit_log.php | 허용/거부, Secret 비기록 Test |
-| .github/workflows/soc-contain-dvwa.yml | low → impossible |
-| .github/workflows/soc-reset-dvwa.yml | 수동 impossible → low |
+| .github/workflows/soc-contain-dvwa.yml | Legacy v1; Production Target에서 제외 |
+| .github/workflows/soc-quarantine-dvwa.yml | Target: 고정 DVWA NetworkPolicy Containment |
+| .github/workflows/soc-remediate-dvwa.yml | Target: low → impossible 설정 Remediation |
+| .github/workflows/soc-reset-dvwa.yml | Target: 수동 Reset orchestration; 현재 Source는 설정만 복원 |
 | .github/scripts/update-dvwa-security-level.py | 정확한 단일 값 전이 |
+| deploy/dvwa/templates/*networkpolicy* | Target: 고정 Label의 가역적 Quarantine |
 
 ### 13.3 Local Wazuh Host
 
@@ -1041,12 +1123,15 @@ Terraform Resource 변경:
       01-attack.json
       02-wazuh-alerts.json
       03-shuffle-executions.json
-      04-github-run.json
-      05-git-transition.json
-      06-argocd-deploy.json
-      07-reattack.json
-      08-normal-function.json
-      09-reset.json
+      04-containment.json
+      05-incident-timeline.json
+      06-remediation-run.json
+      07-remediation-transition.json
+      08-argocd-deploy.json
+      09-reattack.json
+      10-normal-function.json
+      11-recovery.json
+      12-reset.json
       manifest.json
       SHA256SUMS
 
@@ -1059,16 +1144,17 @@ manifest의 범위가 아니며, 보고서 채택 시 별도 Asset Index에서 �
 
 ## 14. 구현 Gate
 
-### Gate B0 — Blueprint Freeze
+### Gate B0 — v2 Response Contract
 
-- [x] 사용자가 이 문서의 흐름을 검토하고 승인 — 2026-08-18
+- [x] `low → impossible`을 Remediation으로 재분류 — 2026-08-18
+- [x] Workload·IAM 영향 Containment와 느린 조사 분리 — 2026-08-18
+- [x] 공유 Role 전체 자동 Deny 금지·Reset 순서 확정 — 2026-08-18
 - [x] Shuffle Cloud 배치 결정 — 2026-08-18
-- [x] 원래 요청과 역대조하여 미포함 범위 유지 확인 — 2026-08-18
 - [x] 기존 미커밋·미추적 파일 보존 확인 — 2026-08-18
 
 ### Gate B1 — Local Safety
 
-- [ ] Wazuh Port Local-only 확인
+- [x] Wazuh Port Local-only 확인 — 2026-08-18 Runtime
 - [ ] 초기 Credential 교체
 - [ ] Secret 저장·복호화·삭제 Test
 - [ ] Git과 Evidence Secret Scan
@@ -1109,42 +1195,55 @@ manifest의 범위가 아니며, 보고서 채택 시 별도 Asset Index에서 �
 - [ ] GitHub Stub 호출 정확히 1회
 - [ ] 실제 GitHub 호출 0
 - [ ] Datastore 원자성 Runtime 판정
+- [ ] v1 `soc-contain-dvwa.yml` Production Dispatch 비활성
 
-### Gate B6 — GitHub 제한 변경
+### Gate B6 — Workload Containment
 
-- [ ] Dry-run에서 정확한 Diff
-- [ ] low → impossible 1회
-- [ ] impossible이면 0-change 성공
-- [ ] 다른 파일/값/Ref 거부
-- [ ] Force/History Rewrite 없음
-- [ ] Result Artifact와 Commit SHA
+- [ ] EKS Network Policy enforcing Runtime 확인
+- [ ] 고정 Namespace·DVWA Label 외 Target 거부
+- [ ] Quarantine 정확한 Diff·Commit·Argo Revision
+- [ ] 공격 경로 차단·필요 관측 경로 유지
+- [ ] 다른 Namespace·Workload 영향 0
+- [ ] Idempotency·Rollback Runtime
 
-### Gate B7 — Argo와 재공격
+### Gate B7 — IAM Impact Containment
 
-- [ ] 정확한 Commit SHA Synced
-- [ ] Healthy, Error 없음
-- [ ] 새 Pod Ready
-- [ ] 동일 공격 실패
-- [ ] 숫자 IP Ping과 로그인 유지
+- [ ] 공유 Role Blast Radius와 현재 Permission Inventory
+- [ ] `validation/*` 임시 Explicit Deny의 정확한 Target·Rollback
+- [ ] 다른 Karpenter/EKS 동작 영향 없음
+- [ ] 기존 Credential의 Lab Object 추가 접근 실패
+- [ ] 전용 Principal이 아니면 전체 자동 Containment 거부
+- [ ] 적용·해제 주체·시각·Policy Hash Evidence
 
-### Gate B8 — Reset
+### Gate B8 — Remediation and Recovery
+
+- [ ] `low → impossible` 정확한 한 Diff와 Remediation Artifact
+- [ ] 정확한 Commit SHA Synced·Healthy·새 Pod Ready
+- [ ] NetworkPolicy와 무관한 애플리케이션 Negative Test
+- [ ] 정상 로그인·허용 기능 유지
+- [ ] Terraform IAM·IMDS 영구 복구와 기존 Credential `AccessDenied`
+- [ ] 임시 격리 해제와 관찰창 무재발
+
+### Gate B9 — Retake Reset
 
 - [ ] 수동 Workflow만 실행 가능
-- [ ] impossible → low
+- [ ] Quarantine 유지 중 impossible → low
 - [ ] low이면 0-change
 - [ ] 정확한 Reset SHA 배포
+- [ ] Lab IAM 권한만 복원
 - [ ] 공격·Reset Process의 임시 AWS Credential 환경변수 잔존 없음
 - [ ] 이번 TAKE의 Alarm `ALARM → OK` History와 현재 `OK`
-- [ ] 기존 TAKE `CLOSED` 후 새 Start로 새 TAKE 발급 가능
+- [ ] 새 Pod·Wazuh·Bridge·새 TAKE READY 뒤 Quarantine 마지막 해제
+- [ ] 기존 TAKE Evidence 보존·새 TAKE 독립성
 
-### Gate B9 — 최종 E2E
+### Gate B10 — 최종 E2E
 
 - [ ] 촬영 장면 처음부터 끝까지 1회 성공
 - [ ] 실패 지점 없음
 - [ ] 모든 주요 지연시간 기록
-- [ ] GitHub 호출 1회
-- [ ] Commit SHA=Argo Revision
-- [ ] 재공격 실패와 정상 기능 유지
+- [ ] 각 단계의 Dispatch·Commit Cardinality가 계약과 일치
+- [ ] Quarantine·Remediation Commit SHA=각 Argo Revision
+- [ ] Containment·Investigation·Remediation·Recovery를 구분한 재공격 실패와 정상 기능 유지
 - [ ] Evidence Manifest와 SHA256SUMS
 
 ---
@@ -1158,11 +1257,12 @@ manifest의 범위가 아니며, 보고서 채택 시 별도 Asset Index에서 �
 | 빠른 키는 TAKE_ID | 2.2, 6 | Active TAKE + Alert |
 | Rule 100103만 Sanitized 전달 | 2.4, 7.6 | Payload Capture + Secret Scan |
 | 허용값과 TAKE 중복 차단 | 7.7, Gate B5 | Shuffle Execution 10회 Stress |
-| low → impossible만 허용 | 7.9, Gate B6 | Git Diff + Workflow Artifact |
-| 정확한 Commit 배포 후 재공격 실패 | 7.11, Gate B7 | Argo Revision + 07-reattack.json |
-| 수동 Reset만 허용 | 7.10, Gate B8 | Reset Run + Commit |
-| E2E 지연·SHA·결과 기록 | 13.4, Gate B9 | manifest.json |
-| 실제 사용자 장면만 완료 | 1.3, Gate B9 | 최종 Rehearsal Bundle |
+| Workload 격리 | 7.9, Gate B6 | Policy·Argo·Deny/Allow·Rollback Evidence |
+| 공유 Role 영향 제한 | 7.9, Gate B7 | IAM Diff·AccessDenied·Blast Radius Evidence |
+| low → impossible Remediation | 7.10, Gate B8 | Git Diff·Argo Revision·App Negative Test |
+| 수동 Reset만 허용 | 7.11, Gate B9 | Reset Journal·새 TAKE·Quarantine release |
+| E2E 지연·SHA·결과 기록 | 13.4, Gate B10 | manifest.json |
+| 실제 사용자 장면만 완료 | 1.3, Gate B10 | 최종 Rehearsal Bundle |
 
 ---
 
@@ -1181,14 +1281,16 @@ manifest의 범위가 아니며, 보고서 채택 시 별도 Asset Index에서 �
 | Cloud | 설치가 작고 E2E에 집중 | 외부 전송, 계정/Plan/인터넷 의존 |
 | Local | Alert가 노트북 밖으로 안 나감 | 두 번째 OpenSearch, RAM/Disk, 복구 부담 |
 
-이 결정만으로 Shuffle 계정 생성, Region 선택, Webhook 생성, GitHub PAT 등록,
-Wazuh 외부 전송을 시작하지 않는다. 해당 작업은 Blueprint Freeze 뒤 Gate별로 승인받는다.
+이 결정만으로 v2 Production Dispatch를 활성화하지 않는다. Sanitized Payload와 Gate B5,
+고정 Quarantine Target, NetworkPolicy enforcement를 확인한 뒤에만 연결한다.
 
 ### 이미 확정된 결정
 
 - 대표 시나리오: Capital One 기반 DVWA Command Injection 각색
-- 자동 대응: defaultSecurityLevel low → impossible
-- Reset: 별도 수동 Workflow
+- 즉시 Containment: DVWA Workload Quarantine
+- IAM: 공유 Role은 `validation/*` 영향 차단 또는 사람 승인, 전용 Principal만 전체 Containment
+- Remediation: `defaultSecurityLevel low → impossible` 보안 설정 패치
+- Reset: 별도 수동 절차, Quarantine 마지막 해제
 - 빠른 탐지: Rule 100103
 - 빠른 사건 키: 사전 허용된 TAKE_ID
 - 다른 네 Source: 기존 10분 Poll 유지
@@ -1196,20 +1298,24 @@ Wazuh 외부 전송을 시작하지 않는다. 해당 작업은 Blueprint Freeze
 
 ---
 
-## 17. Freeze Checklist
+## 17. v2 정합성 Checklist
 
-다음 설계 조건을 모두 확인해 v1.0을 동결했다. Runtime 성공 여부는 Gate B1~B9의
+다음 설계 조건을 확인해 v2 Target을 정리했다. Runtime 성공 여부는 Gate B1~B10의
 미완료 체크박스로 별도 관리한다.
 
 - [x] 이 설계가 사용자가 촬영하려는 장면과 같다.
 - [x] Rule Alert 2건과 대응 1건의 설명 기준이 명시됐다.
 - [x] 빠른 Push와 5-Source 조사 Poll의 역할이 분리됐다.
+- [x] Containment와 `low → impossible` Remediation이 분리됐다.
+- [x] Workload와 IAM 영향 차단의 Target·Blast Radius가 분리됐다.
+- [x] 공유 Node Role 전체 자동 Deny를 금지했다.
 - [x] CloudTrail eventID를 빠른 대응 키로 기다리지 않는다.
 - [x] Wazuh는 전체 Alert가 아니라 최소 Schema만 외부로 보낸다.
 - [x] Shuffle Exactly-once를 문서만 믿지 않고 Stress Test한다.
-- [x] GitHub가 변경 대상과 상태 전이를 다시 검증한다.
+- [x] 각 실행 계층이 고정 Target과 상태 전이를 다시 검증한다.
 - [x] Argo Healthy뿐 아니라 정확한 Commit SHA를 확인한다.
 - [x] Reset이 자동 대응에서 분리됐다.
+- [x] Reset은 Quarantine을 마지막에 해제하고 Evidence를 보존한다.
 - [x] 실제 E2E 전에는 완료라고 표현하지 않는다.
 
 ---
@@ -1231,7 +1337,7 @@ Wazuh 외부 전송을 시작하지 않는다. 해당 작업은 Blueprint Freeze
   - Persistent Cache와 keys_existed 응답
 - [Shuffle Configuration](https://github.com/Shuffle/Shuffle-docs/blob/master/docs/configuration.md)
   - Self-hosted 최소 2 vCPU, RAM 8GB, SSD 100GB와 OpenSearch 부담
-- [GitHub Create a workflow dispatch event](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)
+- [GitHub Create a workflow dispatch event — API 2026-03-10](https://docs.github.com/en/rest/actions/workflows?apiVersion=2026-03-10#create-a-workflow-dispatch-event)
   - 고정 Workflow/Ref/Input, Fine-grained Token Actions write
 - [GitHub workflow concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)
   - 동일 상태 변경의 동시 실행 제한
@@ -1239,6 +1345,18 @@ Wazuh 외부 전송을 시작하지 않는다. 해당 작업은 Blueprint Freeze
   - Private Repository의 Required Reviewer Plan 제한
 - [AWS CLI describe-alarm-history](https://docs.aws.amazon.com/cli/latest/reference/cloudwatch/describe-alarm-history.html)
   - StateUpdate 시간창 조회와 `HistoryData`의 이전·새 Alarm 상태
+- [NIST SP 800-61 Rev. 3](https://csrc.nist.gov/pubs/sp/800/61/r3/final)
+  - Detect·Respond·Recover를 조직 위험 관리에 통합
+- [CISA Incident Response Playbook](https://www.cisa.gov/sites/default/files/2024-08/Federal_Government_Cybersecurity_Incident_and_Vulnerability_Response_Playbooks_508C.pdf)
+  - Containment, 증거 보존, Eradication·Recovery와 재진입 모니터링
+- [AWS EKS Incident response and forensics](https://docs.aws.amazon.com/eks/latest/best-practices/incident-response-and-forensics.html)
+  - Pod·Node 격리, NetworkPolicy, Credential 대응과 증거 보존
+- [AWS Security Incident Response — Contain](https://docs.aws.amazon.com/security-ir/latest/userguide/contain.html)
+  - 단계적·가역적 Containment와 운영 영향 고려
+- [Kubernetes Network Policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
+  - NetworkPolicy를 강제하는 네트워크 구현이 없으면 정책이 효과를 내지 않음
+- [EKS VPC CNI Network Policy](https://docs.aws.amazon.com/eks/latest/userguide/cni-network-policy-configure.html)
+  - EKS Network Policy 기능의 명시 구성·검증
 - [Argo CD Automated Sync](https://argo-cd.readthedocs.io/en/latest/user-guide/auto_sync/)
   - Git 변경 기반 자동 Sync
 - [Argo CD app wait](https://argo-cd.readthedocs.io/en/latest/user-guide/commands/argocd_app_wait/)
@@ -1248,13 +1366,11 @@ Wazuh 외부 전송을 시작하지 않는다. 해당 작업은 Blueprint Freeze
 
 ## 19. 다음 행동
 
-Blueprint v1.0 Freeze는 완료됐다.
+v2 대응 정합성 정리는 완료됐다. 다음 구현 순서는 다음 하나에서 재개한다.
 
-다음 별도 작업에서만 다음 순서로 진행한다.
-
-1. 하나의 Goal을 생성한다.
-2. 시작 시점의 Git, Wazuh, Daily Runtime, Shuffle Cloud 계정 상태를 다시 확인한다.
-3. Gate B1 Local Safety부터 순서대로 구현한다.
-4. 각 Gate의 Runtime Evidence가 없으면 다음 Gate를 완료 처리하지 않는다.
+1. 현재 Git·Wazuh·Bridge·Daily Runtime을 다시 확인한다.
+2. 실제 AWS `command.execution → Rule 100103` 3 TAKE를 `observe_only`로 검증한다.
+3. Offline Catch-up·DLQ·DVWA Poll Rollback을 검증한다.
+4. 그 뒤에만 v2 Shuffle·NetworkPolicy·IAM·Remediation Gate로 이동한다.
 
 Gate를 건너뛰거나, 개별 구성요소 존재만으로 다음 Gate를 완료 처리하지 않는다.

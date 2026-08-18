@@ -1,10 +1,11 @@
 # Capital One SOC 시연 Terraform 단계별 실행 계획
 
-> **상태:** Draft v1.9 — 5-Source Polling As-built 완료, DVWA Push Shadow Source·검증·Plan 완료
-> **기준 시점:** 2026-08-17
+> **상태:** Draft v2.0 — Terraform 범위 유지, 대응 의미는 v2 정본에 맞춰 보정
+> **기준 시점:** 2026-08-18
 > **현재 단계:** Gate 4 Terraform 지원 — DVWA Push 비파괴 Plan 완료, 비용 검토·명시적 Apply 대기
 > **번호 구분:** 이 문서의 `T0~T6`는 Terraform 구현 단계다. 상위 계획의 `Gate 0~8`은 시연 Evidence 단계이며 같은 번호끼리 같은 작업이 아니다.
 > **상위 계획:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)
+> **대응 의미 정본:** [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](./CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md)
 > **저지연 전달 정본:** [`observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md`](./observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md)
 > **기존 관측성 현황:** [`OBSERVABILITY-CURRENT-STATUS.md`](./OBSERVABILITY-CURRENT-STATUS.md)
 
@@ -25,9 +26,10 @@ Terraform의 책임
 Terraform 밖의 책임
 = SIEM 탐지 규칙
 + SOAR Workflow
-+ GitHub Bot Commit
-+ Argo CD Sync
-+ DVWA low → impossible
++ Workload Quarantine과 제한된 IAM 영향 Containment
++ GitHub Bot Commit·Argo CD Sync
++ DVWA low → impossible Remediation
++ 재촬영용 수동 Reset
 ```
 
 ---
@@ -59,8 +61,11 @@ Terraform 밖의 책임
 → 로그 수집 기능 확인·보강
 → 탐지 방식 결정
 → Foundation·통제된 취약 Profile Plan·Apply
-→ 공격·로그·경보·자동 Containment Evidence
-→ 촬영 실패 시 DVWA만 수동 Reset하고 새 TAKE 반복
+→ 공격·빠른 경보
+→ Workload Quarantine·제한된 IAM 영향 Containment
+→ 느린 증거 상관분석
+→ DVWA low → impossible Remediation
+→ 촬영 실패 시 격리를 유지한 수동 Reset 후 마지막에 격리 해제
 → 최종 사용할 영상 확인
 → Terraform hardened Fresh Plan
 → 사람 승인 후 Apply
@@ -71,8 +76,11 @@ Terraform 밖의 책임
 ### 0.3 가장 중요한 구분
 
 ```text
+Workload Quarantine + 제한된 IAM 영향 차단
+= 공격 확산과 추가 영향부터 줄이는 Containment
+
 GitHub의 DVWA 보안 레벨 변경
-= 새 공격을 빠르게 막는 시연용 Containment
+= 실제 설정 파일을 바꾸는 애플리케이션 Remediation
 
 Terraform의 IAM·IMDS 복구
 = 공격의 인프라 원인을 제거하는 영구 대응
@@ -84,8 +92,10 @@ Terraform의 IAM·IMDS 복구
 
 ```text
 수동 재촬영 Reset
-= D:\DVWA의 defaultSecurityLevel impossible → low 새 Commit
-= Terraform·IAM·IMDS·Node를 변경하지 않음
+= Evidence와 Git History를 보존
+= Quarantine을 유지한 채 D:\DVWA의 defaultSecurityLevel impossible → low 새 Commit
+= 실습 IAM 권한만 필요한 범위로 복원
+= 새 Pod·Alarm OK·Wazuh/Bridge READY·새 TAKE 확인 뒤 Quarantine을 마지막에 해제
 
 Terraform hardened 복구
 = 최종 촬영 확인 뒤 실습 IAM·IMDS 원인을 제거
@@ -580,10 +590,11 @@ Off 0-change, 비파괴 Saved Plan, 명시적 Apply 승인, Runtime 3회 Evidenc
 | `tests/test-wazuh-push-contract.ps1` | Default Off·리전·IAM·재귀 방지·DLQ·No Public Inbound 계약 | Push P0 |
 | `tests/test_wazuh_push_forwarder.py` | 전체 Event 운반, 안전 Payload Allowlist, Source Guard, 안정 Event ID, Control Message 무시 | Push P1 |
 
-자동 Containment와 수동 Reset Workflow는 `D:\DVWA` 저장소의 책임이다. 이 문서에서
-그 상태 전환 순서는 고정하지만 Terraform Resource로 구현하거나 Terraform Apply로
-대신하지 않는다. Wazuh Stack·Rule·Dashboard·Shuffle 연동도 Terraform Resource가
-아니며, Terraform은 기존 AWS Source의 최소 Read 권한까지만 책임진다.
+Workload/IAM Containment, GitOps Remediation, 수동 Reset 자동화는 이 Terraform 문서의
+구현 범위 밖이다. 현재 `D:\DVWA`의 `soc-contain-dvwa.yml`과 `soc-reset-dvwa.yml`은
+Legacy v1 Source이므로 v2 Production 실행 대상으로 간주하지 않는다. Terraform은 기존
+AWS Source의 최소 Read 권한과 최종 IAM·IMDS 영구 복구를 책임지며, Wazuh
+Stack·Rule·Dashboard·Shuffle 연동을 Terraform Resource로 대신하지 않는다.
 
 ---
 
@@ -803,9 +814,10 @@ Foundation 수집 설정 Apply
 → capital-one-lab Apply
 → 기존 Node가 아니라 새 Karpenter Node 설정 확인
 → 촬영 Preflight
-→ 통제된 공격·자동 Containment·재공격 실패
+→ 통제된 공격·Workload/IAM 영향 Containment
+→ 느린 증거 확인·GitOps Remediation·재공격 실패
 → 촬영 결과 판정
-→ 실패하면 DVWA만 수동 Reset하고 새 TAKE 반복
+→ 실패하면 격리를 유지한 수동 Reset 후 마지막에 격리 해제하고 새 TAKE 반복
 → 성공하면 Reset하지 않고 T5 영구 복구로 이동
 ```
 
@@ -823,7 +835,8 @@ capital-one-lab Runtime 일치
 실패한 촬영의 Reset 범위:
 
 ```text
-허용: D:\DVWA values.yaml의 impossible → low Commit과 Argo Rollout
+허용: Evidence 보존, D:\DVWA values.yaml의 impossible → low Commit, 실습 IAM 권한 복원,
+      Argo Rollout, 준비 검증 뒤 Quarantine 마지막 해제
 금지: Terraform 재Apply·State 조작·IAM 확대·Alarm 강제 OK·CloudTrail Log 삭제
 ```
 
@@ -1051,11 +1064,12 @@ Runtime 출력은 공개본을 만들기 전에 Account ID·IP·ARN·Request ID�
 | T1 | Gate 1 | 반복 가능한 취약·복구 Profile |
 | T2 | Gate 2·3 | 실제 공격 로그와 탐지 입력 Source |
 | T3 | 모든 변경 전제 | 승인 가능한 최소 Plan |
-| T4 | Gate 1~7·7-R | 공격·경보·Containment·재촬영 Reset Evidence |
+| T4 | Gate 1~7·7-R | 공격·경보·Workload/IAM Containment·Remediation·재촬영 Reset Evidence |
 | T5 | Gate 8 | IAM·IMDS 근본 복구와 Negative Test |
 | T6 | Gate 8·최종 영상 | 반복 가능한 팀 Runbook과 안전 종료 Evidence |
 
-Gate 4의 SIEM, Gate 5의 SOAR, Gate 6·7의 GitHub·Argo 구현은 별도 작업이다.
+Gate 4의 SIEM과 후속 SOAR·Workload/IAM Containment·GitHub·Argo Remediation 구현은
+별도 작업이다. 이 문서는 그 대응 의미를 재정의하지 않는다.
 
 ---
 

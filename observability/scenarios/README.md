@@ -187,8 +187,8 @@ Collector를 재사용하도록 고쳤으며, Resume 모드로 S3 읽기를 반�
 Event를 검증했다.
 
 이 결과는 Command Injection을 대체 진입점으로 사용한 공격 경로와 확정 탐지까지의
-증거다. SSRF 자체, SIEM, SOAR, GitHub Containment, Argo 재배포, 재공격 실패는 아직
-증명하지 않는다.
+증거다. SSRF 자체, SIEM, SOAR, Workload/IAM Containment, GitOps Remediation,
+Argo 재배포, 재공격 실패는 아직 증명하지 않는다.
 
 ## T1 — temporary HTTP observation and HTTPS restoration
 

@@ -302,6 +302,7 @@ Source별 S3 Bucket Migration
 | Karpenter Pod Identity | `eks.tf` |
 | 실행 순서·Live Tail Gate | `OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md` |
 | Wazuh SIEM·SOAR 전체 흐름 | `CAPITAL-ONE-SOC-DEMO-PLAN.md` |
+| Capital One 대응 의미·단계 구분 | `CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md` |
 | Wazuh Reader Terraform 경계 | `CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md` |
 
 ---
