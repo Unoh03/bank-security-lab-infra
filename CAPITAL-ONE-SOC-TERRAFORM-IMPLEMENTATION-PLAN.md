@@ -1,6 +1,6 @@
 # Capital One SOC 시연 Terraform 단계별 실행 계획
 
-> **상태:** Draft v2.0 — Terraform 범위 유지, 대응 의미는 v2 정본에 맞춰 보정
+> **상태:** CURRENT DRAFT — Terraform 범위 유지, 대응 의미는 침해 대응 정본에 맞춰 확정
 > **기준 시점:** 2026-08-18
 > **현재 단계:** Gate 4 Terraform 지원 — DVWA Push 비파괴 Plan 완료, 비용 검토·명시적 Apply 대기
 > **번호 구분:** 이 문서의 `T0~T6`는 Terraform 구현 단계다. 상위 계획의 `Gate 0~8`은 시연 Evidence 단계이며 같은 번호끼리 같은 작업이 아니다.
@@ -591,10 +591,10 @@ Off 0-change, 비파괴 Saved Plan, 명시적 Apply 승인, Runtime 3회 Evidenc
 | `tests/test_wazuh_push_forwarder.py` | 전체 Event 운반, 안전 Payload Allowlist, Source Guard, 안정 Event ID, Control Message 무시 | Push P1 |
 
 Workload/IAM Containment, GitOps Remediation, 수동 Reset 자동화는 이 Terraform 문서의
-구현 범위 밖이다. 현재 `D:\DVWA`의 `soc-contain-dvwa.yml`과 `soc-reset-dvwa.yml`은
-Legacy v1 Source이므로 v2 Production 실행 대상으로 간주하지 않는다. Terraform은 기존
-AWS Source의 최소 Read 권한과 최종 IAM·IMDS 영구 복구를 책임지며, Wazuh
-Stack·Rule·Dashboard·Shuffle 연동을 Terraform Resource로 대신하지 않는다.
+구현 범위 밖이다. 각각의 분리된 대응 계약과 Runtime Gate가 완료되기 전에는 Production
+실행 대상으로 간주하지 않는다. Terraform은 기존 AWS Source의 최소 Read 권한과 최종
+IAM·IMDS 영구 복구를 책임지며, Wazuh Stack·Rule·Dashboard·Shuffle 연동을 Terraform
+Resource로 대신하지 않는다.
 
 ---
 

@@ -1,6 +1,6 @@
 # Capital One 기반 침해 대응 시나리오
 
-> **상태:** DECIDED v1.0 — 대응 의미와 Gate 순서 확정, 후속 대응 구현은 미완료
+> **상태:** CURRENT DECISION — 대응 의미와 Gate 순서 확정, 후속 대응 구현은 미완료
 >
 > **기준 시점:** 2026-08-18
 >
@@ -73,13 +73,13 @@ Containment 또는 Credential Revocation이라고 부르지 않는다. 소스코
 | Workload 격리 | 적용 Source·Runtime Evidence 없음 | DVWA 전용 Quarantine NetworkPolicy | 미구현 |
 | NetworkPolicy 강제 | EKS VPC CNI의 Network Policy 활성 Evidence 없음 | Enforcing CNI와 실제 Deny/Allow Test | 미검증 |
 | IAM 영향 차단 | DVWA 권한이 공유 Primary Karpenter Node Role에 연결 | Lab Prefix 임시 Deny 또는 전용 Principal Containment | 미구현 |
-| `low → impossible` | GitHub Workflow Source 존재 | Containment 뒤 실행할 Remediation Workflow로 재명명·재검증 | 현재 의미 폐기 |
-| Reset | `impossible → low` Workflow Source 존재 | 격리·IAM·설정 상태를 안전한 순서로 복원 | 현재 계약 불완전 |
+| Remediation | 분리된 실행 Source·Runtime Evidence 없음 | Containment 뒤 `low → impossible` 설정 패치 | 미구현 |
+| Reset | 전체 복원 순서의 Source·Runtime Evidence 없음 | 격리·IAM·설정 상태를 안전한 순서로 복원 | 미구현 |
 | Wazuh → Shuffle | 최소 Schema와 Custom Integration Source 존재 | 먼저 `observe_only`, 이후 승인된 대응 분기 | E2E 미완료 |
 
-현재의 `soc-contain-dvwa.yml`, `soc-reset-dvwa.yml`, `response_mode=contain`은 옛 계약의
-Source다. 새 계약에 맞게 바꾸고 Runtime으로 검증하기 전에는 Production 대응 경로에서
-호출하지 않는다. Source 존재를 새 시나리오 구현 완료로 세지 않는다.
+분리된 Containment·Remediation·Reset 계약을 Source와 Runtime으로 각각 검증하기 전에는
+Production 대응 경로에서 호출하지 않는다. 이름이 비슷한 파일이나 기존 Source의 존재를
+새 시나리오 구현 완료로 세지 않는다.
 
 ---
 

@@ -1,6 +1,6 @@
 # Capital One 기반 보안 관제·자동 대응 시연 계획
 
-> **상태:** Draft v2.0 — 대응 시나리오 정합성 확정, DVWA 저지연 Trigger Runtime 검증 중
+> **상태:** CURRENT DRAFT — 대응 시나리오 정합성 확정, DVWA 저지연 Trigger Runtime 검증 중
 > **기준 시점:** 2026-08-18
 > **현재 절차 Gate:** Gate 4 — 10분 Evidence 경로는 유지하고, 실제 DVWA `command.execution`의 저지연 Rule `100103`을 먼저 검증한다.
 > **최근 Runtime Evidence:** Wazuh Dashboard 2·Visualization 14·Saved Search 2와 필수 Evidence 6개 조건의 읽기 전용 Preflight 통과
@@ -1096,9 +1096,8 @@ Containment 안전 조건:
 - [ ] 같은 TAKE 재수신 시 NetworkPolicy·IAM 조치 중복 없음
 - [ ] 모든 임시 조치에 정확한 역방향 Rollback과 사람 승인 경계 존재
 
-현재 Source의 `soc-contain-dvwa.yml`은 `low → impossible` 옛 계약이므로 이 Gate의
-Containment 구현으로 사용하지 않는다. 새 계약으로 교체·검증하기 전 Production Dispatch를
-연결하지 않는다.
+분리된 Workload·IAM Containment Source와 Runtime Evidence가 모두 준비되기 전에는 이
+Gate를 구현 완료로 세지 않으며 Production Dispatch를 연결하지 않는다.
 
 ### Gate 7 — Remediation·Argo CD·Recovery 검증
 
