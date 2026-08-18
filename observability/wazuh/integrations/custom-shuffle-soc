@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+"""Send only the approved Rule 100103 fields to Shuffle Cloud."""
+
+from __future__ import annotations
+
+import hashlib
+import http.client
+import json
+import re
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
+
+
+EXPECTED_ACCOUNT_ID = "433048100798"
+EXPECTED_REGION = "ap-northeast-2"
+EXPECTED_RULE_ID = "100103"
+EXPECTED_RULE_LEVEL = 10
+EXPECTED_ROUTE = "/vulnerabilities/exec/"
+TAKE_ID_PATTERN = re.compile(
+    r"^capital-one-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}$"
+)
+SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+ALERT_ID_PATTERN = re.compile(r"^[0-9]+\.[0-9]+$")
+EVENT_ID_PATTERN = re.compile(
+    rf"^cwl:{EXPECTED_ACCOUNT_ID}:[\x21-\x7e]{{20,480}}$"
+)
+HEADER_KEY_PATTERN = re.compile(r"^[A-Za-z0-9.*+?-]{24,128}$")
+WEBHOOK_ID_PATTERN = r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+WEBHOOK_PATH_PATTERNS = (
+    re.compile(rf"^/api/v1/hooks/(?P<id>{WEBHOOK_ID_PATTERN})$"),
+    re.compile(rf"^/api/v1/webhooks/webhook_(?P<id>{WEBHOOK_ID_PATTERN})$"),
+)
+WEBHOOK_URL_PATH = Path("/var/ossec/soc-secrets/shuffle_webhook_url")
+WEBHOOK_HEADER_KEY_PATH = Path(
+    "/var/ossec/soc-secrets/shuffle_webhook_header_key"
+)
+
+
+class ContractError(Exception):
+    """An alert or runtime value violated the frozen SOC contract."""
+
+
+def require_object(value: Any, label: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ContractError(f"{label} must be an object")
+    return value
+
+
+def parse_utc_timestamp(value: Any, label: str) -> str:
+    if not isinstance(value, str) or len(value) > 40:
+        raise ContractError(f"{label} must be a bounded UTC timestamp")
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise ContractError(f"{label} must be ISO 8601") from error
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ContractError(f"{label} must include a UTC offset")
+    if parsed.utcoffset().total_seconds() != 0:
+        raise ContractError(f"{label} must be UTC")
+    return parsed.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace(
+        "+00:00", "Z"
+    )
+
+
+def canonical_json(value: dict[str, Any]) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def build_sanitized_alert(alert: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
+    rule = require_object(alert.get("rule"), "rule")
+    data = require_object(alert.get("data"), "data")
+    payload = require_object(data.get("payload"), "data.payload")
+    context = require_object(payload.get("context"), "data.payload.context")
+
+    if str(rule.get("id")) != EXPECTED_RULE_ID:
+        raise ContractError("rule.id is not allowlisted")
+    if rule.get("level") != EXPECTED_RULE_LEVEL:
+        raise ContractError("rule.level is not allowlisted")
+    if data.get("schema_version") != "1" and data.get("schema_version") != 1:
+        raise ContractError("schema_version is unsupported")
+    if data.get("source") != "dvwa" or data.get("transport") != "push":
+        raise ContractError("source or transport is not allowlisted")
+    if data.get("aws_account_id") != EXPECTED_ACCOUNT_ID:
+        raise ContractError("AWS account is not allowlisted")
+    if data.get("aws_region") != EXPECTED_REGION:
+        raise ContractError("AWS region is not allowlisted")
+    if payload.get("normalized") is not True:
+        raise ContractError("payload is not normalized")
+    if payload.get("event_type") != "command.execution":
+        raise ContractError("event_type is not allowlisted")
+    if payload.get("result") != "succeeded":
+        raise ContractError("result is not allowlisted")
+    if payload.get("route") != EXPECTED_ROUTE:
+        raise ContractError("route is not allowlisted")
+    if context.get("action") != "shell_command":
+        raise ContractError("context.action is not allowlisted")
+    if context.get("resource") != "ec2_imds":
+        raise ContractError("context.resource is not allowlisted")
+    if context.get("security_level") != "low":
+        raise ContractError("context.security_level is not allowlisted")
+
+    take_id = payload.get("take_id")
+    if not isinstance(take_id, str) or not TAKE_ID_PATTERN.fullmatch(take_id):
+        raise ContractError("take_id is missing or invalid")
+    event_id = data.get("event_id")
+    if not isinstance(event_id, str) or not EVENT_ID_PATTERN.fullmatch(event_id):
+        raise ContractError("event_id is invalid")
+    alert_id = alert.get("id")
+    if not isinstance(alert_id, str) or not ALERT_ID_PATTERN.fullmatch(alert_id):
+        raise ContractError("Wazuh alert id is invalid")
+    raw_sha256 = data.get("raw_message_sha256")
+    if not isinstance(raw_sha256, str) or not SHA256_PATTERN.fullmatch(raw_sha256):
+        raise ContractError("raw message SHA-256 is invalid")
+    event_time = parse_utc_timestamp(data.get("event_time"), "event_time")
+
+    sent_at = now or datetime.now(timezone.utc)
+    if sent_at.tzinfo is None or sent_at.utcoffset() is None:
+        raise ContractError("sent_at source must be timezone-aware")
+
+    sanitized: dict[str, Any] = {
+        "schema_version": 1,
+        "source_system": "wazuh",
+        "sent_at_utc": sent_at.astimezone(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z"),
+        "account_alias": "primary-lab",
+        "aws_account_id": EXPECTED_ACCOUNT_ID,
+        "aws_region": EXPECTED_REGION,
+        "scenario_id": "CAPITAL-ONE",
+        "rule": {
+            "id": EXPECTED_RULE_ID,
+            "level": EXPECTED_RULE_LEVEL,
+        },
+        "incident": {
+            "take_id": take_id,
+            "event_id": event_id,
+            "wazuh_alert_id": alert_id,
+            "event_time_utc": event_time,
+            "result": "succeeded",
+            "route": EXPECTED_ROUTE,
+        },
+        "integrity": {
+            "raw_message_sha256": raw_sha256,
+        },
+    }
+    body_sha256 = hashlib.sha256(canonical_json(sanitized)).hexdigest()
+    sanitized["integrity"]["body_sha256"] = body_sha256
+    return sanitized
+
+
+def validate_webhook_url(value: str) -> tuple[str, str]:
+    try:
+        parsed = urlsplit(value)
+    except ValueError as error:
+        raise ContractError("Shuffle webhook URL is invalid") from error
+    host = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme != "https"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port is not None
+        or parsed.query
+        or parsed.fragment
+        or not (host == "shuffler.io" or host.endswith(".shuffler.io"))
+    ):
+        raise ContractError("Shuffle webhook URL is outside the allowlist")
+    if not any(pattern.fullmatch(parsed.path) for pattern in WEBHOOK_PATH_PATTERNS):
+        raise ContractError("Shuffle webhook ID is invalid")
+    return host, parsed.path
+
+
+def read_runtime_secret(path: Path) -> str:
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise ContractError("required Runtime Secret is unavailable") from error
+    if not value:
+        raise ContractError("required Runtime Secret is empty")
+    return value
+
+
+def send_to_shuffle(
+    sanitized: dict[str, Any], webhook_url: str, header_key: str
+) -> None:
+    host, path = validate_webhook_url(webhook_url)
+    if not HEADER_KEY_PATTERN.fullmatch(header_key):
+        raise ContractError("Shuffle webhook header key is invalid")
+
+    body = canonical_json(sanitized)
+    connection = http.client.HTTPSConnection(host, timeout=10)
+    try:
+        connection.request(
+            "POST",
+            path,
+            body=body,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(body)),
+                "X-SOC-Webhook-Key": header_key,
+            },
+        )
+        response = connection.getresponse()
+        response.read(1024)
+        if response.status < 200 or response.status >= 300:
+            raise ContractError("Shuffle webhook returned a non-success status")
+    except (OSError, http.client.HTTPException) as error:
+        raise ContractError("Shuffle webhook delivery failed") from error
+    finally:
+        connection.close()
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print("custom-shuffle-soc: missing Wazuh alert file", file=sys.stderr)
+        return 2
+
+    try:
+        with open(sys.argv[1], "r", encoding="utf-8") as handle:
+            alert = json.load(handle)
+        if not isinstance(alert, dict):
+            raise ContractError("Wazuh alert must be an object")
+        sanitized = build_sanitized_alert(alert)
+        webhook_url = read_runtime_secret(WEBHOOK_URL_PATH)
+        header_key = read_runtime_secret(WEBHOOK_HEADER_KEY_PATH)
+        send_to_shuffle(sanitized, webhook_url, header_key)
+    except (OSError, json.JSONDecodeError, ContractError) as error:
+        print(
+            f"custom-shuffle-soc: rejected or failed ({type(error).__name__})",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(
+        "custom-shuffle-soc: sanitized Rule 100103 alert delivered",
+        file=sys.stderr,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

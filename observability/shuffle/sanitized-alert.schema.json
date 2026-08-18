@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aws-topology.invalid/schemas/capital-one-soc-sanitized-alert-v1.json",
+  "title": "Capital One SOC sanitized Wazuh alert v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_system",
+    "sent_at_utc",
+    "account_alias",
+    "aws_account_id",
+    "aws_region",
+    "scenario_id",
+    "rule",
+    "incident",
+    "integrity"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "source_system": { "const": "wazuh" },
+    "sent_at_utc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "account_alias": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{2,31}$"
+    },
+    "aws_account_id": {
+      "type": "string",
+      "pattern": "^[0-9]{12}$"
+    },
+    "aws_region": {
+      "type": "string",
+      "pattern": "^[a-z]{2}-[a-z]+-[0-9]$"
+    },
+    "scenario_id": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9-]{2,63}$"
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "level"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9]{6}$"
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15
+        }
+      }
+    },
+    "incident": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "take_id",
+        "event_id",
+        "wazuh_alert_id",
+        "event_time_utc",
+        "result",
+        "route"
+      ],
+      "properties": {
+        "take_id": {
+          "type": "string",
+          "pattern": "^capital-one-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}$"
+        },
+        "event_id": {
+          "type": "string",
+          "minLength": 24,
+          "maxLength": 512,
+          "pattern": "^cwl:[0-9]{12}:[!-~]+$"
+        },
+        "wazuh_alert_id": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+$"
+        },
+        "event_time_utc": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+        },
+        "result": { "const": "succeeded" },
+        "route": { "const": "/vulnerabilities/exec/" }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["raw_message_sha256", "body_sha256"],
+      "properties": {
+        "raw_message_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "body_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    }
+  }
+}

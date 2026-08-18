@@ -95,11 +95,17 @@ Assert-NotMatch $push 'command\.execution|GetObject|ec2_imds' `
 
 Assert-Match $reader 'ConsumePrimaryWazuhPushQueue[\s\S]*?sqs:DeleteMessage[\s\S]*?sqs:ReceiveMessage' `
     'The explicit Reader Role cannot consume and acknowledge the Primary shadow queue.'
+Assert-Match $reader 'InspectPrimaryWazuhPushDlq[\s\S]*?actions\s*=\s*\[[\s\S]*?sqs:GetQueueAttributes[\s\S]*?sqs:GetQueueUrl[\s\S]*?resources\s*=\s*\[aws_sqs_queue\.wazuh_push_primary_dlq\[0\]\.arn\]' `
+    'The Reader Role cannot inspect the Primary Push DLQ without consuming it.'
+Assert-NotMatch $reader 'InspectPrimaryWazuhPushDlq[\s\S]{0,300}sqs:(ReceiveMessage|DeleteMessage)' `
+    'The Reader Role can consume or delete a Primary Push DLQ message.'
 Assert-NotMatch $reader 'sqs:SendMessage' `
     'The local Reader Role must not be able to inject Push events.'
 
 Assert-Match $outputs 'output\s+"wazuh_push_primary_queue_url"' `
     'The local Shadow Bridge cannot discover the Primary queue URL.'
+Assert-Match $outputs 'output\s+"wazuh_push_primary_dlq_url"[\s\S]*?wazuh_push_primary_dlq\[0\]\.id' `
+    'The local Shadow Bridge cannot discover the read-only Primary DLQ URL.'
 Assert-Match $outputs 'output\s+"wazuh_push_transport"[\s\S]*?mode\s*=\s*"shadow"[\s\S]*?forwards_all_events\s*=\s*true' `
     'The non-sensitive Push state does not declare Shadow mode and full-source forwarding.'
 Assert-Match $outputs 'payload_mode\s*=\s*"safe_allowlist"[\s\S]*?raw_message_stored\s*=\s*false' `
@@ -131,24 +137,50 @@ Assert-Match $bridge 'FileMode\]::CreateNew' `
     'The Shadow Bridge does not use atomic event-id deduplication.'
 Assert-Match $bridge "wazuh-push-live\.jsonl[\s\S]*?FileMode\]::OpenOrCreate[\s\S]*?Seek\(0, \[IO\.SeekOrigin\]::End\)" `
     'The Bridge does not maintain one stable append-only JSONL input for Wazuh.'
-Assert-Match $bridge 'liveStream\.Write[\s\S]*?liveStream\.Flush\(\$true\)[\s\S]*?FileMode\]::CreateNew' `
-    'The Bridge must flush the live Wazuh record before recording the event ledger.'
+Assert-Match $bridge 'FileMode\]::CreateNew[\s\S]*?File\]::Move\(\$temporaryEventPath, \$eventPath\)[\s\S]*?Write-LiveEventBytes -Bytes \$bytes' `
+    'The Bridge must durably commit the ledger before appending the live Wazuh record.'
 Assert-Match $bridge 'temporaryEventPath[\s\S]*?Flush\(\$true\)[\s\S]*?File\]::Move\(\$temporaryEventPath, \$eventPath\)' `
     'The Bridge ledger must be flushed to a temporary file and atomically renamed.'
-Assert-Match $bridge 'Existing Wazuh Push ledger entry is not valid JSON[\s\S]*?existing\.event_id' `
-    'The Bridge does not validate an existing ledger record before deduplication.'
+Assert-Match $bridge 'Existing Wazuh Push ledger entry is not valid JSON[\s\S]*?Get-BridgeEnvelopeIdentityHash[\s\S]*?Test-LiveFileContainsEventId[\s\S]*?Write-LiveEventBytes' `
+    'The Bridge cannot validate and recover an existing ledger before queue deletion.'
 Assert-Match $bridge 'wazuh-push-bridge\.lock[\s\S]*?FileShare\]::None' `
     'The Bridge does not prevent concurrent writers to its live JSONL and ledger.'
+Assert-Match $bridge 'wazuh_push_primary_dlq_url' `
+    'The Bridge cannot discover the Terraform-managed Primary DLQ URL.'
 Assert-Match $bridge 'wazuh_log_reader_role_arn' `
     'The Bridge cannot discover the Terraform-managed Reader Role.'
 Assert-Match $bridge "'sts', 'assume-role'" `
     'The Bridge does not obtain a temporary Reader Role session.'
+Assert-Match $bridge 'Remove-Item "Env:\$name"[\s\S]*?''sts'', ''assume-role''[\s\S]*?sessionExpiration' `
+    'The Bridge cannot renew STS from the fixed Bootstrap profile without reusing its expiring session.'
+Assert-Match $bridge 'sessionExpiration\.AddSeconds\(-\$sessionRefreshBeforeSeconds\)[\s\S]*?Enter-ReaderRoleSession' `
+    'The Bridge does not renew the Reader session before expiration.'
 Assert-Match $bridge 'AWS_ACCESS_KEY_ID[\s\S]*?finally[\s\S]*?SetEnvironmentVariable' `
     'The Bridge does not restore process-level temporary credentials.'
 Assert-NotMatch $bridge '(WriteAllText|Set-Content|Add-Content)[\s\S]{0,200}(AccessKeyId|SecretAccessKey|SessionToken)' `
     'The Bridge persists an AWS credential value.'
 Assert-Match $bridge 'Bridge output: durable Host spool; Wazuh localfile consumption is configured separately' `
     'The Bridge does not state the Host-spool and Wazuh-localfile responsibility boundary.'
+Assert-Match $bridge 'wazuh-push-bridge-heartbeat\.json[\s\S]*?heartbeat_at_utc[\s\S]*?session_expires_at_utc[\s\S]*?queue_visible[\s\S]*?queue_not_visible[\s\S]*?dlq_visible' `
+    'The Bridge heartbeat omits a required readiness field.'
+Assert-Match $bridge 'File\]::Replace\(\$temporaryPath, \$HeartbeatPath, \$backupPath\)' `
+    'The Bridge heartbeat does not atomically replace its previous record.'
+Assert-Match $bridge "'sqs', 'get-queue-attributes'[\s\S]*?ApproximateNumberOfMessages[\s\S]*?ApproximateAgeOfOldestMessage" `
+    'The Bridge does not inspect bounded Primary and DLQ readiness metrics.'
+Assert-Match $bridge 'dlqVisible -ne 0[\s\S]*?cannot enter READY' `
+    'The Bridge can enter READY while the DLQ is non-empty.'
+Assert-Match $bridge 'queueNotVisible -ne 0[\s\S]*?in-flight message[\s\S]*?cannot enter READY' `
+    'The Bridge can enter READY while a Primary queue message is already in flight.'
+Assert-Match $bridge 'MaxReadyQueueAgeSeconds\s*=\s*120' `
+    'The Bridge does not declare a bounded stale-queue readiness threshold.'
+Assert-Match $bridge 'queueVisible -gt 0[\s\S]*?queueOldestAgeSeconds -gt \$MaxReadyQueueAgeSeconds[\s\S]*?stale messages[\s\S]*?cannot enter READY' `
+    'The Bridge can enter READY while stale Primary queue messages remain.'
+Assert-Match $bridge "PSObject\.Properties\['ApproximateNumberOfMessages'\][\s\S]*?PSObject\.Properties\['ApproximateAgeOfOldestMessage'\][\s\S]*?PSObject\.Properties\['ApproximateNumberOfMessagesNotVisible'\]" `
+    'The Bridge does not tolerate an AWS response with an omitted SQS metric attribute.'
+Assert-Match $bridge 'StopSignalPath[\s\S]*?wazuh-push-bridge\.stop[\s\S]*?Write-BridgeHeartbeat -State STOPPED' `
+    'The Bridge lacks a controlled stop signal and final state.'
+Assert-NotMatch $bridge 'AWS CLI request failed: \$message' `
+    'The Bridge can print unbounded AWS CLI failure output.'
 $writeIndex = $bridge.IndexOf('Write-ShadowEvent -Envelope')
 $deleteIndex = $bridge.IndexOf("'sqs', 'delete-message'")
 if ($writeIndex -lt 0 -or $deleteIndex -lt 0 -or $writeIndex -ge $deleteIndex) {

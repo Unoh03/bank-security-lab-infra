@@ -116,6 +116,20 @@ data "aws_iam_policy_document" "wazuh_log_reader" {
       resources = [aws_sqs_queue.wazuh_push_primary[0].arn]
     }
   }
+
+  dynamic "statement" {
+    for_each = var.enable_wazuh_push_transport ? [1] : []
+
+    content {
+      sid    = "InspectPrimaryWazuhPushDlq"
+      effect = "Allow"
+      actions = [
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+      ]
+      resources = [aws_sqs_queue.wazuh_push_primary_dlq[0].arn]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "wazuh_log_reader" {

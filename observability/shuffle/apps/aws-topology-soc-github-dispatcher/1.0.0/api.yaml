@@ -1,0 +1,48 @@
+app_version: 1.0.0
+name: AWS Topology SOC GitHub Dispatcher
+description: Fixed-target GitHub Actions dispatcher for the Capital One SOC containment workflow.
+tags:
+  - SOC
+  - GitHub
+categories:
+  - Security
+contact_info:
+  name: aws-topology project
+  url: https://github.com/Unoh03/Uns-DVWA
+  email: no-reply@example.invalid
+authentication:
+  required: true
+  parameters:
+    - name: github_token
+      description: Fine-grained GitHub token restricted to Actions write on Unoh03/Uns-DVWA.
+      example: "*****"
+      required: true
+      schema:
+        type: string
+actions:
+  - name: dispatch_containment
+    description: Dispatches only soc-contain-dvwa.yml on main with four validated inputs and returns a sanitized run reference.
+    parameters:
+      - name: take_id
+        description: Validated Capital One TAKE identifier.
+        required: true
+        schema:
+          type: string
+      - name: scenario_id
+        description: Must be CAPITAL-ONE.
+        required: true
+        schema:
+          type: string
+      - name: rule_id
+        description: Must be 100103.
+        required: true
+        schema:
+          type: string
+      - name: alert_body_sha256
+        description: Canonical sanitized Alert body SHA-256.
+        required: true
+        schema:
+          type: string
+    returns:
+      schema:
+        type: object

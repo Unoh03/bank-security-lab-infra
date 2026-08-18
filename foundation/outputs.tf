@@ -156,6 +156,11 @@ output "wazuh_push_primary_queue_url" {
   value       = try(aws_sqs_queue.wazuh_push_primary[0].id, null)
 }
 
+output "wazuh_push_primary_dlq_url" {
+  description = "Primary Push DLQ URL inspected but never consumed by the local Wazuh bridge. Null while Push is disabled."
+  value       = try(aws_sqs_queue.wazuh_push_primary_dlq[0].id, null)
+}
+
 output "wazuh_push_transport" {
   description = "Non-sensitive state and identifiers for the opt-in DVWA Push shadow transport."
   value = {

@@ -1028,13 +1028,18 @@ Workflow로 만든다.
 
 ```text
 workflow_dispatch만 허용
-→ GitHub Environment 사람 승인
+→ 운영자가 Invoke-SocLabReset.ps1의 정확한 확인문을 직접 입력
 → TAKE_ID + 정확한 확인문 검증
 → 현재 값이 impossible인지 확인
 → deploy/dvwa/values.yaml의 한 값만 low로 변경
 → 새 Reset Commit을 main에 Push
 → Argo CD Auto Sync
 ```
+
+현재 저장소는 Private + GitHub Free이므로 `environment:`만 적어 Required Reviewer
+승인을 강제할 수 없다. 따라서 현재 구현의 사람 승인 경계는 Reset Script의 명시 실행과
+`RESET SOC LAB TO LOW` 확인문이다. 향후 지원 Plan으로 전환해 실제 Required Reviewer를
+설정한 뒤에만 GitHub Environment 승인을 보장한다고 표현한다.
 
 Reset 안전 조건:
 
@@ -1082,9 +1087,10 @@ GitHub Commit
 → Argo CD가 Reset Commit 배포
 → 새 Pod Ready·Synced·Healthy
 → 새 브라우저 세션에서 low 확인
-→ 공격자 PC의 이전 AWS 임시 Credential 제거
-→ Alarm의 실제 OK 복귀 확인
-→ 새 TAKE_ID·ExperimentId·UTC 시간창 발급
+→ 공격 Process의 임시 AWS Credential 정리 Evidence + 현재 Reset Process 잔존 없음 확인
+→ 이번 TAKE 뒤 Alarm의 ALARM → 실제 OK 복귀 History 확인
+→ 기존 TAKE CLOSED
+→ Stop-SocLab -StopWazuh 후 Start-SocLab으로 새 TAKE_ID·UTC 시간창 발급
 → 다음 촬영 시작
 ```
 
@@ -1096,9 +1102,9 @@ CloudWatch Alarm Action은 보통 상태 전환 때 실행되므로 계속 `ALAR
 
 - [ ] Reset Commit만으로 새 Image Build 없이 Rollout됐다.
 - [ ] 새 Pod·새 세션의 기본값이 `low`다.
-- [ ] 이전 AWS Credential 환경변수가 공격자 PC에 남아 있지 않다.
+- [ ] 공격 Process가 임시 AWS Credential 환경변수를 지웠고 Reset Process에도 남아 있지 않다.
 - [ ] 이전 로그는 삭제하지 않고 실패한 `TAKE_ID`로 구분했다.
-- [ ] Alarm이 실제 `OK`이며 AWS Native SNS 경로가 다음 TAKE를 받을 수 있다.
+- [ ] 이번 TAKE 이후 Alarm History에 `ALARM → OK`가 있고 현재도 실제 `OK`다.
 - [ ] 새 CloudTrail `eventID`가 독립된 두 번째 Wazuh Alert·대응을 만들 수 있다.
 - [ ] `TAKE_ID`는 촬영·Evidence 묶음 표식이며 보안 Event 고유 ID를 대신하지 않는다.
 

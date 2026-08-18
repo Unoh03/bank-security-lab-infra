@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "shuffle-soc-workflow-contract",
+  "importable_shuffle_workflow": false,
+  "workflow": {
+    "name": "CAPITAL-ONE-SOC-CONTAINMENT-v1",
+    "sharing": "private",
+    "trigger": {
+      "type": "webhook",
+      "active_count": 1,
+      "required_header_name": "X-SOC-Webhook-Key",
+      "secret_value_storage": "shuffle-trigger-and-local-dpapi-only"
+    }
+  },
+  "input_contract": {
+    "json_schema": "sanitized-alert.schema.json",
+    "canonical_body_hash": "integrity.body_sha256",
+    "validator_app": {
+      "name": "AWS Topology SOC Validator",
+      "version": "1.0.0",
+      "action": "validate_sanitized_alert",
+      "input": "$exec",
+      "private_org_app": true,
+      "forbidden_replacement": "Shuffle Tools execute_python"
+    },
+    "allowlist": {
+      "account_alias": "primary-lab",
+      "aws_account_id": "433048100798",
+      "aws_region": "ap-northeast-2",
+      "scenario_id": "CAPITAL-ONE",
+      "rule_id": "100103",
+      "rule_level": 10,
+      "source_system": "wazuh"
+    }
+  },
+  "required_action_labels": [
+    "validate_payload",
+    "get_take_allow",
+    "claim_take_dispatch",
+    "dispatch_github_containment",
+    "write_response_dispatched",
+    "write_duplicate_suppressed",
+    "write_observe_only",
+    "write_rejected_schema",
+    "write_rejected_allowlist",
+    "write_rejected_take",
+    "write_response_failed"
+  ],
+  "production_only_action_labels": [],
+  "datastore": {
+    "category": "soc-v1",
+    "allow_key": "soc:v1:allow:primary-lab:CAPITAL-ONE:<take_id>",
+    "dedupe_key": "soc:v1:response:primary-lab:CAPITAL-ONE:<take_id>",
+    "outcome_key": "soc:v1:outcome:<take_id>:<raw_message_sha256>"
+  },
+  "outcome_record": {
+    "exact_fields": [
+      "schema_version",
+      "take_id",
+      "raw_message_sha256",
+      "body_sha256",
+      "account_alias",
+      "scenario_id",
+      "rule_id",
+      "result",
+      "github_dispatch_count",
+      "workflow_run_id",
+      "completed_at_utc"
+    ],
+    "response_dispatched": {
+      "github_dispatch_count": 1,
+      "workflow_run_id": "positive_integer",
+      "body_sha256": "exact_dispatcher_input"
+    },
+    "all_other_results": {
+      "github_dispatch_count": 0,
+      "workflow_run_id": 0
+    }
+  },
+  "branches": [
+    {
+      "when": "schema_or_body_hash_invalid",
+      "result": "REJECTED_SCHEMA",
+      "github_dispatch_count": 0
+    },
+    {
+      "when": "fixed_allowlist_mismatch",
+      "result": "REJECTED_ALLOWLIST",
+      "github_dispatch_count": 0
+    },
+    {
+      "when": "take_absent_expired_or_mismatched",
+      "result": "REJECTED_TAKE",
+      "github_dispatch_count": 0
+    },
+    {
+      "when": "response_mode_is_observe_only",
+      "result": "OBSERVE_ONLY",
+      "github_dispatch_count": 0
+    },
+    {
+      "when": "dedupe_claim_already_exists",
+      "result": "DUPLICATE_SUPPRESSED",
+      "github_dispatch_count": 0
+    },
+    {
+      "when": "contain_and_fresh_dedupe_claim",
+      "result": "RESPONSE_DISPATCHED",
+      "github_dispatch_count": 1
+    },
+    {
+      "when": "github_dispatch_failed_after_claim",
+      "result": "RESPONSE_FAILED",
+      "github_dispatch_count": 0,
+      "dispatch_acceptance": "unverified_no_automatic_retry"
+    }
+  ],
+  "gate_b5": {
+    "dispatch_action_stage": "stub",
+    "stress_transport": "authenticated_execute_api",
+    "webhook_ingress_smoke": {
+      "valid_required_header": "accepted",
+      "invalid_required_header": "rejected"
+    },
+    "stub": {
+      "app": "Shuffle Tools",
+      "app_version": "1.2.0",
+      "action": "repeat_back_to_me",
+      "fixed_marker": "GATE_B5_GITHUB_STUB"
+    },
+    "same_exact_body_concurrency": 10,
+    "expected_new_claim_count": 1,
+    "expected_duplicate_claim_count": 9,
+    "expected_stub_execution_count": 1,
+    "expected_real_github_dispatch_count": 0,
+    "negative_cases": [
+      "wrong-account",
+      "wrong-scenario",
+      "wrong-rule",
+      "wrong-take",
+      "wrong-body-hash"
+    ],
+    "atomicity_claim_allowed_only_after_runtime_stress": true
+  },
+  "gate_to_production_binding": {
+    "workflow_core_sha256_required": true,
+    "allowed_difference": "dispatch_github_containment implementation and its outgoing success/failure branches only",
+    "forbidden_after_gate_b5": [
+      "trigger change",
+      "header authentication change",
+      "non-dispatch action change",
+      "non-dispatch branch or condition change",
+      "extra action",
+      "workflow variable"
+    ]
+  },
+  "production_dispatch": {
+    "enabled_only_after_gate_b5": true,
+    "repository": "Unoh03/Uns-DVWA",
+    "workflow": ".github/workflows/soc-contain-dvwa.yml",
+    "app": "AWS Topology SOC GitHub Dispatcher",
+    "app_version": "1.0.0",
+    "action": "dispatch_containment",
+    "private_org_app": true,
+    "fixed_url_in_app_source": "https://api.github.com/repos/Unoh03/Uns-DVWA/actions/workflows/soc-contain-dvwa.yml/dispatches",
+    "ref": "main",
+    "return_run_details": true,
+    "dispatch_response": "github-api-2026-03-10-returns-workflow-run-id-and-urls",
+    "github_api_version": "2026-03-10",
+    "inputs": [
+      "take_id",
+      "scenario_id",
+      "rule_id",
+      "alert_body_sha256"
+    ],
+    "forbidden_dynamic_inputs": [
+      "repository",
+      "workflow",
+      "ref",
+      "path",
+      "target_value",
+      "shell_command"
+    ],
+    "credential": "shuffle-app-authentication-fine-grained-pat-actions-write-one-repository-no-contents-write",
+    "result": {
+      "success": true,
+      "status": "DISPATCHED",
+      "workflow_run_id": "positive_integer",
+      "secret_or_raw_response_returned": false
+    }
+  },
+  "evidence": {
+    "persist": [
+      "workflow_id",
+      "workflow_export_sha256",
+      "execution_ids",
+      "action_labels",
+      "branch_results",
+      "claim_counts",
+      "dispatch_counts",
+      "latency_ms"
+    ],
+    "never_persist": [
+      "shuffle_api_key",
+      "webhook_url",
+      "webhook_header_value",
+      "github_pat",
+      "wazuh_credentials",
+      "cookie",
+      "token",
+      "raw_command"
+    ]
+  }
+}

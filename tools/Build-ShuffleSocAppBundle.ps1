@@ -1,0 +1,118 @@
+#requires -Version 7.4
+[CmdletBinding()]
+param(
+    [string]$OutputDirectory = '',
+    [string]$ConfirmBuild = ''
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$apps = @(
+    [pscustomobject]@{
+        name='AWS Topology SOC Validator'
+        slug='aws-topology-soc-validator'
+        version='1.0.0'
+        test='tests.test_soc_shuffle_validator_app'
+        files=@('api.yaml','Dockerfile','requirements.txt','src\app.py','src\validator.py')
+    },
+    [pscustomobject]@{
+        name='AWS Topology SOC GitHub Dispatcher'
+        slug='aws-topology-soc-github-dispatcher'
+        version='1.0.0'
+        test='tests.test_soc_shuffle_github_dispatcher_app'
+        files=@('api.yaml','Dockerfile','requirements.txt','src\app.py','src\dispatcher.py')
+    }
+)
+
+if (-not $OutputDirectory) {
+    if (-not $env:USERPROFILE) {
+        throw 'USERPROFILE is unavailable; specify -OutputDirectory explicitly.'
+    }
+    $OutputDirectory = Join-Path $env:USERPROFILE `
+        'Documents\aws-topology-evidence\shuffle-packages'
+}
+$resolvedOutput = [IO.Path]::GetFullPath($OutputDirectory)
+$stamp = [datetimeoffset]::UtcNow.ToString('yyyyMMddTHHmmssZ')
+$manifestPath = Join-Path $resolvedOutput "shuffle-soc-app-bundle-$stamp.json"
+
+Write-Host 'Shuffle SOC private App bundle preview'
+Write-Host 'Apps: Validator 1.0.0 + fixed GitHub Dispatcher 1.0.0'
+Write-Host "Output directory: $resolvedOutput"
+Write-Host 'No Cloud upload, Workflow execution, credential access, GitHub write, AWS change, or attack is performed.'
+if ($ConfirmBuild -cne 'BUILD SHUFFLE SOC APPS') {
+    throw "Preview only. Re-run with -ConfirmBuild 'BUILD SHUFFLE SOC APPS'."
+}
+
+foreach ($app in $apps) {
+    $appRoot = Join-Path $repositoryRoot `
+        "observability\shuffle\apps\$($app.slug)\$($app.version)"
+    foreach ($relativePath in $app.files) {
+        if (-not (Test-Path -LiteralPath (Join-Path $appRoot $relativePath) -PathType Leaf)) {
+            throw "The Shuffle App package source is incomplete: $($app.slug)/$relativePath"
+        }
+    }
+    & python -B -m unittest ([string]$app.test)
+    if ($LASTEXITCODE -ne 0) {
+        throw "The Shuffle App unit tests failed: $($app.name)"
+    }
+}
+
+New-Item -ItemType Directory -Path $resolvedOutput -Force | Out-Null
+$manifestApps = [Collections.Generic.List[object]]::new()
+foreach ($app in $apps) {
+    $appRoot = Join-Path $repositoryRoot `
+        "observability\shuffle\apps\$($app.slug)\$($app.version)"
+    $packagePath = Join-Path $resolvedOutput `
+        "$($app.slug)-$($app.version)-$stamp.zip"
+    $staging = Join-Path ([IO.Path]::GetTempPath()) `
+        ("shuffle-soc-app-" + [guid]::NewGuid().ToString('N'))
+    try {
+        foreach ($relativePath in $app.files) {
+            $destination = Join-Path $staging $relativePath
+            New-Item -ItemType Directory -Path (Split-Path -Parent $destination) `
+                -Force | Out-Null
+            Copy-Item -LiteralPath (Join-Path $appRoot $relativePath) `
+                -Destination $destination
+        }
+        Compress-Archive -LiteralPath @(
+            (Join-Path $staging 'api.yaml'),
+            (Join-Path $staging 'Dockerfile'),
+            (Join-Path $staging 'requirements.txt'),
+            (Join-Path $staging 'src')
+        ) -DestinationPath $packagePath -CompressionLevel Optimal
+    } finally {
+        if (Test-Path -LiteralPath $staging) {
+            Remove-Item -LiteralPath $staging -Recurse -Force
+        }
+    }
+    $hash = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $manifestApps.Add([ordered]@{
+        name=[string]$app.name
+        slug=[string]$app.slug
+        version=[string]$app.version
+        package_path=$packagePath
+        package_sha256=$hash
+        entries=@($app.files | ForEach-Object { $_.Replace('\','/') } | Sort-Object)
+    })
+}
+
+$manifest = [ordered]@{
+    schema_version=1
+    artifact_kind='shuffle-soc-private-app-bundle'
+    created_at_utc=[datetimeoffset]::UtcNow.ToString('o')
+    apps=@($manifestApps)
+    secret_persisted=$false
+}
+[IO.File]::WriteAllText(
+    $manifestPath,
+    (($manifest | ConvertTo-Json -Depth 16) + "`n"),
+    [Text.UTF8Encoding]::new($false)
+)
+Write-Host 'SHUFFLE_SOC_APP_BUNDLE_READY=yes'
+Write-Host "BUNDLE_MANIFEST=$manifestPath"
+foreach ($app in $manifestApps) {
+    Write-Host "PACKAGE=$($app.package_path)"
+    Write-Host "PACKAGE_SHA256=$($app.package_sha256)"
+}

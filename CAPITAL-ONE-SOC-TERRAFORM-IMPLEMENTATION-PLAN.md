@@ -833,6 +833,12 @@ CloudWatch Alarm Action은 상태 전환 때 실행되므로 다음 촬영은 �
 사용한다. `TAKE_ID`는 촬영과 Evidence를 묶는 표식이며 보안 Event 고유 ID를
 대신하지 않는다.
 
+여기서 `OK`는 Reset 순간의 Snapshot 한 번으로 판정하지 않는다. CloudTrail 전달이 늦게
+도착할 수 있으므로 해당 TAKE 공격 시작 이후 Alarm History에서 `ALARM → OK` 주기를 확인한
+뒤 현재 상태도 `OK`여야 한다. 공격 Runner가 임시 Credential 환경변수를 정리했다는
+Evidence와 Reset Process의 잔존 없음도 함께 확인한다. Reset은 기존 TAKE를 `CLOSED`로
+끝내며, 새 TAKE는 `Stop-SocLab -StopWazuh` 뒤 `Start-SocLab`이 발급한다.
+
 Gate:
 
 - [x] 새 Node의 실제 MetadataOptions가 실습 목표와 일치한다.
@@ -1162,6 +1168,7 @@ Containment 구현 전에는 Alarm이 실제 `OK`로 복귀했는지 확인하�
 - Karpenter EC2NodeClass `metadataOptions`: <https://karpenter.sh/v1.0/concepts/nodeclasses/>
 - AWS CloudTrail Advanced Event Selector: <https://docs.aws.amazon.com/awscloudtrail/latest/userguide/filtering-data-events.html>
 - Amazon CloudWatch Alarm Action 상태 전환: <https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/alarm-actions.html>
+- AWS CLI `describe-alarm-history`: <https://docs.aws.amazon.com/cli/latest/reference/cloudwatch/describe-alarm-history.html>
 - Amazon GuardDuty S3 Protection: <https://docs.aws.amazon.com/guardduty/latest/ug/s3-protection.html>
 - GuardDuty `InstanceCredentialExfiltration.OutsideAWS`: <https://docs.aws.amazon.com/guardduty/latest/ug/guardduty_finding-types-iam.html>
 - Terraform AWS Provider `aws_guardduty_detector_feature` 6.0.0: <https://registry.terraform.io/providers/hashicorp/aws/6.0.0/docs/resources/guardduty_detector_feature>

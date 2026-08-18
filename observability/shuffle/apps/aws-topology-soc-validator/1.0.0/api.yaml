@@ -1,0 +1,26 @@
+app_version: 1.0.0
+name: AWS Topology SOC Validator
+description: Strict and side-effect-free validator for the Capital One SOC sanitized alert v1.
+tags:
+  - SOC
+  - Validation
+categories:
+  - Security
+contact_info:
+  name: aws-topology project
+  url: https://github.com/Unoh03/Uns-DVWA
+  email: no-reply@example.invalid
+actions:
+  - name: validate_sanitized_alert
+    description: Validates exact fields, types, patterns, and the canonical body SHA-256 without returning the original payload.
+    parameters:
+      - name: input_data
+        description: The complete Shuffle execution argument from the authenticated Wazuh webhook.
+        required: true
+        multiline: true
+        schema:
+          type: object
+    returns:
+      schema:
+        type: object
+

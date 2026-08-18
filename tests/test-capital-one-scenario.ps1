@@ -41,6 +41,18 @@ foreach ($path in @($preparePath, $runnerPath, $negativePath)) {
     }
 }
 
+$invalidTakeRejected = $false
+try {
+    & $runnerPath `
+        -ExperimentId 'capital-one-20260818T010203Z-deadbeef' `
+        -TakeId 'capital-one-20260818T010203Z-DEADBEEF' 6>$null
+} catch {
+    $invalidTakeRejected = $_.Exception.Message -match 'fixed capital-one-yyyyMMddTHHmmssZ-xxxxxxxx format'
+}
+if (-not $invalidTakeRejected) {
+    throw 'The baseline did not fail closed on a non-canonical SOC TAKE_ID.'
+}
+
 $prepare = Get-Content -LiteralPath $preparePath -Raw
 $runner = Get-Content -LiteralPath $runnerPath -Raw
 $negative = Get-Content -LiteralPath $negativePath -Raw
@@ -62,6 +74,19 @@ Assert-Contains $prepare 'BucketPersisted\s*=\s*\$false' `
 
 Assert-Contains $runner "ConfirmRun -cne 'RUN CAPITAL ONE BASELINE'" `
     'The baseline lacks its exact attack confirmation.'
+Assert-Contains $runner 'Import-Module \$socSecurityModulePath -Force' `
+    'The baseline does not use the shared SOC TAKE_ID implementation.'
+Assert-Contains $runner "TakeId -cnotmatch '\^capital-one-\[0-9\]\{8\}T\[0-9\]\{6\}Z-\[a-f0-9\]\{8\}\$'" `
+    'The baseline does not enforce the frozen SOC TAKE_ID format.'
+Assert-Contains $runner '''X-SOC-TAKE-ID''\s*=\s*\$TakeId' `
+    'The baseline does not prepare the SOC TAKE_ID request header.'
+if ([regex]::Matches($runner, 'Invoke-DvwaForm[^\r\n]+-Headers \$attackHeaders').Count -ne 2) {
+    throw 'The baseline must send the SOC TAKE_ID on exactly two attack POST requests.'
+}
+Assert-Contains $runner 'TakeIdHeaderPostCount\s*=\s*\$takeIdHeaderPostCount' `
+    'The sanitized baseline record does not retain the successful TAKE_ID POST count.'
+Assert-Contains $runner 'TakeIdHeaderSent\s*=\s*\(\$takeIdHeaderPostCount -eq 2\)' `
+    'The sanitized baseline record does not derive TAKE_ID delivery from both attack POSTs.'
 Assert-Contains $runner 'Read-DailySessionState' `
     'The baseline does not require an Active Daily Session.'
 Assert-Contains $runner "securityProfile -cne 'capital-one-lab'" `
@@ -88,8 +113,14 @@ Assert-Contains $runner 'finally\s*\{[\s\S]*?Remove-Item "Env:\$name"' `
     'The baseline does not clear temporary AWS credential variables in finally.'
 Assert-Contains $runner "CredentialHandling = 'memory-only; values never printed or persisted'" `
     'The sanitized record lacks an explicit credential-handling statement.'
+Assert-Contains $runner 'credentialEnvironmentCleared[\s\S]*?TemporaryCredentialEnvironmentCleared' `
+    'The baseline does not verify and record process-level temporary credential cleanup.'
 Assert-Contains $runner 'BucketPersisted\s*=\s*\$false' `
     'The sanitized record does not omit the bucket name.'
+Assert-Contains $runner '\[switch\]\$SkipAlarmWait[\s\S]*?skipped for the separate low-latency SOC path[\s\S]*?AlarmWaitSkipped' `
+    'The baseline lacks an explicit low-latency SOC path that preserves the alarm-verification distinction.'
+Assert-Contains $runner '\[switch\]\$RequireSocReadyTake[\s\S]*?active-soc-session\.json[\s\S]*?ATTACK_STARTED[\s\S]*?Read-SocTakeRecord[\s\S]*?expires_at_utc' `
+    'The baseline can execute without an active unexpired READY TAKE binding.'
 
 if ($runner -match '(?m)^\s*\[string\]\$(BaseUrl|Bucket|ObjectKey|Command|Payload)\b') {
     throw 'The baseline accepts an arbitrary target, bucket, object key, command, or payload.'
