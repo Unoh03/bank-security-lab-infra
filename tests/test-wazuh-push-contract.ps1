@@ -149,6 +149,10 @@ Assert-Match $bridge 'wazuh_push_primary_dlq_url' `
     'The Bridge cannot discover the Terraform-managed Primary DLQ URL.'
 Assert-Match $bridge 'wazuh_log_reader_role_arn' `
     'The Bridge cannot discover the Terraform-managed Reader Role.'
+Assert-Match $bridge 'arn:aws:iam::\$\{expectedAccountId\}:role/' `
+    'The Bridge IAM Role regex can lose the account ID to PowerShell scoped-variable interpolation.'
+Assert-Match $bridge 'arn:aws:sts::\$\{expectedAccountId\}:assumed-role/' `
+    'The Bridge STS Role regex can lose the account ID to PowerShell scoped-variable interpolation.'
 Assert-Match $bridge "'sts', 'assume-role'" `
     'The Bridge does not obtain a temporary Reader Role session.'
 Assert-Match $bridge 'Remove-Item "Env:\$name"[\s\S]*?''sts'', ''assume-role''[\s\S]*?sessionExpiration' `
@@ -165,27 +169,45 @@ Assert-Match $bridge 'wazuh-push-bridge-heartbeat\.json[\s\S]*?heartbeat_at_utc[
     'The Bridge heartbeat omits a required readiness field.'
 Assert-Match $bridge 'File\]::Replace\(\$temporaryPath, \$HeartbeatPath, \$backupPath\)' `
     'The Bridge heartbeat does not atomically replace its previous record.'
-Assert-Match $bridge "'sqs', 'get-queue-attributes'[\s\S]*?ApproximateNumberOfMessages[\s\S]*?ApproximateAgeOfOldestMessage" `
-    'The Bridge does not inspect bounded Primary and DLQ readiness metrics.'
+Assert-Match $bridge "'sqs', 'get-queue-attributes'[\s\S]*?ApproximateNumberOfMessages[\s\S]*?ApproximateNumberOfMessagesNotVisible" `
+    'The Bridge does not inspect bounded Primary and DLQ queue attributes.'
+Assert-NotMatch $bridge "'sqs', 'get-queue-attributes'[\s\S]{0,300}'ApproximateAgeOfOldestMessage'" `
+    'The Bridge requests a CloudWatch metric as an invalid SQS queue attribute.'
+Assert-Match $bridge "'cloudwatch', 'get-metric-statistics'[\s\S]*?AWS/SQS[\s\S]*?ApproximateAgeOfOldestMessage" `
+    'The Bridge does not query the oldest-message age from the AWS/SQS CloudWatch metric.'
 Assert-Match $bridge 'dlqVisible -ne 0[\s\S]*?cannot enter READY' `
     'The Bridge can enter READY while the DLQ is non-empty.'
+Assert-Match $bridge 'Get-QueueMetrics -Url \$DeadLetterUrl -UseBootstrapProfile' `
+    'The Bridge cannot inspect DLQ readiness while the live Reader policy trails its source contract.'
 Assert-Match $bridge 'queueNotVisible -ne 0[\s\S]*?in-flight message[\s\S]*?cannot enter READY' `
     'The Bridge can enter READY while a Primary queue message is already in flight.'
+Assert-Match $bridge 'queueNotVisible -ne 0[\s\S]*?-not \$AllowStaleBacklogDrain\.IsPresent' `
+    'The Bridge does not isolate its parallel in-flight exception to explicit catch-up mode.'
 Assert-Match $bridge 'MaxReadyQueueAgeSeconds\s*=\s*120' `
     'The Bridge does not declare a bounded stale-queue readiness threshold.'
 Assert-Match $bridge 'queueVisible -gt 0[\s\S]*?queueOldestAgeSeconds -gt \$MaxReadyQueueAgeSeconds[\s\S]*?stale messages[\s\S]*?cannot enter READY' `
     'The Bridge can enter READY while stale Primary queue messages remain.'
-Assert-Match $bridge "PSObject\.Properties\['ApproximateNumberOfMessages'\][\s\S]*?PSObject\.Properties\['ApproximateAgeOfOldestMessage'\][\s\S]*?PSObject\.Properties\['ApproximateNumberOfMessagesNotVisible'\]" `
-    'The Bridge does not tolerate an AWS response with an omitted SQS metric attribute.'
+Assert-Match $bridge "PSObject\.Properties\['ApproximateNumberOfMessages'\][\s\S]*?PSObject\.Properties\['ApproximateNumberOfMessagesNotVisible'\]" `
+    'The Bridge does not tolerate an AWS response with an omitted SQS count attribute.'
+Assert-Match $bridge 'AllowStaleBacklogDrain[\s\S]*?explicit non-live SpoolDirectory[\s\S]*?DRAIN STALE WAZUH PUSH BACKLOG' `
+    'Stale backlog drain is not isolated behind an explicit spool and confirmation.'
 Assert-Match $bridge 'StopSignalPath[\s\S]*?wazuh-push-bridge\.stop[\s\S]*?Write-BridgeHeartbeat -State STOPPED' `
     'The Bridge lacks a controlled stop signal and final state.'
 Assert-NotMatch $bridge 'AWS CLI request failed: \$message' `
     'The Bridge can print unbounded AWS CLI failure output.'
 $writeIndex = $bridge.IndexOf('Write-ShadowEvent -Envelope')
-$deleteIndex = $bridge.IndexOf("'sqs', 'delete-message'")
+$deleteIndex = $bridge.IndexOf("'sqs', 'delete-message-batch'")
 if ($writeIndex -lt 0 -or $deleteIndex -lt 0 -or $writeIndex -ge $deleteIndex) {
     throw 'The Shadow Bridge must durably write or deduplicate an event before deleting its SQS message.'
 }
+Assert-Match $bridge "'sqs', 'receive-message',[\s\S]*?'--max-number-of-messages', '10'" `
+    'The Bridge does not receive a bounded SQS batch.'
+Assert-Match $bridge "Write-ShadowEvent[\s\S]*?'sqs', 'delete-message-batch'" `
+    'The Bridge does not durably preserve the full received batch before deleting it from SQS.'
+Assert-Match $bridge "deleteResponse[\s\S]*?Properties\['Failed'\][\s\S]*?throw" `
+    'The Bridge does not fail closed when SQS rejects a ledger-preserved batch deletion.'
+Assert-NotMatch $bridge "'sqs', 'delete-message'," `
+    'The Bridge still deletes one SQS message per AWS CLI process instead of using the bounded batch contract.'
 
 Assert-Match $validation "ConfirmRun\s+-cne\s+'SEND WAZUH PUSH VALIDATION'" `
     'The safe Push validation can mutate CloudWatch Logs without exact confirmation.'

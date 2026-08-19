@@ -35,12 +35,19 @@ try {
         Manager       = Join-Path $testRoot 'ossec.conf'
         Webhook       = Join-Path $testRoot 'shuffle_webhook_url'
         HeaderKey     = Join-Path $testRoot 'shuffle_webhook_header_key'
+        LiveSpool     = Join-Path $testRoot 'wazuh-push-dvwa'
         SecretCompose = Join-Path $testRoot 'docker-compose.secrets.yml'
         SocCompose    = Join-Path $testRoot 'docker-compose.soc-runtime.yml'
     }
-    foreach ($path in $paths.Values) {
+    foreach ($path in @($paths.Values | Where-Object { $_ -cne $paths.LiveSpool })) {
         [IO.File]::WriteAllText($path, 'test-fixture', [Text.UTF8Encoding]::new($false))
     }
+    New-Item -ItemType Directory -Path $paths.LiveSpool | Out-Null
+    [IO.File]::WriteAllText(
+        (Join-Path $paths.LiveSpool 'wazuh-push-live.jsonl'),
+        '',
+        [Text.UTF8Encoding]::new($false)
+    )
     $secretOverride = New-WazuhSecretOverrideText `
         -Phase Final `
         -InternalUsersPath $paths.InternalUsers `
@@ -54,7 +61,8 @@ try {
         -ManagerConfigPath $paths.Manager `
         -IntegrationScriptPath $integrationScriptPath `
         -WebhookUrlPath $paths.Webhook `
-        -WebhookHeaderKeyPath $paths.HeaderKey
+        -WebhookHeaderKeyPath $paths.HeaderKey `
+        -LiveSpoolPath $paths.LiveSpool
     [IO.File]::WriteAllText($paths.SocCompose, $socOverride, [Text.UTF8Encoding]::new($false))
 
     $composeFiles = @(
@@ -94,6 +102,7 @@ try {
         '/soc-bootstrap/custom-shuffle-soc',
         '/var/ossec/soc-secrets/shuffle_webhook_url',
         '/var/ossec/soc-secrets/shuffle_webhook_header_key',
+        '/var/ossec/wazuh-push/dvwa',
         '/var/ossec/logs',
         '/var/ossec/etc'
     )) {
@@ -112,7 +121,8 @@ try {
         '/wazuh-config-mount/etc/ossec.conf',
         '/soc-bootstrap/custom-shuffle-soc',
         '/var/ossec/soc-secrets/shuffle_webhook_url',
-        '/var/ossec/soc-secrets/shuffle_webhook_header_key'
+        '/var/ossec/soc-secrets/shuffle_webhook_header_key',
+        '/var/ossec/wazuh-push/dvwa'
     )) {
         if ([bool]$mountByTarget[$target].read_only -ne $true) {
             throw "The effective SOC Compose has a writable SOC bind: $target"
@@ -122,6 +132,35 @@ try {
         [string]$config.services.'wazuh.manager'.environment.API_PASSWORD -cne $api -or
         [string]$config.services.'wazuh.dashboard'.environment.DASHBOARD_PASSWORD -cne $kibana) {
         throw 'The effective SOC Compose lost the protected Wazuh credential override.'
+    }
+
+    $detectionOverride = New-WazuhDetectionOverrideText `
+        -ManagerConfigPath $paths.Manager `
+        -LiveSpoolPath $paths.LiveSpool
+    [IO.File]::WriteAllText($paths.SocCompose, $detectionOverride, [Text.UTF8Encoding]::new($false))
+    $output = @(& docker compose @arguments 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Docker Compose rejected the Detection-only runtime configuration.'
+    }
+    $detectionConfig = (($output | ForEach-Object { [string]$_ }) -join "`n") | ConvertFrom-Json
+    $detectionMounts = @{}
+    foreach ($mount in @($detectionConfig.services.'wazuh.manager'.volumes)) {
+        $detectionMounts[[string]$mount.target] = $mount
+    }
+    foreach ($target in @('/wazuh-config-mount/etc/ossec.conf','/var/ossec/wazuh-push/dvwa')) {
+        if (-not $detectionMounts.ContainsKey($target) -or
+            [bool]$detectionMounts[$target].read_only -ne $true) {
+            throw "The effective Detection-only Compose lost a read-only mount: $target"
+        }
+    }
+    foreach ($target in @(
+        '/soc-bootstrap/custom-shuffle-soc',
+        '/var/ossec/soc-secrets/shuffle_webhook_url',
+        '/var/ossec/soc-secrets/shuffle_webhook_header_key'
+    )) {
+        if ($detectionMounts.ContainsKey($target)) {
+            throw "The effective Detection-only Compose contains a Full SOC mount: $target"
+        }
     }
 } finally {
     if (Test-Path -LiteralPath $testRoot -PathType Container) {

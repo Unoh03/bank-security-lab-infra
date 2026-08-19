@@ -104,6 +104,8 @@ Assert-Match $variables 'variable\s+"enable_https_redirect"[\s\S]*?default\s*=\s
     'HTTPS redirect must remain the safe default.'
 Assert-Match $edge 'viewer_protocol_policy\s*=\s*var\.enable_https_redirect\s*\?\s*"redirect-to-https"\s*:\s*"allow-all"' `
     'CloudFront viewer protocol policy must implement the T1 toggle.'
+Assert-Match $edge 'forwarded_values\s*\{[\s\S]*?headers\s*=\s*\[\s*"X-SOC-TAKE-ID"\s*\]' `
+    'CloudFront must forward the validated SOC TAKE_ID correlation header to DVWA.'
 
 Assert-Match $dailyUp '\[ValidateSet\(''minimal'',\s*''dr-test'',\s*''full''\)\][\s\S]*?\$RuntimeProfile' `
     'daily-up must expose the reviewed runtime profiles.'

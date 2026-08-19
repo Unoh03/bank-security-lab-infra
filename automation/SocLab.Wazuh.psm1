@@ -30,19 +30,26 @@ function Get-WazuhPasswordHash {
     $startInfo = [Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = 'docker'
     $startInfo.UseShellExecute = $false
-    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardInput = $false
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
     $startInfo.CreateNoWindow = $true
-    $startInfo.Arguments = 'run --rm -i wazuh/wazuh-indexer:4.14.7 bash /usr/share/wazuh-indexer/plugins/opensearch-security/tools/hash.sh'
+    $secretEnvironmentName = 'WAZUH_HASH_INPUT'
+    foreach ($argument in @(
+        'run','--rm','-e',$secretEnvironmentName,
+        'wazuh/wazuh-indexer:4.14.7','bash',
+        '/usr/share/wazuh-indexer/plugins/opensearch-security/tools/hash.sh',
+        '-env',$secretEnvironmentName
+    )) {
+        [void]$startInfo.ArgumentList.Add($argument)
+    }
+    $startInfo.Environment[$secretEnvironmentName] = $Password
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
     try {
         if (-not $process.Start()) {
             throw 'The bounded Wazuh hash process could not start.'
         }
-        $process.StandardInput.WriteLine($Password)
-        $process.StandardInput.Close()
         $stdout = $process.StandardOutput.ReadToEnd()
         $stderr = $process.StandardError.ReadToEnd()
         $process.WaitForExit()
@@ -58,6 +65,7 @@ function Get-WazuhPasswordHash {
         }
         return [string]$matches[0].Value
     } finally {
+        [void]$startInfo.Environment.Remove($secretEnvironmentName)
         $process.Dispose()
     }
 }
@@ -300,13 +308,15 @@ function New-WazuhSocIntegrationOverrideText {
         [Parameter(Mandatory)][string]$ManagerConfigPath,
         [Parameter(Mandatory)][string]$IntegrationScriptPath,
         [Parameter(Mandatory)][string]$WebhookUrlPath,
-        [Parameter(Mandatory)][string]$WebhookHeaderKeyPath
+        [Parameter(Mandatory)][string]$WebhookHeaderKeyPath,
+        [Parameter(Mandatory)][string]$LiveSpoolPath
     )
 
     $managerConfig = ConvertTo-WazuhComposePath -Path $ManagerConfigPath
     $integrationScript = ConvertTo-WazuhComposePath -Path $IntegrationScriptPath
     $webhookUrl = ConvertTo-WazuhComposePath -Path $WebhookUrlPath
     $webhookHeaderKey = ConvertTo-WazuhComposePath -Path $WebhookHeaderKeyPath
+    $liveSpool = ConvertTo-WazuhComposePath -Path $LiveSpoolPath
 
     return @"
 services:
@@ -328,6 +338,35 @@ services:
         source: "$webhookHeaderKey"
         target: /var/ossec/soc-secrets/shuffle_webhook_header_key
         read_only: true
+      - type: bind
+        source: "$liveSpool"
+        target: /var/ossec/wazuh-push/dvwa
+        read_only: true
+"@
+}
+
+function New-WazuhDetectionOverrideText {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ManagerConfigPath,
+        [Parameter(Mandatory)][string]$LiveSpoolPath
+    )
+
+    $managerConfig = ConvertTo-WazuhComposePath -Path $ManagerConfigPath
+    $liveSpool = ConvertTo-WazuhComposePath -Path $LiveSpoolPath
+
+    return @"
+services:
+  wazuh.manager:
+    volumes:
+      - type: bind
+        source: "$managerConfig"
+        target: /wazuh-config-mount/etc/ossec.conf
+        read_only: true
+      - type: bind
+        source: "$liveSpool"
+        target: /var/ossec/wazuh-push/dvwa
+        read_only: true
 "@
 }
 
@@ -337,5 +376,6 @@ Export-ModuleMember -Function @(
     'Set-WazuhDashboardApiPasswordText',
     'New-WazuhSecretOverrideText',
     'Add-WazuhManagerSocIntegrationText',
-    'New-WazuhSocIntegrationOverrideText'
+    'New-WazuhSocIntegrationOverrideText',
+    'New-WazuhDetectionOverrideText'
 )

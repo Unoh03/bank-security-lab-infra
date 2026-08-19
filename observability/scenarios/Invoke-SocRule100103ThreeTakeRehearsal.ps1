@@ -74,6 +74,7 @@ try {
         try {
             $remainingRequired = 45 + ((3 - $iteration) * 15)
             & (Join-Path $terraformRoot 'tools\Start-SocLab.ps1') `
+                -Scope full `
                 -ResponseMode observe_only `
                 -MinimumDailyRemainingMinutes $remainingRequired `
                 -SecretRoot $SecretRoot -RuntimeRoot $RuntimeRoot `

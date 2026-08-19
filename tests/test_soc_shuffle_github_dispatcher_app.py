@@ -18,6 +18,7 @@ MODULE_PATH = (
     / "src"
     / "dispatcher.py"
 )
+API_PATH = MODULE_PATH.parents[1] / "api.yaml"
 SPEC = importlib.util.spec_from_file_location("soc_github_dispatcher", MODULE_PATH)
 dispatcher = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -166,6 +167,11 @@ class DispatcherTests(unittest.TestCase):
         )
         self.assertFalse(result["success"])
         self.assertEqual(result["reason_code"], "github_token")
+
+    def test_shuffle_api_contract_uses_serialized_string_output(self):
+        api = API_PATH.read_text(encoding="utf-8")
+        self.assertIn("name: dispatch_containment", api)
+        self.assertNotIn("type: object", api)
 
 
 if __name__ == "__main__":

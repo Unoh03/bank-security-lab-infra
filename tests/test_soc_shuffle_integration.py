@@ -118,6 +118,28 @@ class CustomShuffleSocTest(unittest.TestCase):
             hashlib.sha256(MODULE.canonical_json(result)).hexdigest(),
         )
 
+    def test_accepts_wazuh_decoded_canonical_true_string(self) -> None:
+        alert = valid_alert()
+        alert["data"]["payload"]["normalized"] = "true"
+
+        result = MODULE.build_sanitized_alert(
+            alert,
+            now=datetime(2026, 8, 18, 1, 3, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(
+            result["incident"]["take_id"],
+            "capital-one-20260818T010000Z-deadbeef",
+        )
+
+    def test_rejects_noncanonical_normalized_values(self) -> None:
+        for normalized in (False, 1, "True", "1", "yes", None):
+            with self.subTest(normalized=normalized):
+                alert = valid_alert()
+                alert["data"]["payload"]["normalized"] = normalized
+                with self.assertRaisesRegex(MODULE.ContractError, "normalized"):
+                    MODULE.build_sanitized_alert(alert)
+
     def test_rejects_alert_without_valid_take_id(self) -> None:
         alert = valid_alert()
         del alert["data"]["payload"]["take_id"]
@@ -152,6 +174,7 @@ class CustomShuffleSocTest(unittest.TestCase):
         webhook_id = "22222222-2222-4222-8222-222222222222"
         for path in (
             f"/api/v1/hooks/{webhook_id}",
+            f"/api/v1/hooks/webhook_{webhook_id}",
             f"/api/v1/webhooks/webhook_{webhook_id}",
         ):
             with self.subTest(path=path):

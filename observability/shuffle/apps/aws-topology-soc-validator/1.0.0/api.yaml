@@ -19,8 +19,7 @@ actions:
         required: true
         multiline: true
         schema:
-          type: object
+          type: string
     returns:
       schema:
-        type: object
-
+        type: string

@@ -10,12 +10,14 @@
 1. [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md)
    — Containment·Investigation·Remediation·Recovery의 의미
 2. [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](CAPITAL-ONE-SOC-DEMO-PLAN.md)
-   — 전체 Gate, 촬영 범위, 현재 우선순위
-3. [`CAPITAL-ONE-SOC-E2E-BLUEPRINT.md`](CAPITAL-ONE-SOC-E2E-BLUEPRINT.md)
+   — 전체 Gate, 완료 조건, 현재 우선순위
+3. [`CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md`](CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md)
+   — 촬영 범위, 화면, 조작, 내레이션, 필수 Evidence
+4. [`CAPITAL-ONE-SOC-E2E-BLUEPRINT.md`](CAPITAL-ONE-SOC-E2E-BLUEPRINT.md)
    — Hop별 Interface·상태·Evidence 계약
-4. [`CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md`](CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md)
+5. [`CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md`](CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md)
    — AWS Source와 영구 복구의 Terraform 경계
-5. [`observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md`](observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md)
+6. [`observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md`](observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md)
    — 빠른 AWS → Wazuh 전달 계약
 
 문서보다 실제 Source와 Runtime Evidence가 우선한다. Source 존재, 과거 Evidence, 현재

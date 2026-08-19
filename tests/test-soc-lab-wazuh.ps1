@@ -9,6 +9,19 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $modulePath = Join-Path $root 'automation\SocLab.Wazuh.psm1'
 $hardeningPath = Join-Path $root 'tools\Invoke-SocWazuhHardening.ps1'
 Import-Module $modulePath -Force
+$moduleText = Get-Content -LiteralPath $modulePath -Raw
+$hardeningText = Get-Content -LiteralPath $hardeningPath -Raw
+
+foreach ($text in @($moduleText,$hardeningText)) {
+    if ($text -notmatch 'WAZUH_HASH_INPUT' -or
+        $text -notmatch "hash\.sh'[\s\S]*?'-env'" -or
+        $text -notmatch 'Environment\[\$secretEnvironmentName\]\s*=') {
+        throw 'Wazuh password hashing does not use the non-command-line environment contract.'
+    }
+    if ($text -match 'hash\.sh[^\r\n]*-p|StandardInput\.WriteLine\(\$(Password|InputText)\)') {
+        throw 'Wazuh password hashing can expose or send the password through an unsafe channel.'
+    }
+}
 
 $tokens = $null
 $errors = $null
@@ -162,12 +175,14 @@ $integrationOverride = New-WazuhSocIntegrationOverrideText `
     -ManagerConfigPath 'C:\runtime\ossec.conf' `
     -IntegrationScriptPath 'C:\repo\custom-shuffle-soc' `
     -WebhookUrlPath 'C:\runtime\shuffle_webhook_url' `
-    -WebhookHeaderKeyPath 'C:\runtime\shuffle_webhook_header_key'
+    -WebhookHeaderKeyPath 'C:\runtime\shuffle_webhook_header_key' `
+    -LiveSpoolPath 'C:\runtime\wazuh-push\dvwa'
 foreach ($required in @(
     '/wazuh-config-mount/etc/ossec.conf',
     '/soc-bootstrap/custom-shuffle-soc',
     '/var/ossec/soc-secrets/shuffle_webhook_url',
     '/var/ossec/soc-secrets/shuffle_webhook_header_key',
+    '/var/ossec/wazuh-push/dvwa',
     'read_only: true'
 )) {
     if ($integrationOverride -notmatch [regex]::Escape($required)) {
@@ -177,6 +192,28 @@ foreach ($required in @(
 foreach ($forbidden in @('shuffle_api_key','github_pat','Authorization:')) {
     if ($integrationOverride -match [regex]::Escape($forbidden)) {
         throw "The Wazuh SOC integration override contains a forbidden secret surface: $forbidden"
+    }
+}
+
+$detectionOverride = New-WazuhDetectionOverrideText `
+    -ManagerConfigPath 'C:\runtime\ossec.conf' `
+    -LiveSpoolPath 'C:\runtime\wazuh-push\dvwa'
+foreach ($required in @(
+    '/wazuh-config-mount/etc/ossec.conf',
+    '/var/ossec/wazuh-push/dvwa',
+    'read_only: true'
+)) {
+    if ($detectionOverride -notmatch [regex]::Escape($required)) {
+        throw "The Wazuh Detection-only override is missing: $required"
+    }
+}
+foreach ($forbidden in @(
+    'custom-shuffle-soc',
+    '/var/ossec/soc-secrets/shuffle_webhook_url',
+    '/var/ossec/soc-secrets/shuffle_webhook_header_key'
+)) {
+    if ($detectionOverride -match [regex]::Escape($forbidden)) {
+        throw "The Wazuh Detection-only override contains a Full SOC mount: $forbidden"
     }
 }
 

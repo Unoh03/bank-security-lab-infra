@@ -12,6 +12,7 @@
 > **저지연 전달 설계:** [`observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md`](./observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md)
 > **기존 제한 시나리오:** [`observability/scenarios/README.md`](./observability/scenarios/README.md)
 > **침해 대응 정본:** [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](./CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md)
+> **시연 녹화 대본:** [`CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md`](./CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md)
 
 > [!IMPORTANT]
 > 빠른 Containment는 `DVWA Workload Quarantine + 허용된 IAM 영향 차단`이다.
@@ -1183,44 +1184,7 @@ Trigger가 아니다. 계속 `ALARM`이면 다음 TAKE의 독립된 Native Alarm
 
 ---
 
-## 7. 시연 영상 Storyboard
-
-영상은 한 번에 끊김 없이 촬영해야 성공하는 시험으로 만들지 않는다. 각 구간 시작에
-같은 `TAKE_ID`와 UTC 시각을 보여주고, 지연이 있는 AWS 로그·Alarm·Argo 단계는
-Timestamp와 구간 전환을 명시한다.
-
-| 장면 | 화면 | 반드시 보여줄 Evidence |
-|---:|---|---|
-| 0 | 촬영 Slate | `TAKE_ID`·UTC 시작·DVWA low·Alarm OK·Wazuh/Bridge READY |
-| 1 | 시나리오·취약 Profile | 실습 범위와 가짜 데이터 |
-| 2 | DVWA 공격 | 통제된 Payload 실행 |
-| 3 | IMDS·S3 결과 | Credential 원문 없이 Role·가짜 CSV 접근 성공 |
-| 4 | 원본 로그 | 공격 시각·Role·S3 Event |
-| 5 | SIEM Alert | Rule·Severity·정탐 근거 |
-| 6 | SOAR·Containment | 검증·중복 차단·Workload Quarantine·허용된 IAM 영향 차단 |
-| 7 | 느린 조사 | WAF·ALB·CloudFront·CloudTrail Timeline과 Incident 확인 |
-| 8 | Remediation | `low → impossible` 설정 Patch Commit과 정확한 Diff |
-| 9 | Argo CD | Revision·Syncing·Healthy·새 Pod |
-| 10 | 재공격·정상 기능 | 격리와 Patch 효과를 구분한 실패·Regression |
-| 11 | 결과 | Containment·Remediation·영구 대응·Recovery 구분 |
-
-장면 0~10이 모두 유효한지 확인하기 전에는 Terraform 영구 복구 장면을 촬영하지
-않는다. 중간 장면이 실패하면 해당 `TAKE_ID`를 실패로 표시하고 Gate 7-R로 돌아간다.
-최종 사용할 구간을 확인한 뒤에만 영구 복구를 수행하고 장면 10에 연결한다.
-
-공개 영상 금지 항목:
-
-```text
-AWS Access Key·Secret·Session Token
-전체 Account ID·버킷명
-GitHub Token·Webhook Secret
-전체 Client IP·Request ID·Cookie·Authorization Header
-개인정보처럼 보이는 실제 데이터
-```
-
----
-
-## 8. 잠정 7일 실행 순서
+## 7. 잠정 7일 실행 순서
 
 정확한 마감과 팀 가용시간을 확인한 후 날짜를 고정한다.
 
@@ -1238,7 +1202,7 @@ GitHub Token·Webhook Secret
 
 ---
 
-## 9. 팀 공통 이해 확인
+## 8. 팀 공통 이해 확인
 
 모든 팀원은 다음 질문에 답할 수 있어야 한다.
 
@@ -1260,7 +1224,7 @@ Workload Containment와 IAM 영향 차단이 각각 막은 것은 무엇인가
 
 ---
 
-## 10. 결정 및 대기 목록
+## 9. 결정 및 대기 목록
 
 다음 항목은 계획서 존재만으로 결정하지 않는다. 앞 Gate의 Evidence를 본 뒤 하나씩
 확정한다.
@@ -1287,7 +1251,7 @@ Workload Containment와 IAM 영향 차단이 각각 막은 것은 무엇인가
 
 ---
 
-## 11. 지금 바로 할 한 가지
+## 10. 지금 바로 할 한 가지
 
 Gate 3과 Wazuh Local Docker Preflight, Reader Terraform Apply·AssumeRole·Post-Apply
 0-change, CloudTrail 중앙 수집·Custom Alert, WAF·ALB·DVWA·CloudFront Raw Archive 연결,

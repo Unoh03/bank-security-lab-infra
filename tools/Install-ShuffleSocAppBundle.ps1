@@ -5,11 +5,41 @@ param(
     [string]$ConfigurationRoot = '',
     [string]$SecretRoot = '',
     [string]$EvidenceRoot = '',
+    [ValidateRange(60,600)][int]$UploadTimeoutSeconds = 300,
     [string]$ConfirmUpload = ''
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+function Get-SafeShuffleUploadFailureDetail {
+    [CmdletBinding()]
+    param([AllowEmptyString()][string]$ResponseText)
+
+    $bytes = [Text.Encoding]::UTF8.GetBytes($ResponseText)
+    $hash = [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData($bytes)
+    ).ToLowerInvariant()
+    $fallback = "response_bytes=$($bytes.Length); response_sha256=$hash"
+    if (-not $ResponseText -or $bytes.Length -gt 16KB) {
+        return $fallback
+    }
+
+    try { $parsed = $ResponseText | ConvertFrom-Json -Depth 8 }
+    catch { return $fallback }
+    foreach ($field in @('reason','message','error')) {
+        $property = $parsed.PSObject.Properties[$field]
+        if (-not $property -or $property.Value -isnot [string]) { continue }
+        $candidate = ([string]$property.Value -replace '\s+', ' ').Trim()
+        if (-not $candidate -or $candidate.Length -gt 240) { continue }
+        if ($candidate -notmatch '^[\x20-\x7E]+$') { continue }
+        if ($candidate -match '(?i)(authorization|bearer|cookie|password|secret|token|api[-_ ]?key|github_pat_|ghp_)') {
+            continue
+        }
+        return "$field=$candidate"
+    }
+    return $fallback
+}
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Import-Module (Join-Path $repositoryRoot 'automation\SocLab.Configuration.psm1') -Force
@@ -101,7 +131,7 @@ try {
         $handler = [Net.Http.HttpClientHandler]::new()
         $handler.AllowAutoRedirect = $false
         $client = [Net.Http.HttpClient]::new($handler)
-        $client.Timeout = [timespan]::FromSeconds(60)
+        $client.Timeout = [timespan]::FromSeconds($UploadTimeoutSeconds)
         $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Post, $uploadUri)
         $content = [Net.Http.MultipartFormDataContent]::new()
         $stream = $null
@@ -124,7 +154,8 @@ try {
                 $status = [int]$response.StatusCode
                 $responseText = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
                 if ($status -lt 200 -or $status -ge 300) {
-                    throw "Shuffle App upload failed for $($app.Name): HTTP $status"
+                    $failureDetail = Get-SafeShuffleUploadFailureDetail -ResponseText $responseText
+                    throw "Shuffle App upload failed for $($app.Name): HTTP $status ($failureDetail)"
                 }
                 try { $result = $responseText | ConvertFrom-Json }
                 catch { throw "Shuffle returned a non-JSON App upload response: $($app.Name)" }

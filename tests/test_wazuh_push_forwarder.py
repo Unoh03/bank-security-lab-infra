@@ -72,6 +72,7 @@ class WazuhPushForwarderTests(unittest.TestCase):
                                 "event_type": "command.execution",
                                 "result": "succeeded",
                                 "route": "/vulnerabilities/exec/",
+                                "take_id": "capital-one-20260818T082500Z-c0de1001",
                                 "context": {
                                     "action": "shell_command",
                                     "resource": "ec2_imds",
@@ -113,6 +114,7 @@ class WazuhPushForwarderTests(unittest.TestCase):
                 "event_type": "command.execution",
                 "result": "succeeded",
                 "route": "/vulnerabilities/exec/",
+                "take_id": "capital-one-20260818T082500Z-c0de1001",
                 "context": {
                     "action": "shell_command",
                     "resource": "ec2_imds",

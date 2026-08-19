@@ -141,6 +141,7 @@ resource "aws_cloudfront_distribution" "this" {
     compress               = true
     forwarded_values {
       query_string = true
+      headers      = ["X-SOC-TAKE-ID"]
       cookies { forward = "all" }
     }
   }

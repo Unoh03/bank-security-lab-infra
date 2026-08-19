@@ -54,6 +54,7 @@ $startedAt = Get-Date
 $foundationRoot = Join-Path $TerraformRoot 'foundation'
 $planPath = Join-Path $TerraformRoot 'daily-down.tfplan'
 $evidence = $null
+$socStopStatus = 'not-running'
 $sessionMutex = $null
 $hasEvidenceStart = $PSBoundParameters.ContainsKey('EvidenceStartUtc')
 $hasEvidenceEnd = $PSBoundParameters.ContainsKey('EvidenceEndUtc')
@@ -246,6 +247,35 @@ function Test-TrackedResourceStillExists {
     }
 }
 
+function Get-DailySocActiveSessionPath {
+    if (-not $env:LOCALAPPDATA) {
+        return ''
+    }
+    return Join-Path $env:LOCALAPPDATA 'aws-topology\soc-runtime\active-soc-session.json'
+}
+
+function Stop-ActiveDailySocLab {
+    $activeSessionPath = Get-DailySocActiveSessionPath
+    if (-not $activeSessionPath -or
+        -not (Test-Path -LiteralPath $activeSessionPath -PathType Leaf)) {
+        return 'not-running'
+    }
+
+    $socStopScript = Join-Path $PSScriptRoot 'tools\Stop-SocLab.ps1'
+    try {
+        Invoke-NativePassthrough -FilePath 'pwsh' -ArgumentList @(
+            '-NoProfile','-File',$socStopScript,
+            '-StopWazuh',
+            '-ConfirmStop','STOP SOC LAB'
+        ) -FailureMessage 'Local SOC lab stop failed.' | Out-Host
+        return 'stopped'
+    } catch {
+        Write-Warning 'Local SOC lab stop failed; continuing Daily teardown so AWS cleanup is not blocked.'
+        Write-Warning $_.Exception.Message
+        return 'failed'
+    }
+}
+
 try {
     $sessionMutex = Enter-DailySessionDownMutex
     [void](Assert-DailySessionTerraformIdle -TerraformRoot $TerraformRoot)
@@ -362,11 +392,29 @@ try {
             $details = Format-TaggedProjectRuntimeResources -Resources $untrackedRuntime
             throw "Daily state is empty, but tagged project runtime remains in AWS. Nothing was deleted automatically:`n$($details -join "`n")"
         }
+        $activeSocSessionPath = Get-DailySocActiveSessionPath
+        if ($activeSocSessionPath -and
+            (Test-Path -LiteralPath $activeSocSessionPath -PathType Leaf)) {
+            if ($ConfirmDestroy -ceq 'DESTROY DAILY') {
+                $socStopStatus = Stop-ActiveDailySocLab
+            } else {
+                $socStopStatus = 'active-not-stopped'
+                Write-Warning "Local SOC is still active. Re-run with -ConfirmDestroy 'DESTROY DAILY' to stop it without changing AWS."
+            }
+        }
         Write-Host 'Daily Terraform state is already empty.'
         Write-Host 'Tagged daily AWS runtime: none'
+        Write-Host "SOC lab stop: $socStopStatus"
         Write-Host "Foundation retained: ECR=$($foundation.RepositoryName)"
         if ($foundation.SecurityLogBucket) {
             Write-Host "Foundation retained: security logs=$($foundation.SecurityLogBucket)"
+        }
+        if ($socStopStatus -ceq 'failed') {
+            throw 'Daily AWS Runtime is already empty, but the local SOC lab still failed to stop. The Daily Session guard remains active for retry.'
+        }
+        if ($socStopStatus -ceq 'active-not-stopped') {
+            Write-Host "No local change was made. Re-run with -ConfirmDestroy 'DESTROY DAILY'."
+            exit 2
         }
         [void](Complete-DailySessionGuard `
             -SessionSafety $automationConfig.SessionSafety `
@@ -417,6 +465,8 @@ try {
         Write-Host "Evidence: $($result.Name) [$($result.Status)] $($result.Detail)"
     }
     Write-Host "Evidence manifest: $($evidence.ManifestPath)"
+
+    $socStopStatus = Stop-ActiveDailySocLab
 
     $primaryBastion = @($trackedResources | Where-Object {
         $_.Address -ceq 'aws_instance.primary_bastion'
@@ -500,6 +550,10 @@ try {
         -DrRegion $DrRegion `
         -ExpectedAccountId $ExpectedAccountId
 
+    if ($socStopStatus -ceq 'failed') {
+        throw 'Daily AWS teardown completed, but the local SOC lab still failed to stop. The Daily Session guard remains active for Watchdog retry.'
+    }
+
     [void](Complete-DailySessionGuard `
         -SessionSafety $automationConfig.SessionSafety `
         -TerraformRoot $TerraformRoot)
@@ -510,6 +564,7 @@ try {
     Write-Host 'Daily Terraform state: empty'
     Write-Host 'Tracked daily AWS residue: none'
     Write-Host 'Tagged daily AWS runtime: none'
+    Write-Host "SOC lab stop: $socStopStatus"
     Write-Host "Foundation ECR retained: $($retained.RepositoryName)"
     Write-Host "Foundation GitHub Actions Role retained: $($retained.RoleArn)"
     if ($retained.SecurityLogBucket) {

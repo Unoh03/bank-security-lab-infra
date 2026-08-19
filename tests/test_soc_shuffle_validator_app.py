@@ -17,6 +17,7 @@ VALIDATOR_PATH = (
     / "src"
     / "validator.py"
 )
+API_PATH = VALIDATOR_PATH.parents[1] / "api.yaml"
 PAYLOAD_PATH = ROOT / "observability" / "shuffle" / "soc_gate_b5_payload.py"
 
 
@@ -99,6 +100,11 @@ class SocShuffleValidatorAppTest(unittest.TestCase):
         source = VALIDATOR_PATH.read_text(encoding="utf-8")
         for forbidden in ("exec(", "eval(", "subprocess", "os.system", "shell=True"):
             self.assertNotIn(forbidden, source)
+
+    def test_shuffle_api_contract_uses_serialized_string_io(self):
+        api = API_PATH.read_text(encoding="utf-8")
+        self.assertIn("name: validate_sanitized_alert", api)
+        self.assertNotIn("type: object", api)
 
 
 if __name__ == "__main__":

@@ -175,12 +175,18 @@ try {
         throw 'Start-SocLab must create one active observe-only session first.'
     }
     $state = Get-Content -LiteralPath $activeSessionPath -Raw | ConvertFrom-Json
+    $sessionScope = if ($state.PSObject.Properties['scope']) {
+        [string]$state.scope
+    } else {
+        'full'
+    }
     $sessionPath = [IO.Path]::GetFullPath([string]$state.session_path)
     $expectedPrefix = [IO.Path]::GetFullPath($resolvedRuntimeRoot).TrimEnd('\') + '\'
     if ([int]$state.schema_version -ne 1 -or
         -not $sessionPath.StartsWith($expectedPrefix,[StringComparison]::OrdinalIgnoreCase) -or
-        [string]$state.status -cne 'READY' -or [string]$state.response_mode -cne 'observe_only') {
-        throw 'The active SOC session is not one fixed READY observe-only session.'
+        [string]$state.status -cne 'READY' -or [string]$state.response_mode -cne 'observe_only' -or
+        $sessionScope -cne 'full') {
+        throw 'The active SOC session is not one fixed Full READY observe-only session.'
     }
     $take = Read-SocTakeRecord -RuntimeRoot $sessionPath
     $takeId = [string]$take.take_id

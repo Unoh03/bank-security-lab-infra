@@ -31,6 +31,7 @@ HEADER_KEY_PATTERN = re.compile(r"^[A-Za-z0-9.*+?-]{24,128}$")
 WEBHOOK_ID_PATTERN = r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
 WEBHOOK_PATH_PATTERNS = (
     re.compile(rf"^/api/v1/hooks/(?P<id>{WEBHOOK_ID_PATTERN})$"),
+    re.compile(rf"^/api/v1/hooks/webhook_(?P<id>{WEBHOOK_ID_PATTERN})$"),
     re.compile(rf"^/api/v1/webhooks/webhook_(?P<id>{WEBHOOK_ID_PATTERN})$"),
 )
 WEBHOOK_URL_PATH = Path("/var/ossec/soc-secrets/shuffle_webhook_url")
@@ -75,6 +76,11 @@ def canonical_json(value: dict[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
+def is_canonical_true(value: Any) -> bool:
+    """Accept JSON true and Wazuh's exact decoded string representation only."""
+    return value is True or (isinstance(value, str) and value == "true")
+
+
 def build_sanitized_alert(alert: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     rule = require_object(alert.get("rule"), "rule")
     data = require_object(alert.get("data"), "data")
@@ -93,7 +99,7 @@ def build_sanitized_alert(alert: dict[str, Any], now: datetime | None = None) ->
         raise ContractError("AWS account is not allowlisted")
     if data.get("aws_region") != EXPECTED_REGION:
         raise ContractError("AWS region is not allowlisted")
-    if payload.get("normalized") is not True:
+    if not is_canonical_true(payload.get("normalized")):
         raise ContractError("payload is not normalized")
     if payload.get("event_type") != "command.execution":
         raise ContractError("event_type is not allowlisted")

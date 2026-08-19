@@ -45,4 +45,4 @@ actions:
           type: string
     returns:
       schema:
-        type: object
+        type: string

@@ -10,9 +10,10 @@
 > 그 전에는 NetworkPolicy·IAM 차단·Remediation·Reset을 Runtime 완료로 표현하지 않는다.
 
 이 문서는 대표 시연의 **대응 의미**를 정하는 단일 기준이다. 전달 구조와 필드 계약은
-`CAPITAL-ONE-SOC-E2E-BLUEPRINT.md`, 전체 Gate와 촬영 범위는
-`CAPITAL-ONE-SOC-DEMO-PLAN.md`를 사용한다. 서로 충돌하면 대응 의미는 이 문서를 우선하되,
-실제 Source와 Runtime Evidence가 문서보다 우선한다.
+`CAPITAL-ONE-SOC-E2E-BLUEPRINT.md`, 전체 Gate와 완료 조건은
+`CAPITAL-ONE-SOC-DEMO-PLAN.md`, 촬영 범위·화면·조작·내레이션은
+`CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md`를 사용한다. 서로 충돌하면 대응 의미는 이
+문서를 우선하되, 실제 Source와 Runtime Evidence가 문서보다 우선한다.
 
 ---
 
@@ -266,26 +267,7 @@ Reset 완료 조건:
 
 ---
 
-## 8. 촬영에서 보여줄 최소 장면
-
-```text
-1. PREPARED: low, Wazuh·Bridge READY, 새 TAKE
-2. 공격: command.execution 2건
-3. 빠른 탐지: Rule 100103과 event_id
-4. Containment: DVWA Workload 격리 + 허용된 IAM 영향 차단
-5. 조사: 느린 WAF·ALB·CloudFront·CloudTrail Timeline
-6. Remediation: low → impossible 설정 Patch Commit과 Argo Revision
-7. 검증: 격리 경계와 애플리케이션 Patch를 구분한 재공격 실패·정상 기능
-8. 영구 대응: IAM·IMDS·Node 복구 계획 또는 검증 결과
-9. 필요 시 별도 영상: 수동 Reset과 새 TAKE
-```
-
-영상에서는 `탐지`, `Containment`, `침해 확인`, `Remediation`, `Recovery` Label을 화면과
-설명에 그대로 사용한다.
-
----
-
-## 9. 공식 근거
+## 8. 공식 근거
 
 - [NIST SP 800-61 Rev. 3](https://csrc.nist.gov/pubs/sp/800/61/r3/final): Incident Response를
   CSF 2.0의 Detect·Respond·Recover와 조직 위험 관리에 통합한다.

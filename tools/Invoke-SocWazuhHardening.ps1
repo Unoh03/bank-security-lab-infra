@@ -78,13 +78,15 @@ function Invoke-ProcessWithSecretInput {
     $startInfo = [Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $FilePath
     $startInfo.UseShellExecute = $false
-    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardInput = $false
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
     $startInfo.CreateNoWindow = $true
     foreach ($argument in $Arguments) {
         [void]$startInfo.ArgumentList.Add($argument)
     }
+    $secretEnvironmentName = 'WAZUH_HASH_INPUT'
+    $startInfo.Environment[$secretEnvironmentName] = $InputText
 
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
@@ -92,8 +94,6 @@ function Invoke-ProcessWithSecretInput {
         if (-not $process.Start()) {
             throw 'The bounded secret-input process could not start.'
         }
-        $process.StandardInput.WriteLine($InputText)
-        $process.StandardInput.Close()
         $stdout = $process.StandardOutput.ReadToEnd()
         $stderr = $process.StandardError.ReadToEnd()
         $process.WaitForExit()
@@ -103,6 +103,7 @@ function Invoke-ProcessWithSecretInput {
             StdErr   = $stderr
         }
     } finally {
+        [void]$startInfo.Environment.Remove($secretEnvironmentName)
         $process.Dispose()
     }
 }
@@ -111,8 +112,9 @@ function Get-WazuhPasswordHash {
     param([Parameter(Mandatory)][string]$Password)
 
     $result = Invoke-ProcessWithSecretInput -FilePath 'docker' -Arguments @(
-        'run','--rm','-i','wazuh/wazuh-indexer:4.14.7',
-        'bash','/usr/share/wazuh-indexer/plugins/opensearch-security/tools/hash.sh'
+        'run','--rm','-e','WAZUH_HASH_INPUT','wazuh/wazuh-indexer:4.14.7',
+        'bash','/usr/share/wazuh-indexer/plugins/opensearch-security/tools/hash.sh',
+        '-env','WAZUH_HASH_INPUT'
     ) -InputText $Password
     if ($result.ExitCode -ne 0) {
         throw 'Wazuh password hash generation failed. Output was suppressed because it handled secret input.'

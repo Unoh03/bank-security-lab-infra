@@ -26,7 +26,8 @@
 문서 역할은 다음처럼 고정한다.
 
 - `CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`: 대응 의미와 순서의 정본
-- `CAPITAL-ONE-SOC-DEMO-PLAN.md`: 전체 Gate·촬영 범위·현재 우선순위
+- `CAPITAL-ONE-SOC-DEMO-PLAN.md`: 전체 Gate·완료 조건·현재 우선순위
+- `CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md`: 촬영 범위·화면·조작·내레이션·필수 Evidence
 - 이 문서: Hop별 Interface·상태·Evidence Target
 - `CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md`: AWS Source·영구 복구 실행 경계
 - `observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md`: AWS→Wazuh 전달 계약

@@ -14,8 +14,10 @@ param(
     [string]$StopSignalPath = '',
     [ValidateRange(0, 3600)]
     [int]$MaxReadyQueueAgeSeconds = 120,
+    [switch]$AllowStaleBacklogDrain,
     [switch]$Once,
-    [string]$ConfirmConsume = ''
+    [string]$ConfirmConsume = '',
+    [string]$ConfirmBacklogDrain = ''
 )
 
 Set-StrictMode -Version Latest
@@ -25,9 +27,21 @@ $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if (-not $FoundationRoot) {
     $FoundationRoot = Join-Path $repositoryRoot 'foundation'
 }
+$documents = [Environment]::GetFolderPath('MyDocuments')
+$defaultSpoolDirectory = Join-Path $documents 'aws-topology-evidence\wazuh-push-shadow\dvwa'
+$spoolDirectoryWasExplicit = -not [string]::IsNullOrWhiteSpace($SpoolDirectory)
 if (-not $SpoolDirectory) {
-    $documents = [Environment]::GetFolderPath('MyDocuments')
-    $SpoolDirectory = Join-Path $documents 'aws-topology-evidence\wazuh-push-shadow\dvwa'
+    $SpoolDirectory = $defaultSpoolDirectory
+}
+if ($AllowStaleBacklogDrain.IsPresent) {
+    if (-not $spoolDirectoryWasExplicit -or
+        [IO.Path]::GetFullPath($SpoolDirectory).TrimEnd('\') -ieq
+            [IO.Path]::GetFullPath($defaultSpoolDirectory).TrimEnd('\')) {
+        throw 'Stale backlog drain requires an explicit non-live SpoolDirectory.'
+    }
+    if ($ConfirmBacklogDrain -cne 'DRAIN STALE WAZUH PUSH BACKLOG') {
+        throw "Stale backlog drain requires -ConfirmBacklogDrain 'DRAIN STALE WAZUH PUSH BACKLOG'."
+    }
 }
 $liveFilePath = Join-Path $SpoolDirectory 'wazuh-push-live.jsonl'
 $lockFilePath = Join-Path $SpoolDirectory 'wazuh-push-bridge.lock'
@@ -78,6 +92,33 @@ function Invoke-AwsJson {
         return [pscustomobject]@{}
     }
     return $text | ConvertFrom-Json
+}
+
+function Invoke-BootstrapAwsJson {
+    param([Parameter(Mandatory)][string[]]$Arguments)
+
+    $credentialNames = @(
+        'AWS_ACCESS_KEY_ID',
+        'AWS_SECRET_ACCESS_KEY',
+        'AWS_SESSION_TOKEN',
+        'AWS_SECURITY_TOKEN'
+    )
+    $currentCredentials = @{}
+    foreach ($name in $credentialNames) {
+        $currentCredentials[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+    }
+    try {
+        return Invoke-AwsJson -Arguments ($Arguments + @('--profile', $BootstrapProfile))
+    } finally {
+        foreach ($name in $credentialNames) {
+            [Environment]::SetEnvironmentVariable(
+                $name,
+                $currentCredentials[$name],
+                'Process'
+            )
+        }
+    }
 }
 
 function Resolve-QueueUrl {
@@ -202,6 +243,7 @@ function Write-BridgeHeartbeat {
         queue_not_visible               = $script:queueNotVisible
         queue_oldest_age_seconds        = $script:queueOldestAgeSeconds
         dlq_visible                     = $script:dlqVisible
+        mode                            = if ($AllowStaleBacklogDrain.IsPresent) { 'catchup' } else { 'live' }
         heartbeat_interval_seconds      = $heartbeatIntervalSeconds
         queue_metrics_interval_seconds  = $queueMetricsIntervalSeconds
     }
@@ -225,29 +267,31 @@ function Write-BridgeHeartbeat {
 }
 
 function Get-QueueMetrics {
-    param([Parameter(Mandatory)][string]$Url)
+    param(
+        [Parameter(Mandatory)][string]$Url,
+        [switch]$UseBootstrapProfile
+    )
 
-    $result = Invoke-AwsJson -Arguments @(
+    $arguments = @(
         'sqs', 'get-queue-attributes',
         '--queue-url', $Url,
         '--attribute-names',
         'ApproximateNumberOfMessages',
         'ApproximateNumberOfMessagesNotVisible',
-        'ApproximateAgeOfOldestMessage',
         '--region', $Region,
         '--output', 'json',
         '--no-cli-pager'
     )
+    $result = if ($UseBootstrapProfile.IsPresent) {
+        Invoke-BootstrapAwsJson -Arguments $arguments
+    } else {
+        Invoke-AwsJson -Arguments $arguments
+    }
     $attributes = $result.Attributes
     $visibleProperty = if ($null -eq $attributes) {
         $null
     } else {
         $attributes.PSObject.Properties['ApproximateNumberOfMessages']
-    }
-    $oldestProperty = if ($null -eq $attributes) {
-        $null
-    } else {
-        $attributes.PSObject.Properties['ApproximateAgeOfOldestMessage']
     }
     $notVisibleProperty = if ($null -eq $attributes) {
         $null
@@ -257,8 +301,36 @@ function Get-QueueMetrics {
     return [pscustomobject]@{
         Visible = if ($null -eq $visibleProperty) { 0 } else { [int]$visibleProperty.Value }
         NotVisible = if ($null -eq $notVisibleProperty) { 0 } else { [int]$notVisibleProperty.Value }
-        OldestAgeSeconds = if ($null -eq $oldestProperty) { 0 } else { [int]$oldestProperty.Value }
     }
+}
+
+function Get-QueueOldestAgeSeconds {
+    param([Parameter(Mandatory)][string]$Url)
+
+    $queueName = ($Url.TrimEnd('/') -split '/')[-1]
+    if ($queueName -notmatch '^[A-Za-z0-9_-]+$') {
+        throw 'The SQS queue name is invalid for its CloudWatch age query.'
+    }
+    $end = [datetimeoffset]::UtcNow
+    $start = $end.AddMinutes(-15)
+    $result = Invoke-BootstrapAwsJson -Arguments @(
+        'cloudwatch', 'get-metric-statistics',
+        '--namespace', 'AWS/SQS',
+        '--metric-name', 'ApproximateAgeOfOldestMessage',
+        '--dimensions', "Name=QueueName,Value=$queueName",
+        '--start-time', $start.ToString('o'),
+        '--end-time', $end.ToString('o'),
+        '--period', '60',
+        '--statistics', 'Maximum',
+        '--region', $Region,
+        '--output', 'json',
+        '--no-cli-pager'
+    )
+    $latest = @($result.Datapoints | Sort-Object Timestamp -Descending | Select-Object -First 1)
+    if ($latest.Count -ne 1 -or $null -eq $latest[0].Maximum) {
+        return [int]::MaxValue
+    }
+    return [int][Math]::Ceiling([double]$latest[0].Maximum)
 }
 
 function Update-QueueMetrics {
@@ -274,10 +346,17 @@ function Update-QueueMetrics {
         return
     }
     $primary = Get-QueueMetrics -Url $PrimaryUrl
-    $deadLetter = Get-QueueMetrics -Url $DeadLetterUrl
+    # The bootstrap identity only inspects DLQ counts. It never receives or deletes DLQ messages.
+    # This also keeps readiness observable while an older live Reader policy lacks the source-defined
+    # read-only DLQ statement; Primary queue consumption remains on the assumed Reader Role.
+    $deadLetter = Get-QueueMetrics -Url $DeadLetterUrl -UseBootstrapProfile
     $script:queueVisible = $primary.Visible
     $script:queueNotVisible = $primary.NotVisible
-    $script:queueOldestAgeSeconds = $primary.OldestAgeSeconds
+    $script:queueOldestAgeSeconds = if ($primary.Visible -gt 0) {
+        Get-QueueOldestAgeSeconds -Url $PrimaryUrl
+    } else {
+        0
+    }
     $script:dlqVisible = $deadLetter.Visible
     $script:lastQueueMetricsAt = $now
 }
@@ -424,6 +503,7 @@ Write-Host "Region: $Region"
 Write-Host "Bootstrap profile: $BootstrapProfile"
 Write-Host "Shadow spool: $SpoolDirectory"
 Write-Host "Wazuh live JSONL: $liveFilePath"
+Write-Host "Bridge mode: $(if ($AllowStaleBacklogDrain.IsPresent) { 'catchup' } else { 'live' })"
 Write-Host 'Input contract: every event already stored in the approved DVWA CloudWatch log group'
 Write-Host 'Bridge output: durable Host spool; Wazuh localfile consumption is configured separately.'
 
@@ -449,7 +529,7 @@ if ($resolvedDlqUrl -notmatch "^https://sqs\.$([regex]::Escape($expectedRegion))
     throw 'The resolved SQS DLQ URL has an unexpected format.'
 }
 $resolvedReaderRoleArn = Resolve-ReaderRoleArn
-if ($resolvedReaderRoleArn -notmatch "^arn:aws:iam::$expectedAccountId:role/[A-Za-z0-9+=,.@_-]+$") {
+if ($resolvedReaderRoleArn -notmatch "^arn:aws:iam::${expectedAccountId}:role/[A-Za-z0-9+=,.@_-]+$") {
     throw 'The resolved Wazuh Reader Role is outside the fixed lab account.'
 }
 
@@ -502,7 +582,7 @@ try {
     )
     $expectedRoleName = ($resolvedReaderRoleArn -split '/')[-1]
     if ([string]$identity.Account -cne $expectedAccountId -or
-        [string]$identity.Arn -notmatch "^arn:aws:sts::$expectedAccountId:assumed-role/$([Regex]::Escape($expectedRoleName))/[^/]+$") {
+        [string]$identity.Arn -notmatch "^arn:aws:sts::${expectedAccountId}:assumed-role/$([Regex]::Escape($expectedRoleName))/[^/]+$") {
         throw 'The temporary AWS identity does not match the expected Wazuh Reader Role.'
     }
     Update-QueueMetrics `
@@ -512,11 +592,13 @@ try {
     if ($script:dlqVisible -ne 0) {
         throw 'The Primary Push DLQ is not empty; the bridge cannot enter READY.'
     }
-    if ($script:queueNotVisible -ne 0) {
+    if ($script:queueNotVisible -ne 0 -and
+        -not $AllowStaleBacklogDrain.IsPresent) {
         throw 'The Primary Push queue already has an in-flight message; the bridge cannot enter READY.'
     }
     if ($script:queueVisible -gt 0 -and
-        $script:queueOldestAgeSeconds -gt $MaxReadyQueueAgeSeconds) {
+        $script:queueOldestAgeSeconds -gt $MaxReadyQueueAgeSeconds -and
+        -not $AllowStaleBacklogDrain.IsPresent) {
         throw 'The Primary Push queue contains stale messages; the bridge cannot enter READY.'
     }
     Write-BridgeHeartbeat -State READY
@@ -557,19 +639,36 @@ try {
             $messages = @($response.Messages)
         }
 
+        $storedMessages = [Collections.Generic.List[object]]::new()
+        $deleteEntries = [Collections.Generic.List[object]]::new()
+        $messageIndex = 0
         foreach ($message in $messages) {
             $envelope = [string]$message.Body | ConvertFrom-Json
             $stored = Write-ShadowEvent -Envelope $envelope
+            $storedMessages.Add($stored)
+            $deleteEntries.Add([ordered]@{
+                Id            = ('message-{0:d2}' -f $messageIndex)
+                ReceiptHandle = [string]$message.ReceiptHandle
+            })
+            $messageIndex++
+        }
 
-            Invoke-AwsJson -Arguments @(
-                'sqs', 'delete-message',
+        if ($deleteEntries.Count -gt 0) {
+            $deleteResponse = Invoke-AwsJson -Arguments @(
+                'sqs', 'delete-message-batch',
                 '--queue-url', $resolvedQueueUrl,
-                '--receipt-handle', [string]$message.ReceiptHandle,
+                '--entries', ($deleteEntries | ConvertTo-Json -Depth 5 -Compress),
                 '--region', $Region,
                 '--output', 'json',
                 '--no-cli-pager'
-            ) | Out-Null
+            )
+            if ($null -ne $deleteResponse.PSObject.Properties['Failed'] -and
+                @($deleteResponse.Failed).Count -ne 0) {
+                throw 'SQS did not acknowledge every ledger-preserved message deletion.'
+            }
+        }
 
+        foreach ($stored in $storedMessages) {
             $verb = if ($stored.Created) { 'stored' } else { 'deduplicated' }
             $script:lastEventHash = $stored.EventHash
             Write-Host ("DVWA event {0}: {1}..." -f $verb, $stored.EventHash.Substring(0, 12))

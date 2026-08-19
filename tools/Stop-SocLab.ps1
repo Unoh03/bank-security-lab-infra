@@ -108,6 +108,29 @@ if ([int]$state.schema_version -ne 1 -or
     [string]$state.response_mode -notin @('observe_only','contain')) {
     throw 'The active SOC session identity is invalid.'
 }
+$socScope = if ($state.PSObject.Properties['scope']) {
+    if ([string]$state.scope -notin @('detection_only','full')) {
+        throw 'The active SOC session scope is invalid.'
+    }
+    [string]$state.scope
+} else {
+    # Compatibility for a pre-scope full session created by the prior contract.
+    'full'
+}
+$shuffleAllowWasRegistered = if ($state.PSObject.Properties['shuffle_allow_registered']) {
+    if ($state.shuffle_allow_registered -isnot [bool]) {
+        throw 'The active SOC session Shuffle allow flag is invalid.'
+    }
+    [bool]$state.shuffle_allow_registered
+} else {
+    # Compatibility for a pre-scope full session created by the prior contract.
+    $true
+}
+if (($socScope -ceq 'detection_only' -and
+        ([string]$state.response_mode -cne 'observe_only' -or $shuffleAllowWasRegistered)) -or
+    ($socScope -ceq 'full' -and -not $shuffleAllowWasRegistered)) {
+    throw 'The active SOC session scope and Shuffle allow contract do not match.'
+}
 $expectedSessionPath = [IO.Path]::GetFullPath((Join-Path $resolvedRuntimeRoot ([string]$state.session_id)))
 if ([IO.Path]::GetFullPath([string]$state.session_path) -ine $expectedSessionPath) {
     throw 'The active SOC session path is not the expected private Runtime directory.'
@@ -216,7 +239,12 @@ $allowAlreadyRemoved = (
     $null -ne $state.PSObject.Properties['shuffle_allow_removed'] -and
     [bool]$state.shuffle_allow_removed
 )
-if (-not $allowAlreadyRemoved) {
+if (-not $shuffleAllowWasRegistered -and -not $allowAlreadyRemoved) {
+    $state | Add-Member -NotePropertyName shuffle_allow_removed -NotePropertyValue $true -Force
+    Write-SocStopAtomicJson -Path $activeSessionPath -Value $state
+    $allowAlreadyRemoved = $true
+}
+if ($shuffleAllowWasRegistered -and -not $allowAlreadyRemoved) {
     $configuration = Read-SocLabConfiguration -Root $ConfigurationRoot
     $shuffleApiKey = $null
     try {
@@ -250,6 +278,7 @@ Write-SocStopAtomicJson -Path $stopEvidencePath -Value ([ordered]@{
     checked_at_utc         = [string]$state.stopped_at_utc
     session_id             = [string]$state.session_id
     take_id                = [string]$state.take_id
+    scope                  = $socScope
     bridge_stopped         = $true
     shuffle_allow_removed  = $true
     wazuh_stopped          = $StopWazuh.IsPresent

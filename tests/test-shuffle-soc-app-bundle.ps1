@@ -20,6 +20,9 @@ if ($buildText -notmatch "ConfirmBuild\s+-cne\s+'BUILD SHUFFLE SOC APPS'" -or
 if ($uploadText -notmatch "ConfirmUpload\s+-cne\s+'UPLOAD SHUFFLE SOC APPS'" -or
     $uploadText -notmatch '/api/v1/apps/upload' -or
     $uploadText -notmatch "Unprotect-SocSecret\s+-Name\s+'shuffle_api_key'" -or
+    $uploadText -notmatch 'Get-SafeShuffleUploadFailureDetail' -or
+    $uploadText -notmatch 'response_sha256' -or
+    $uploadText -match 'throw[^\r\n]*\$responseText' -or
     $uploadText -match 'Write-Host[^\r\n]*\$apiKey') {
     throw 'The Shuffle SOC App bundle uploader violates its approval or secret contract.'
 }

@@ -17,6 +17,8 @@ foreach ($contract in @(
     @{Pattern='activeTake\.status -cne \[string\]\$state\.status[\s\S]*?reset-status-journal\.json[\s\S]*?recovered before Stop-SocLab'; Message='Stop can delete mismatched Reset status records or a pending status journal.'},
     @{Pattern='Read-SocTakeRecord[\s\S]*?response_mode -ceq ''contain''[\s\S]*?status -notin @\(''READY'',''CLOSED''\)[\s\S]*?refuses to delete its recovery state'; Message='Stop can delete an in-progress containment or Reset recovery state.'},
     @{Pattern='state\.status = ''BRIDGE_STOPPED''[\s\S]*?Write-SocStopAtomicJson -Path \$activeSessionPath[\s\S]*?Remove-ShuffleSocTake'; Message='Stop does not persist its recoverable state before external Shuffle cleanup.'},
+    @{Pattern='active SOC session scope is invalid[\s\S]*?scope and Shuffle allow contract do not match'; Message='Stop does not fail closed on an invalid Scope/Shuffle session contract.'},
+    @{Pattern='-not \$shuffleAllowWasRegistered -and -not \$allowAlreadyRemoved[\s\S]*?shuffle_allow_removed[\s\S]*?Write-SocStopAtomicJson'; Message='Detection-only Stop does not persist local no-Allow cleanup state.'},
     @{Pattern='Remove-ShuffleSocTake'; Message='Stop leaves the TAKE allow key active in Shuffle.'},
     @{Pattern="StopWazuh[\s\S]*?Arguments @\('down'\)[\s\S]*?Remove-SocRuntimeSession"; Message='Stop does not unmount Wazuh before deleting Runtime Secrets.'},
     @{Pattern='terraform_destroyed\s*=\s*\$false'; Message='Stop Evidence omits its no-Destroy boundary.'}
