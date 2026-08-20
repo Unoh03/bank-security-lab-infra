@@ -1215,6 +1215,91 @@ function Wait-SocBridgeReady {
     throw 'The Wazuh Push Bridge did not satisfy the READY heartbeat contract in time.'
 }
 
+function Get-SocBridgeFailureCategory {
+    param(
+        [Parameter(Mandatory)][string]$HeartbeatPath,
+        [Parameter(Mandatory)][string]$StandardOutputPath,
+        [Parameter(Mandatory)][string]$StandardErrorPath
+    )
+
+    # Persist only a bounded enum and numeric heartbeat counters. Never copy
+    # Bridge stdout/stderr, queue URLs, ARNs, or AWS error text to Evidence.
+    $heartbeat = $null
+    if (Test-Path -LiteralPath $HeartbeatPath -PathType Leaf) {
+        try { $heartbeat = Get-Content -LiteralPath $HeartbeatPath -Raw | ConvertFrom-Json } catch { $heartbeat = $null }
+    }
+    $metrics = [ordered]@{
+        observed = ($null -ne $heartbeat)
+        queue_visible = -1
+        queue_not_visible = -1
+        queue_oldest_age_seconds = -1
+        dlq_visible = -1
+    }
+    if ($null -ne $heartbeat) {
+        foreach ($name in @('queue_visible','queue_not_visible','queue_oldest_age_seconds','dlq_visible')) {
+            try { $metrics[$name] = [int]$heartbeat.$name } catch { $metrics[$name] = -1 }
+        }
+        if ($metrics.dlq_visible -gt 0) { return [pscustomobject]@{ category = 'dlq_nonempty'; metrics = $metrics } }
+        if ($metrics.queue_not_visible -gt 0) { return [pscustomobject]@{ category = 'inflight_nonzero'; metrics = $metrics } }
+        if ($metrics.queue_visible -gt 0 -and $metrics.queue_oldest_age_seconds -gt 120) {
+            return [pscustomobject]@{ category = 'stale_primary_backlog'; metrics = $metrics }
+        }
+    }
+
+    $diagnosticText = ''
+    foreach ($path in @($StandardOutputPath,$StandardErrorPath)) {
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            try { $diagnosticText += "`n" + ((Get-Content -LiteralPath $path -Tail 40 -ErrorAction Stop) -join "`n") } catch {}
+        }
+    }
+    if ($diagnosticText -match 'DLQ is not empty|DLQ became non-empty|Primary Push DLQ') {
+        return [pscustomobject]@{ category = 'dlq_nonempty'; metrics = $metrics }
+    }
+    if ($diagnosticText -match 'in-flight message|queue_not_visible') {
+        return [pscustomobject]@{ category = 'inflight_nonzero'; metrics = $metrics }
+    }
+    if ($diagnosticText -match 'stale messages|queue contains stale|oldest age') {
+        return [pscustomobject]@{ category = 'stale_primary_backlog'; metrics = $metrics }
+    }
+    if ($diagnosticText -match 'already holds the local spool lock|spool lock') {
+        return [pscustomobject]@{ category = 'lock_held'; metrics = $metrics }
+    }
+    if ($diagnosticText -match 'AWS CLI request failed|AssumeRole|STS|temporary AWS identity') {
+        return [pscustomobject]@{ category = 'aws_request_failed'; metrics = $metrics }
+    }
+    return [pscustomobject]@{ category = 'unknown'; metrics = $metrics }
+}
+
+function Write-SocBridgeFailureEvidence {
+    param(
+        [Parameter(Mandatory)][string]$EvidenceRoot,
+        [Parameter(Mandatory)][string]$RuntimeSessionId,
+        [Parameter(Mandatory)][string]$Stage,
+        [Parameter(Mandatory)][object]$Failure
+    )
+
+    $directory = Join-Path ([IO.Path]::GetFullPath($EvidenceRoot)) 'soc-lab-failures'
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    $timestamp = [datetimeoffset]::UtcNow.ToString('yyyyMMddTHHmmssZ')
+    $path = Join-Path $directory "soc-failure-$timestamp-$RuntimeSessionId.json"
+    $value = [ordered]@{
+        schema_version = 1
+        checked_at_utc = [datetimeoffset]::UtcNow.ToString('o')
+        session_id = $RuntimeSessionId
+        stage = $Stage
+        category = [string]$Failure.category
+        heartbeat = [ordered]@{
+            observed = [bool]$Failure.metrics.observed
+            queue_visible = [int]$Failure.metrics.queue_visible
+            queue_not_visible = [int]$Failure.metrics.queue_not_visible
+            queue_oldest_age_seconds = [int]$Failure.metrics.queue_oldest_age_seconds
+            dlq_visible = [int]$Failure.metrics.dlq_visible
+        }
+    }
+    Write-SocAtomicJson -Path $path -Value $value
+    return $path
+}
+
 function ConvertTo-SocProcessArgument {
     param([AllowEmptyString()][Parameter(Mandatory)][string]$Value)
 
@@ -1780,6 +1865,24 @@ try {
     Write-Host "READY_EVIDENCE=$readyEvidencePath"
 } catch {
     $message = $_.Exception.Message
+    $bridgeFailureCategory = $null
+    $bridgeFailureEvidencePath = $null
+    if ($stage -ceq 'bridge' -and $bridgeProcess) {
+        try {
+            $bridgeFailure = Get-SocBridgeFailureCategory `
+                -HeartbeatPath $heartbeatPath `
+                -StandardOutputPath $bridgeStdoutPath `
+                -StandardErrorPath $bridgeStderrPath
+            $bridgeFailureCategory = [string]$bridgeFailure.category
+            $bridgeFailureEvidencePath = Write-SocBridgeFailureEvidence `
+                -EvidenceRoot $EvidenceRoot `
+                -RuntimeSessionId $runtimeSessionId `
+                -Stage $stage `
+                -Failure $bridgeFailure
+        } catch {
+            $bridgeFailureCategory = 'unknown'
+        }
+    }
     if ($shuffleAllowRegistered -and $takeRecord -and $shuffleApiKey -and $configuration) {
         try {
             [void](Remove-ShuffleSocTake `
@@ -1808,7 +1911,9 @@ try {
     }
     try { Remove-SocRuntimeSession -SessionId $runtimeSessionId -RuntimeRoot $resolvedRuntimeRoot } catch {}
     Remove-Item -LiteralPath $activeSessionPath -Force -ErrorAction SilentlyContinue
-    throw "SOC startup failed at $stage. $message"
+    $categorySuffix = if ($bridgeFailureCategory) { " [$bridgeFailureCategory]" } else { '' }
+    $evidenceSuffix = if ($bridgeFailureEvidencePath) { " Evidence: $bridgeFailureEvidencePath" } else { '' }
+    throw "SOC startup failed at $stage$categorySuffix. $message.$evidenceSuffix"
 } finally {
     $adminPassword = $null
     $kibanaPassword = $null

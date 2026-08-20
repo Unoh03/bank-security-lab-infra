@@ -80,6 +80,9 @@ Assert-Match '\$knownDefaultCredential\s*=\s*\([\s\S]*?admin[\s\S]*?Secret.*?Pas
 Assert-Match '-notmatch[\s\S]*?-and[\s\S]*?-not \$knownDefaultCredential' 'Loopback requests no longer reject arbitrary credentials outside the generated-secret contract.'
 Assert-Match 'official default wazuh-wui credential[\s\S]*?Invoke-SocFreshHardeningEvidence[\s\S]*?\$hardeningEvidencePath' 'READY is not rebound to a fresh post-start container, port, volume, and six-probe observation.'
 Assert-Match 'Wait-SocBridgeReady[\s\S]*?dlq_visible[\s\S]*?queue_oldest_age_seconds' 'Start does not enforce the Bridge heartbeat readiness contract.'
+Assert-Match 'function Get-SocBridgeFailureCategory[\s\S]*?dlq_nonempty[\s\S]*?inflight_nonzero[\s\S]*?stale_primary_backlog[\s\S]*?lock_held[\s\S]*?aws_request_failed[\s\S]*?unknown' 'Start does not map bounded Bridge failure categories.'
+Assert-Match 'function Write-SocBridgeFailureEvidence[\s\S]*?soc-lab-failures[\s\S]*?Write-SocAtomicJson' 'Start does not preserve sanitized Bridge failure Evidence before runtime cleanup.'
+Assert-Match 'Get-SocBridgeFailureCategory[\s\S]*?Write-SocBridgeFailureEvidence[\s\S]*?Remove-SocRuntimeSession' 'Bridge failure Evidence is not written before runtime cleanup.'
 Assert-Match "Invoke-WazuhPushValidation\.ps1[\s\S]*?SEND WAZUH PUSH VALIDATION" 'Start does not execute the harmless Rule 100102 probe.'
 Assert-Match "rule\.id'\s*=\s*'100102'[\s\S]*?data\.payload\.take_id" 'Start does not query one exact safe-probe alert.'
 Assert-Match 'ConvertTo-SocProcessArgument[\s\S]*?bridgeArgumentLine[\s\S]*?-ArgumentList \$bridgeArgumentLine' 'Start does not preserve multiword confirmations and spaced paths when spawning the Bridge.'
@@ -98,6 +101,46 @@ $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)
 if (@($errors).Count -ne 0) {
     throw ('Start-SocLab parser errors: ' + (@($errors.Message) -join '; '))
+}
+$bridgeCategoryFunction = $ast.Find({
+    param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -ceq 'Get-SocBridgeFailureCategory'
+}, $true)
+if ($null -eq $bridgeCategoryFunction) {
+    throw 'The Bridge failure category helper could not be loaded for its mock contract test.'
+}
+Invoke-Expression $bridgeCategoryFunction.Extent.Text
+$bridgeFixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('soc-bridge-category-' + [guid]::NewGuid().ToString('N'))
+try {
+    New-Item -ItemType Directory -Path $bridgeFixtureRoot -Force | Out-Null
+    $bridgeHeartbeatPath = Join-Path $bridgeFixtureRoot 'heartbeat.json'
+    $bridgeStdoutPath = Join-Path $bridgeFixtureRoot 'stdout.log'
+    $bridgeStderrPath = Join-Path $bridgeFixtureRoot 'stderr.log'
+    $getBridgeCategory = {
+        param([hashtable]$Heartbeat,[string]$Diagnostic)
+        $Heartbeat | ConvertTo-Json | Set-Content -LiteralPath $bridgeHeartbeatPath
+        Set-Content -LiteralPath $bridgeStdoutPath -Value ''
+        Set-Content -LiteralPath $bridgeStderrPath -Value $Diagnostic
+        return Get-SocBridgeFailureCategory -HeartbeatPath $bridgeHeartbeatPath `
+            -StandardOutputPath $bridgeStdoutPath -StandardErrorPath $bridgeStderrPath
+    }
+    $bridgeCategoryResults = @(
+        (& $getBridgeCategory @{queue_visible=2;queue_not_visible=0;queue_oldest_age_seconds=121;dlq_visible=0} '')
+        (& $getBridgeCategory @{queue_visible=0;queue_not_visible=0;queue_oldest_age_seconds=0;dlq_visible=1} '')
+        (& $getBridgeCategory @{queue_visible=0;queue_not_visible=1;queue_oldest_age_seconds=0;dlq_visible=0} '')
+        (& $getBridgeCategory @{queue_visible=0;queue_not_visible=0;queue_oldest_age_seconds=0;dlq_visible=0} 'spool lock')
+        (& $getBridgeCategory @{queue_visible=0;queue_not_visible=0;queue_oldest_age_seconds=0;dlq_visible=0} 'AWS CLI request failed')
+        (& $getBridgeCategory @{queue_visible=0;queue_not_visible=0;queue_oldest_age_seconds=0;dlq_visible=0} 'other')
+    )
+    if ((@($bridgeCategoryResults | ForEach-Object { [string]$_.category }) -join ',') -cne
+        'stale_primary_backlog,dlq_nonempty,inflight_nonzero,lock_held,aws_request_failed,unknown') {
+        throw 'The Bridge failure category helper returned an unexpected bounded category.'
+    }
+} finally {
+    if (Test-Path -LiteralPath $bridgeFixtureRoot) {
+        Remove-Item -LiteralPath $bridgeFixtureRoot -Recurse -Force
+    }
 }
 $quoteFunction = $ast.Find({
     param($node)
