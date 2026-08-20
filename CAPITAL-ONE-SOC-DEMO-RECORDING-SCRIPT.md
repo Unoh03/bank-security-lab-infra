@@ -1,446 +1,572 @@
-# Capital One SOC 시연 녹화 대본
+# Capital One 기반 SOC 시연 녹화 대본
 
-> **상태:** CURRENT DRAFT — 대응 흐름 확정, 각 장면의 Runtime Gate는 촬영 직전 재검증
->
-> **대상:** 프로젝트 평가자·팀원에게 탐지부터 Recovery까지 한 Incident로 설명하는 본편
->
-> **대응 의미 정본:** [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](./CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md)
->
-> **촬영 전 Gate:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)
->
-> **Interface·상태 계약:** [`CAPITAL-ONE-SOC-E2E-BLUEPRINT.md`](./CAPITAL-ONE-SOC-E2E-BLUEPRINT.md)
+> **상태:** TARGET RECORDING SCRIPT — 모든 촬영 Gate가 PASS한 완성형 관제 시스템을 전제로 함  
+> **촬영 가능 조건:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)의 `GT-00~GT-11` PASS  
+> **공격·대응 의미:** [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](./CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md)
 
-이 문서는 무엇을 구현할지 정하는 계획서가 아니다. 이미 Gate를 통과한 기능을 어떤 화면에서
-어떤 말로 증명할지 정하는 실제 녹화 대본이다. 대본에 장면이 있다는 사실은 Source 존재나
-Runtime 완료를 뜻하지 않는다.
+이 문서는 촬영 당일 펼쳐놓는 실제 대본이다. 구현 방법과 남은 작업은 시연 계획에서 관리한다.
 
 ---
 
-## 0. 본편 완료 기준
+## 0. 영상이 증명할 것
 
-본편은 다음 한 문장을 실제 Runtime Evidence로 증명해야 한다.
+본편은 다음 한 문장을 실제 Runtime Evidence로 증명한다.
 
-> 통제된 DVWA 침투를 저지연으로 탐지해 Workload와 실습 데이터 접근 영향을 먼저 제한하고,
-> 느린 Evidence로 침해를 확인한 뒤 보안 설정 패치와 근본 원인 복구를 배포해 같은 공격은
-> 실패하지만 정상 기능은 유지되는 것을 확인했다.
+> **평소 Wazuh에 축적되는 AWS·애플리케이션 로그를 이용해 공격의 조기 징후와 보호 대상 S3 접근 성공을 탐지하고, 고신뢰 Alert가 발생하면 Shuffle이 사전 승인된 격리를 자동 실행하며, 관제자는 해당 Alert를 중심으로 관련 로그와 이미 수행된 조치를 쉽게 읽고 근본 대응을 결정한 뒤 동일 공격 실패와 정상 기능 유지를 확인했다.**
 
-다음 조건을 지키지 못하면 `전체 침해 대응 E2E 완료`라고 제목 붙이지 않는다.
+영상의 주인공은 공격 도구나 GitOps Pipeline이 아니라 **관제 시스템**이다.
 
-- 한 공격 시나리오의 Source Event·Alert·조치·Commit·Argo Revision이 같은 `TAKE_ID`로 연결됨
-- Containment, 침해 확인, Remediation, Recovery를 서로 다른 Evidence로 보여줌
-- 계획이나 Source가 아니라 실제 적용 결과를 보여줌
-- 재공격 실패 원인이 NetworkPolicy인지 애플리케이션 패치인지 구분됨
-- 정상 로그인과 허용 기능이 계속 동작함
-- Secret과 실제 개인정보가 화면·음성·자막에 없음
+본편이 반드시 보여줘야 하는 관제 능력:
 
-영구 대응 Runtime이 준비되지 않았다면 Scene 7에서 본편을 끝내고 다음 문장을 사용한다.
+```text
+평상시 로그 중앙화
+→ 조기 이상 징후 탐지
+→ 보호 대상 S3 접근 성공 고신뢰 탐지
+→ 사전 승인된 자동 격리
+→ Alert 중심 사건 조사
+→ 관제자의 후속 조치 결정
+→ Remediation·Recovery
+→ 동일 공격과 정상 기능 재검증
+```
 
-> 여기까지는 탐지·Containment·조사·애플리케이션 Remediation의 검증 결과입니다.
-> IAM·IMDS·Node 영구 복구와 Recovery는 아직 완료로 주장하지 않습니다.
+### 정확한 주장 경계
 
-이 경우 영상 제목에도 `Recovery 완료`나 `전체 E2E 완료`를 사용하지 않는다.
+- Rule `100103`은 `command.execution + ec2_imds + succeeded` 조기 이상 징후다.
+- Rule `100103`만으로 Credential 탈취나 S3 접근 성공을 확정하지 않는다.
+- 보호 대상 `validation/*`의 성공한 `GetObject`를 엄격한 조건으로 탐지한 Rule을 고신뢰 자동 조치 Trigger로 사용한다.
+- 현재 Rule `100100`이 그 계약을 충족하면 그대로 사용하고, 충족하지 않으면 새 Rule ID를 사용한다.
+- `GetObject` 성공은 보호 대상 Object 읽기 성공을 뜻한다. 외부 반출 전체를 별도로 증명하지 않았다면 `대규모 유출 완료`라고 말하지 않는다.
+- 자동 격리는 **S3 API 호출 순간**이 아니라 해당 CloudTrail Event가 Wazuh에 도착해 고신뢰 Alert가 발생한 직후 시작된다.
+- Wazuh의 사건 조사 화면은 저장된 로그를 미리 정의한 상관 키로 좁혀 보여주는 화면이다. 실제로 구현하지 않은 자동 인과 그래프나 AI 진단으로 과장하지 않는다.
 
 ---
 
 ## 1. 촬영 공통값
 
-촬영 시작 전에 아래 값을 한 곳에 적고 모든 구간에서 같은 값을 사용한다.
+촬영 시작 전에 한 곳에 기록한다.
 
 ```text
-FINAL_TAKE_ID=<촬영용 새 TAKE_ID>
+FINAL_TAKE_ID=<새 촬영 ID>
 START_UTC=<UTC ISO 8601>
-BASELINE_DVWA_REVISION=<촬영 전 main SHA>
+BASELINE_DVWA_REVISION=<공격 전 main SHA>
+HIGH_CONFIDENCE_RULE_ID=<100100 또는 최종 확정 ID>
 REMEDIATION_REVISION=<촬영 중 생성될 SHA>
-RECOVERY_EVIDENCE=<촬영 중 확정될 Evidence ID 또는 SHA>
+RECOVERY_EVIDENCE_ID=<최종 검증 Evidence ID>
 ```
 
-화면에 항상 전체 값을 노출할 필요는 없지만, 대조 가능한 앞·뒤 일부와 UTC는 남긴다.
+모든 장면은 같은 `FINAL_TAKE_ID`를 사용한다. AWS Event에 TAKE_ID가 자동으로 들어간다고 설명하지 않으며, TAKE_ID는 Runner·Evidence Bundle·촬영 구간을 묶는 외부 식별자다.
 
-공통 화면 규칙:
+## 2. 화면·편집·자막 공통 규칙
 
-- AWS Credential, Session Token, Cookie, Authorization Header, Webhook URL·Key, PAT을 숨긴다.
-- Account ID, Bucket, Client IP는 공개본 규칙에 맞게 Masking한다.
-- Wazuh·AWS·GitHub·Argo 화면의 시간대가 다르면 UTC로 환산한 자막을 붙인다.
-- 10분 Poll이나 배포 대기는 편집할 수 있지만, 전환 자막에 실제 경과시간과 같은 TAKE임을 표시한다.
-- 서로 다른 TAKE의 장면을 하나의 Incident처럼 이어 붙이지 않는다.
-- 실패한 장면을 성공처럼 편집하지 않는다.
+### 화면
+
+- Wazuh, Shuffle, GitHub, Argo CD, Terminal 시간을 가능한 한 UTC로 맞춘다.
+- Rule ID, Event ID, Principal, Bucket/Key, Shuffle Execution ID, Commit SHA는 앞·뒤 일부가 대조 가능하게 보인다.
+- Credential, Session Token, Cookie, Authorization Header, Webhook URL·Key, PAT은 절대 노출하지 않는다.
+- 공개본에서는 Account ID, Bucket 이름, Client IP, 전체 ARN을 규칙에 따라 마스킹한다.
+- Command 원문과 IMDS Credential 응답 원문은 화면에 띄우지 않는다.
+
+### 자막
+
+각 전환에는 다음 형식을 사용한다.
+
+```text
+[같은 TAKE_ID: <앞 8자>]
+[Event 발생 → Wazuh Alert: 실제 N분 N초]
+[Wazuh Alert → Shuffle Execution: 실제 N초]
+[자동 격리 적용 완료: UTC]
+[같은 TAKE — CloudTrail/S3 수집 대기 구간 편집]
+```
+
+`즉시`, `실시간`이라는 자막은 실제 측정 구간을 함께 표시할 때만 사용한다.
+
+### 편집
+
+- CloudTrail 전달·S3 Poll·배포 대기 구간은 편집할 수 있다.
+- 편집 전후 UTC, 실제 경과시간, 동일 TAKE임을 자막에 남긴다.
+- 다른 TAKE나 다른 날짜의 로그를 하나의 Incident처럼 붙이지 않는다.
+- 실패 장면을 성공처럼 편집하지 않는다.
+- 자동화가 실행된 장면과 사람이 선택한 장면을 구분한다.
 
 ---
 
-## 2. 본편 녹화 대본
+## 3. 본편 장면 요약
 
-### Scene 0 — 촬영 Slate와 PREPARED 상태
+| Scene | 장면 | 관제 관점의 핵심 주장 | 필수 Gate |
+|---|---|---|---|
+| `SC-00` | Slate·평상시 관제 | 로그가 평소부터 Wazuh에 축적되고 시스템이 READY다 | `GT-00`, `GT-01`, `GT-11` |
+| `SC-01` | 공격 범위 설명 | Capital One 기반 Lab 각색이며 보호 대상은 `validation/*`다 | `GT-00` |
+| `SC-02` | 공격 1회 | Command Injection → IMDS → 임시 자격증명 → S3 접근을 한 TAKE로 실행한다 | `GT-00` |
+| `SC-03` | 조기 이상 징후 | Rule `100103`은 S3 침해 확정 전 조기 경보다 | `GT-02` |
+| `SC-04` | S3 고신뢰 탐지 | 보호 대상 `GetObject` 성공을 엄격한 Rule로 탐지한다 | `GT-03` |
+| `SC-05` | Shuffle 자동 격리 | 고신뢰 Alert가 사전 승인된 격리를 한 번 실행한다 | `GT-04`, `GT-05` |
+| `SC-06` | 격리 효과 | 추가 접근은 실패하고 정상 영향 범위는 보존된다 | `GT-06` |
+| `SC-07` | Alert 중심 사건 조사 | 관련 로그·관측 공백·이미 수행된 조치를 쉽게 읽는다 | `GT-07`, `GT-08` |
+| `SC-08` | 관제자 후속 조치 | 자동 대응 이후 사람이 근본 조치를 결정·승인한다 | `GT-09` |
+| `SC-09` | 재검증·종료 | 동일 공격 실패, 정상 기능 성공, 새 S3 성공 Event 없음 | `GT-10` |
 
-**화면**
+---
 
-- 제목 Slate
-- 새 `TAKE_ID`와 시작 UTC
-- DVWA `defaultSecurityLevel=low`
+# 4. 본편 녹화 대본
+
+## SC-00 — 촬영 Slate와 평상시 관제
+
+### 보여줄 화면
+
+- `FINAL_TAKE_ID`, 시작 UTC
 - Wazuh Manager·Indexer·Dashboard READY
-- Bridge PID·Heartbeat READY
-- Argo CD 현재 Revision `Synced + Healthy`
-- 이전 TAKE Credential 환경변수 없음
+- Shuffle Webhook/Workflow READY
+- Wazuh Reader와 로그 수집 상태 READY
+- Argo CD `Synced + Healthy`
+- Wazuh 전체 현황 Dashboard
+- 최근 정상 Event가 각 Source에서 수집되는 모습
 
-**운영자 조작**
+### 운영자 조작
 
-1. Secret이 가려진 Preflight 결과를 한 화면에 배치한다.
-2. `TAKE_ID`, UTC, DVWA Baseline Revision을 천천히 가리킨다.
-3. 화면을 3초 이상 고정한다.
+1. Secret이 제거된 Preflight를 실행한다.
+2. Wazuh 전체 현황 Dashboard를 연다.
+3. CloudFront·WAF·ALB·DVWA·CloudTrail Source가 검색 가능한 상태를 짧게 보여준다.
+4. TAKE_ID와 시작 UTC를 3초 이상 고정한다.
 
-**내레이션**
+### 내레이션
 
-> 지금부터 교육용 DVWA 환경에서 Capital One 침해 과정을 단순화한 SOC 시연을 시작합니다.
-> 이 실행에는 새 TAKE ID를 발급했고, DVWA는 의도적으로 취약한 low 상태입니다.
-> Wazuh와 빠른 전달 Bridge, Argo CD의 시작 상태를 먼저 확인했습니다.
+> 이 환경은 AWS와 애플리케이션에 흩어진 로그를 Wazuh로 중앙화해 평상시부터 관제합니다. 지금은 공격 전 정상 상태이며, 이번 실행을 구분할 새 TAKE ID와 UTC를 기록했습니다. Wazuh, Shuffle, 로그 수집 계층과 배포 상태가 모두 준비됐습니다.
 
-**필수 Evidence**
+### 자막
 
-- `TAKE_ID`
-- 시작 UTC
-- `low`
-- Wazuh·Bridge READY
-- 정확한 Baseline Git SHA와 Argo Revision
+```text
+정상 상태 — Wazuh 중앙 관제 READY
+CloudFront · WAF · ALB · DVWA · CloudTrail 수집
+TAKE_ID=<앞 8자> / START_UTC=<시각>
+```
 
-**중단 조건**
+### 필수 Evidence
+
+- 5개 Source 검색 가능
+- Wazuh 3개 Service 정상
+- Shuffle Workflow·Webhook 활성
+- Baseline Git SHA와 Argo Revision
+- 이전 TAKE Credential 잔존 없음
+
+### 중단 조건
 
 READY 항목 하나라도 실패하거나 이전 Credential이 남아 있으면 공격하지 않는다.
 
 ---
 
-### Scene 1 — 시나리오와 주장 범위
+## SC-01 — 공격 시나리오와 주장 범위
 
-**화면**
+### 보여줄 화면
 
-- 공격 흐름을 표시한 단순 도식
-- `DVWA → IMDS → 임시 Role Credential → validation/* 가짜 데이터` 범위
-- 실제 개인정보가 아닌 Lab 데이터 표시
+- 단순 공격 도식
+- `DVWA Command Injection → IMDS → Node Role Credential → validation/* GetObject`
+- 가짜 Lab Object임을 나타내는 화면
 
-**내레이션**
+### 내레이션
 
-> 실제 Capital One 사고를 그대로 재현하는 것이 아니라, DVWA Command Injection으로
-> IMDS를 조회하고 제한된 가짜 S3 데이터에 접근하는 교육용 각색입니다.
-> 빠른 경로는 초기 Containment를 위한 신호이고, 느린 AWS 로그는 성공 여부와 공격 경로를
-> 확인하는 조사 Evidence로 사용합니다.
+> 실제 Capital One 사고의 SSRF를 그대로 재현한 것은 아닙니다. 교육용 DVWA Command Injection을 진입점으로 사용해 IMDS의 Node Role 임시 자격증명에 접근하고, 제한된 가짜 S3 Object를 읽는 공격 경로를 각색했습니다. 보호 대상은 `validation/*`로 한정됩니다.
 
-**필수 Evidence**
+### 자막
 
-- Lab 전용 Scope
-- `validation/*` 제한
+```text
+Capital One 기반 교육용 각색
+실제 개인정보 없음 / Lab Scope: validation/*
+```
+
+### 필수 Evidence
+
+- 공격 Target·Account·Region·Object Prefix 고정
+- 실제 데이터가 아닌 가짜 데이터
 - 실제 SSRF 재현이 아니라는 설명
 
 ---
 
-### Scene 2 — 통제된 공격 시나리오 1회
+## SC-02 — 통제된 공격 1회
 
-**화면**
+### 보여줄 화면
 
 - 승인된 공격 Runner
-- 같은 `TAKE_ID`가 적용됐다는 표시
-- Credential 원문을 제거한 공격 결과
+- 같은 TAKE_ID
+- Credential 원문이 제거된 단계별 결과
+- S3 가짜 Object 읽기 성공 여부
 
-**운영자 조작**
+### 운영자 조작
 
-1. 명령과 Target이 승인된 Lab 범위인지 마지막으로 확인한다.
-2. 공격 Runner를 한 번 실행한다.
-3. 성공·실패 Exit와 Source Event 시각을 보존한다.
+1. Target과 Prefix를 마지막으로 확인한다.
+2. 공격 Runner를 한 번만 실행한다.
+3. Source Event 시각과 Exit Status를 보존한다.
+4. Credential은 화면·파일에 출력하지 않는다.
 
-**내레이션**
+### 내레이션
 
-> 공격 시나리오는 한 번 실행합니다. 현재 Runner는 IMDS Role 이름과 임시 Credential을
-> 각각 조회하므로 서로 다른 command.execution 감사 Event 두 건이 생깁니다.
-> 두 Event는 하나의 Incident이며, 두 번의 침해로 세지 않습니다.
+> 공격은 승인된 Lab 범위에서 한 번 실행합니다. 애플리케이션 명령 실행, IMDS 접근, 임시 자격증명 사용과 보호 대상 S3 Object 읽기를 같은 TAKE로 기록합니다.
 
-**필수 Evidence**
+### 자막
+
+```text
+통제된 공격 1회
+Credential 원문 비저장
+S3 보호 대상 Object 읽기: SUCCESS
+```
+
+### 필수 Evidence
 
 - 공격 실행 1회
-- 서로 다른 Source `event_id` 2개
-- 같은 `TAKE_ID`
+- Runner 시작·종료 UTC
+- 가짜 Object Hash 또는 승인된 식별값
 - Credential 원문 미노출
 
-**중단 조건**
+### 중단 조건
 
-허용되지 않은 Target, 실제 데이터, 형식이 다른 TAKE가 확인되면 즉시 중단한다.
+허용되지 않은 Target, 실제 데이터, 다른 TAKE가 확인되면 즉시 중단한다.
 
 ---
 
-### Scene 3 — 빠른 Wazuh 탐지
+## SC-03 — Rule 100103 조기 이상 징후
 
-**화면**
+### 보여줄 화면
 
 - Wazuh Rule `100103` Alert
-- `TAKE_ID`, 각 `event_id`, Source UTC, Alert UTC
-- Event별 지연시간
-- 정상 대조군 Alert 0 Evidence
+- 원본 Push `event_id`
+- `event_type=command.execution`
+- `result=succeeded`
+- `resource=ec2_imds`
+- Source UTC와 Alert UTC
 
-**내레이션**
+### 내레이션
 
-> DVWA 감사 Event는 CloudWatch Logs에서 Push 경로를 거쳐 Wazuh Rule 100103으로
-> 탐지됐습니다. 두 Alert는 같은 TAKE의 서로 다른 명령 Event라서 Wazuh에는 모두
-> 보존합니다. 이 시점에 확정할 수 있는 것은 IMDS를 겨냥한 명령 실행이며,
-> S3 접근 성공까지 확정된 것은 아닙니다.
+> 애플리케이션 감사 Event는 저지연 전달 경로를 통해 Wazuh Rule 100103으로 탐지됐습니다. 이 경보는 IMDS를 겨냥한 명령 실행 성공이라는 조기 이상 징후입니다. 아직 이 시점에서는 S3 Object 접근 성공까지 확정하지 않습니다.
 
-**필수 Evidence**
+### 자막
 
+```text
+조기 이상 징후 — Rule 100103
+IMDS 대상 명령 실행 성공
+현재 판단: Credential 탈취·S3 접근 가능성, 미확정
+```
+
+### 필수 Evidence
+
+- 실제 Event와 Alert의 동일 `event_id`
 - Rule `100103`
-- 원본 Event 2·Alert 2
-- 누락 0·동일 `event_id` 중복 0
 - Source → Wazuh 실제 지연
 - 정상 대조군 Alert 0
 
-**중단 조건**
+### 중단 조건
 
-실제 AWS Event와 Wazuh Alert를 ID·UTC로 연결하지 못하면 합성 Alert로 대신하지 않는다.
-
----
-
-### Scene 4 — 즉시·가역적 Containment
-
-**화면**
-
-- Shuffle의 Schema·Allowlist·TAKE 검증
-- 첫 Alert의 Containment Outcome과 두 번째 Alert의 중복 억제
-- DVWA 고정 Label을 선택한 Quarantine NetworkPolicy
-- 실제 Ingress·Egress Deny와 필요한 관측 경로 Allow 결과
-- 공유 Role이면 `validation/*` 영향 차단 또는 `IAM_APPROVAL_REQUIRED`
-
-**내레이션**
-
-> 첫 Alert는 사전 허용된 TAKE와 고정 Target을 통과해 대응 대상으로 판정됐습니다.
-> 두 번째 Alert는 원본 Evidence로 보존하지만 같은 Incident의 Containment는 다시 실행하지
-> 않습니다. 먼저 DVWA Workload를 가역적으로 격리했고, 공유 Node Role 전체가 아니라
-> 허용된 실습 데이터 범위의 추가 접근 영향만 제한했습니다.
-
-> 이것은 유출 Credential 전체 폐기를 의미하지 않습니다. 현재 Incident의 확신도는
-> SUSPECTED이며, 느린 Evidence로 침해 성공 여부를 계속 조사합니다.
-
-**필수 Evidence**
-
-- 허용된 TAKE·Account·Region·Scenario
-- Containment orchestration 1회
-- 실제 NetworkPolicy enforcement
-- 대상 Label·정책 UID·Argo Revision
-- 다른 Namespace 영향 0
-- IAM 조치의 정확한 Scope 또는 승인 대기 상태
-- Rollback 가능성
-
-**중단 조건**
-
-NetworkPolicy가 실제 강제되지 않거나 공유 Role 전체 Deny만 가능하면 `observe_only`로
-종료한다. 그 영상을 Containment 완료로 편집하지 않는다.
+실제 Event와 Alert를 ID·UTC로 연결하지 못하면 합성 Alert로 대신하지 않는다.
 
 ---
 
-### Scene 5 — 느린 5-Source 조사와 침해 확인
+## SC-04 — 보호 대상 S3 접근 고신뢰 탐지
 
-**화면**
+### 보여줄 화면
 
-- Wazuh의 같은 Incident Timeline
-- DVWA 원본 감사 Event
-- WAF 요청 검사 결과
-- ALB·CloudFront 외부 요청 경로
-- CloudTrail `validation/* GetObject` Event와 Rule `100100`
-- 각 Source UTC와 상관관계 근거
+- CloudTrail S3 Data Event 원본
+- 고신뢰 Wazuh Alert
+- Rule ID·Level·Description
+- `GetObject`
+- 성공 여부
+- Principal/Role Session
+- Bucket·`validation/*` Key
+- CloudTrail `eventID`
 
-**내레이션**
+### 내레이션
 
-> 빠른 경로로 먼저 확산을 제한한 뒤, 기존의 꼼꼼한 수집 경로로 사건을 조사합니다.
-> DVWA, WAF, ALB, CloudFront는 외부 요청과 애플리케이션 실행 경로를 보여주고,
-> CloudTrail의 예상 Role과 validation 경로 GetObject 성공으로 침해를 확인합니다.
-> 늦게 도착한 확인 Event는 확신도를 CONFIRMED로 바꾸지만 이미 수행한 Containment를
-> 다시 실행하지 않습니다.
+> 이후 현재 CloudTrail과 S3 수집 경로를 통해 보호 대상 Object의 성공한 GetObject가 Wazuh에 도착했습니다. 이 Rule은 승인 Account, 보호 Prefix, 예상하지 않은 Principal 또는 공격 시나리오 Principal, 성공 응답을 함께 확인합니다. 이 통제된 Lab에서는 정상 흐름에 없어야 하는 행위이므로 자동 조치를 허용하는 고신뢰 Alert로 사용합니다.
 
-**필수 Evidence**
+> 자동 조치는 S3 API 호출 순간이 아니라 이 고신뢰 Alert가 Wazuh에 발생한 직후 시작됩니다.
 
-- 실제 동일 Incident의 5 Source
-- CloudTrail 원본 `eventID`와 Rule `100100`
-- 예상 Role·허용된 가짜 Object
-- 서로 다른 날짜의 로그를 조합하지 않았다는 UTC 연속성
-
-**중단 조건**
-
-CloudTrail 성공을 확인하지 못하면 `침해 확인` 대신 `침해 의심 조사 중`으로 표현한다.
-
----
-
-### Scene 6 — 애플리케이션 Remediation 배포
-
-**화면**
-
-- GitHub의 Remediation Workflow Run
-- `deploy/dvwa/values.yaml` 정확한 Diff
-- `defaultSecurityLevel: low → impossible`
-- Remediation Commit SHA와 Artifact
-- Argo CD `OutOfSync/Syncing → Synced + Healthy`
-- `status.sync.revision=<Remediation SHA>`와 새 Pod
-
-**내레이션**
-
-> 증거와 영향 범위를 확인한 뒤 취약 동작을 제거합니다. 이 변경은 격리가 아니라
-> DVWA의 보안 설정을 low에서 impossible로 바꾸는 애플리케이션 Remediation입니다.
-> Git에는 이 한 값만 변경됐고, Argo CD가 정확한 Commit SHA를 새 Pod로 배포했습니다.
-
-**필수 Evidence**
-
-- 변경 파일 1개·값 1개
-- 예상하지 않은 Diff 0
-- GitHub Run·Artifact·Commit SHA
-- Argo exact SHA·`Synced + Healthy`
-- 새 Pod UID 또는 Template Hash
-
-**중단 조건**
-
-예상 밖 파일·값이 바뀌거나 Argo Revision이 Commit과 다르면 배포 성공으로 표현하지 않는다.
-
----
-
-### Scene 7 — 패치 효과와 정상 기능 검증
-
-**화면**
-
-- 필요한 Test 경로만 제한적으로 허용한 상태
-- 같은 Payload의 애플리케이션 계층 실패
-- IMDS Marker·새 Rule `100103` 위협 Event 증가 없음
-- 정상 로그인과 승인된 기능 성공
-- NetworkPolicy 차단 Test와 애플리케이션 Patch Test의 분리 결과
-
-**내레이션**
-
-> 이제 격리 때문에 막힌 것인지 설정 패치로 취약 동작이 제거된 것인지 구분해 검증합니다.
-> 제한된 Test 경로에서 같은 Payload는 애플리케이션 계층에서 실패했고,
-> 정상 로그인과 허용 기능은 계속 동작합니다. 따라서 단순 서비스 중단이 아니라
-> 취약 동작을 제거한 결과임을 확인했습니다.
-
-**필수 Evidence**
-
-- 동일 Payload 실패
-- 실패 계층이 애플리케이션이라는 근거
-- 정상 기능 성공
-- 새 IMDS Marker·위협 Alert 증가 0
-
-**중단 조건**
-
-실패 원인을 NetworkPolicy와 Patch 사이에서 구분하지 못하거나 정상 기능이 깨지면
-Remediation 성공으로 판정하지 않는다.
-
----
-
-### Scene 8 — 근본 원인 복구와 Recovery 종료
-
-이 Scene은 실제 영구 대응 Runtime이 있을 때만 본편에 포함한다. Terraform Plan이나 문서만
-보여주고 Recovery 완료라고 말하지 않는다.
-
-**화면**
-
-- 실제 적용된 IAM 최소 권한 상태
-- IMDSv2 강제·Hop Limit과 필요한 Node 교체 결과
-- 기존 Credential의 `validation/*` 접근 `AccessDenied`
-- 임시 IAM Deny·Quarantine 해제 Evidence
-- 정상 기능·관찰창·새 위협 Event 0
-- 최종 Incident 상태 `RECOVERED` 또는 `CLOSED`
-
-**내레이션**
-
-> 마지막으로 공격이 가능했던 근본 조건을 복구했습니다. 실습 IAM 권한을 최소화하고,
-> IMDS 경로와 필요한 Node 상태를 목표 설정으로 변경했습니다. 기존 Credential의 추가
-> 접근은 거부되고, 정상 기능과 관측 경로가 유지되는 것을 확인한 뒤 임시 격리를
-> 해제했습니다.
-
-> 이번 시연은 빠른 탐지, 가역적 Containment, 느린 조사, 애플리케이션 Remediation,
-> 근본 원인 복구와 Recovery를 서로 다른 Evidence로 검증했습니다.
-
-**필수 Evidence**
-
-- 실제 적용 전후 Diff와 승인 기록
-- Post-Apply 목표 상태
-- 기존 Credential `AccessDenied`
-- Quarantine·임시 Deny 해제 주체와 UTC
-- 정상 기능·관찰창 결과
-- 최종 상태와 Evidence Index
-
-**중단 조건**
-
-영구 대응이 Plan-only이거나 기존 Credential 접근 실패를 검증하지 못하면 Scene 8을
-촬영하지 않고 Scene 7의 제한된 종료 문장을 사용한다.
-
----
-
-## 3. 편집과 구간 연결 규칙
-
-- 본편의 모든 Runtime 장면은 같은 `TAKE_ID`를 사용한다.
-- 느린 Poll 대기 구간은 잘라도 되지만 `실제 경과시간`, `전환 전후 UTC`, `같은 TAKE`를
-  자막으로 남긴다.
-- GitHub·Argo 화면은 Run ID·Commit SHA·Revision이 읽히는 길이로 고정한다.
-- 빠른 Alert와 느린 CloudTrail Event가 같은 시각에 온 것처럼 편집하지 않는다.
-- `SUSPECTED → CONFIRMED`와 `DETECTED → CONTAINED`를 같은 Status처럼 표현하지 않는다.
-- Containment를 `차단`, Remediation을 `보안 설정 패치`, Recovery를 `정상 운영 복귀`로
-  일관되게 설명한다.
-- 실패한 TAKE의 일부 화면을 다른 TAKE의 성공 결과와 합쳐 하나의 E2E처럼 만들지 않는다.
-
-권장 전환 자막:
+### 자막
 
 ```text
-같은 TAKE_ID — 10분 Poll 결과 대기
-같은 TAKE_ID — GitHub/Argo 배포 경과시간 실제 N분
-SUSPECTED → CloudTrail Evidence로 CONFIRMED
-Containment 유지 중 Remediation 검증
+고신뢰 침해 확인 — Rule <ID>
+Protected S3 GetObject: SUCCESS
+CloudTrail 도착·Wazuh 탐지까지 실제 N분 N초
 ```
 
----
+### 필수 Evidence
 
-## 4. 실패와 재촬영 처리
+- 실제 CloudTrail `eventID`
+- Wazuh Alert와 원본 Event의 동일 `eventID`
+- 성공 `GetObject`
+- 승인된 Bucket·`validation/*`
+- 공격 문맥의 Principal/Role Session
+- 정상 Principal 대조군 Alert 0
 
-장면 하나가 실패하면 다음 순서로 처리한다.
+### 중단 조건
 
-1. 해당 TAKE를 `FAILED` 또는 `CLOSED`로 표시한다.
-2. 원본 Event·Alert·Hash·실패 이유를 삭제하지 않는다.
-3. 자동으로 Reset하거나 같은 외부 Write를 재전송하지 않는다.
-4. 수동 Reset Gate를 통과한 뒤 새 `TAKE_ID`를 발급한다.
-5. 새 TAKE의 본편은 Scene 0부터 다시 시작한다.
+- 단순 `GetObject`만으로 Rule이 울림
+- 정상 대조군도 같은 Alert를 만듦
+- 원본 Event와 Alert를 연결하지 못함
 
-부분 재촬영이 필요해도 서로 다른 TAKE를 같은 Incident처럼 숨기지 않는다. 교육용 편집 영상으로
-여러 TAKE를 사용해야 한다면 각 구간에 TAKE와 날짜가 다르다는 자막을 명시하고 `단일 E2E
-Runtime 증명`이라고 부르지 않는다.
-
----
-
-## 5. 선택 사항 — Reset 별도 영상 대본
-
-Reset은 본편 Recovery가 아니라 다음 촬영을 위해 취약 Lab을 다시 여는 운영 절차다.
-본편에 붙이지 않고 필요할 때만 별도 영상으로 촬영한다.
-
-**화면**
-
-- 이전 TAKE `CLOSED`
-- Evidence 보존 완료
-- Quarantine 유지
-- `impossible → low` Reset Commit과 Argo exact SHA
-- Lab IAM 권한 복원
-- 새 Pod·Wazuh·Bridge READY
-- 새 TAKE 발급
-- Quarantine 마지막 해제
-
-**내레이션**
-
-> 이 절차는 사고 복구를 되돌리는 자동 대응이 아니라 재촬영을 위한 Lab 전용 Reset입니다.
-> 기존 Evidence와 Git History는 보존하고, Quarantine을 유지한 상태에서 설정과 Lab 권한을
-> 복원했습니다. 새 Pod와 관측 경로, 새 TAKE를 확인한 뒤 Quarantine을 마지막에 해제합니다.
-
-Reset 실패나 통제권 상실 시 `low`를 공개 상태로 두지 않고 다시 격리하거나 Daily Runtime을
-종료한다.
+위 조건 중 하나라도 발생하면 자동 조치 Trigger로 사용하지 않는다.
 
 ---
 
-## 6. 공개 전 최종 검수
+## SC-05 — Shuffle 자동 격리
+
+### 보여줄 화면
+
+- Wazuh Alert의 Integrator 전달
+- 인증된 Shuffle Webhook
+- Validator·Allowlist·중복 방지 결과
+- 정확히 한 개의 신규 Shuffle Execution
+- Workload 격리 결과
+- `validation/*` 추가 접근 제한 또는 승인된 Principal 제한 결과
+
+### 운영자 조작
+
+운영자가 별도 차단 버튼을 누르지 않는다. 고신뢰 Alert 이후 자동으로 생긴 Execution을 열어 결과를 확인한다.
+
+### 내레이션
+
+> 고신뢰 S3 Alert는 Wazuh Integrator를 통해 Shuffle로 전달됩니다. Shuffle은 Account, Scenario, Rule, Resource와 중복 여부를 검증한 뒤 사전 승인된 범위만 격리합니다. 같은 CloudTrail eventID의 재수집이나 중복 Alert는 조치를 반복하지 않습니다.
+
+> 이 시연에서는 DVWA Workload를 격리하고, 공유 Node Role 전체가 아니라 `validation/*` Lab 범위의 추가 접근 영향만 제한합니다.
+
+### 자막
+
+```text
+Wazuh Alert → Shuffle 자동 대응
+Validation: PASS
+Containment Execution: 1회
+Duplicate Action: 0
+```
+
+### 필수 Evidence
+
+- 실제 Wazuh Alert ↔ Shuffle Execution 일대일 연결
+- Webhook 인증 성공
+- 잘못된 Header·미등록 Target 거절
+- 원본 CloudTrail `eventID` 기반 중복 조치 0
+- 실제 Workload/Resource 제한 적용
+- 다른 Namespace와 비대상 Resource 영향 0
+- Rollback 가능
+
+### 중단 조건
+
+- 합성 Payload만 성공
+- 실제 Alert와 Execution을 연결하지 못함
+- 동일 Event가 조치를 반복함
+- 공유 Role 전체를 광범위하게 차단함
+
+이 경우 `자동 격리 완료`라고 촬영하지 않는다.
+
+---
+
+## SC-06 — 자동 격리 효과 확인
+
+### 보여줄 화면
+
+- 동일 Credential 또는 동일 공격 문맥의 추가 `validation/*` 접근 실패
+- DVWA Workload 통신 제한 결과
+- 비대상 Namespace·정상 서비스 성공
+- 격리 정책·정책 UID 또는 Commit/Revision
+
+### 내레이션
+
+> 자동 격리 뒤 동일한 공격 문맥의 추가 S3 접근은 거부됐습니다. 동시에 비대상 Namespace와 정상 서비스는 유지됩니다. 따라서 전체 환경을 중단한 것이 아니라 사전에 고정한 공격 경로만 제한한 결과입니다.
+
+### 자막
+
+```text
+추가 validation/* 접근: ACCESS DENIED
+비대상 Namespace·정상 기능: 정상
+Blast Radius: 사전 승인 범위
+```
+
+### 필수 Evidence
+
+- 추가 접근 실패
+- 실패 원인이 적용한 Containment임을 확인
+- 정상 대조군 성공
+- 정책 적용 전후 상태
+
+---
+
+## SC-07 — Alert를 중심으로 사건 조사
+
+이 장면이 관제 시스템의 핵심 장면이다.
+
+### 보여줄 화면
+
+고신뢰 S3 Alert에서 `Capital One Incident Investigation` Saved View/Dashboard로 이동한다.
+
+화면은 최소한 다음 영역을 가진다.
+
+```text
+사건 요약
+- 보호 대상 S3 GetObject 성공
+- Principal / Role Session
+- Bucket / Key
+- 위험도
+- 자동 격리 결과
+
+관련 Evidence Timeline
+- CloudFront: 외부 요청 진입
+- WAF: 검사 Action·Label
+- ALB: DVWA Target 전달
+- DVWA: command.execution·IMDS 조기 징후
+- CloudTrail: 보호 대상 GetObject 성공
+
+관측 공백
+- 모든 Source를 관통하는 공통 Request ID 없음
+- Pod → IMDS 네트워크 Event 직접 미수집
+
+이미 수행한 조치
+- Workload 격리
+- validation/* 추가 접근 제한
+
+추가 확인·대응 후보
+- 다른 Object 접근 여부
+- Credential/Session 재사용 여부
+- 다른 AWS Resource 접근 여부
+- IAM 최소 권한
+- DVWA 보안 설정 패치
+- IMDSv2·Hop Limit 보강
+```
+
+### 운영자 조작
+
+1. Seed Alert의 Event Time, Principal, Bucket/Key를 확인한다.
+2. 미리 만든 사건 조사 Dashboard를 연다.
+3. 해당 시간창과 Entity Filter가 적용된 관련 Event만 확인한다.
+4. 각 Source가 무엇을 증명하는지 한 줄씩 설명한다.
+5. 관측 공백을 숨기지 않는다.
+
+### 내레이션
+
+> 이제 최초 고신뢰 Alert를 중심으로 평소 Wazuh에 축적된 관련 로그를 좁혀 조사합니다. CloudFront, WAF, ALB는 외부 요청의 진입 경로를, DVWA는 명령 실행과 IMDS 접근 징후를, CloudTrail은 실제 보호 대상 Object 접근 성공을 보여줍니다.
+
+> 모든 Source에 공통 ID가 있는 것은 아니므로 시간창, Method, Path, Principal, Bucket과 Key를 이용해 연결합니다. 이 화면은 자동 인과 그래프가 아니라 관제자가 사건을 빠르게 읽도록 미리 구성한 조사 View입니다.
+
+### 자막
+
+```text
+Seed Alert → 관련 Evidence 확장
+상관 기준: 시간 · Principal · IP · URI · Bucket/Key
+자동 인과관계 확정이 아닌 다중 Evidence 기반 조사
+```
+
+### 필수 Evidence
+
+- 동일 TAKE·연속 UTC의 관련 Source
+- 각 Source의 상관 근거
+- 탐지 근거와 자동 조치 결과
+- 관측 공백 표시
+- Raw Event Drill-down
+- 검색 문법 없이 3분 내 사건 설명 가능
+
+### 중단 조건
+
+서로 다른 날짜의 보존 Event를 한 사건처럼 합치거나, 구현하지 않은 자동 Correlation을 주장하지 않는다.
+
+---
+
+## SC-08 — 관제자의 후속 조치 결정과 실행
+
+### 보여줄 화면
+
+- Rule별 Runbook/다음 조치 카드
+- 현재 확인된 사실
+- 이미 실행된 자동 조치
+- 사람이 선택해야 하는 근본 대응
+- 승인된 Remediation Workflow
+- GitHub Diff·Commit SHA
+- Argo CD `Synced + Healthy`
+- 필요 시 IAM·IMDS 복구 결과 요약
+
+### 내레이션
+
+> 반복적이고 즉시 실행해도 안전한 격리는 SOAR가 자동으로 처리했습니다. 이제 관제자는 수집된 Evidence와 영향 범위를 바탕으로 근본 대응을 선택합니다. 이번 사건에서는 DVWA의 취약 설정을 `low`에서 `impossible`로 변경하고, IAM 최소 권한과 IMDS 보강을 승인된 절차로 적용합니다.
+
+> Wazuh가 새로운 대응 방법을 임의로 발명한 것이 아니라, 사건 유형별 Runbook과 Evidence를 제공해 사람이 다음 조치를 쉽게 결정하도록 지원합니다.
+
+### 자막
+
+```text
+자동: 사전 승인된 Containment
+사람 승인: Remediation · IAM/IMDS Recovery
+low → impossible = 애플리케이션 보안 설정 패치
+```
+
+### 필수 Evidence
+
+- Runbook과 실제 사건 조건의 연결
+- 승인 주체·UTC
+- 예상한 파일·값만 변경
+- 정확한 GitHub Commit SHA
+- Argo exact Revision
+- IAM/IMDS 조치를 적용했다면 실제 Runtime 상태
+
+---
+
+## SC-09 — 동일 공격·정상 기능 재검증과 종료
+
+### 보여줄 화면
+
+- 동일 공격 Payload 재실행
+- 애플리케이션 계층 실패
+- 기존 Credential 또는 공격 문맥의 S3 접근 실패
+- 정상 로그인·허용 기능 성공
+- 새로운 보호 대상 `GetObject` 성공 Alert 없음
+- 최종 Incident Summary와 Evidence Index
+
+### 내레이션
+
+> 같은 공격을 다시 실행한 결과 취약 동작은 애플리케이션 계층에서 실패하고, 기존 공격 문맥의 보호 대상 S3 접근도 거부됩니다. 정상 로그인과 허용 기능은 계속 동작합니다. 마지막으로 Wazuh에서 새로운 보호 대상 GetObject 성공 Alert가 발생하지 않았음을 확인했습니다.
+
+> 이 시연은 로그 중앙화, 조기 징후, 고신뢰 S3 탐지, 자동 격리, Alert 중심 조사, 관제자 후속 판단과 재검증을 하나의 Incident로 증명했습니다.
+
+### 자막
+
+```text
+동일 공격: FAIL
+보호 대상 S3 추가 접근: DENIED
+정상 기능: PASS
+새 고신뢰 S3 성공 Alert: 0
+Incident: RECOVERED / CLOSED
+```
+
+### 필수 Evidence
+
+- 동일 Payload 실패
+- 정상 기능 성공
+- 실패 원인 구분
+- 새 S3 성공 Event·Alert 0
+- 임시 Containment 해제 여부와 주체
+- 최종 Evidence Index
+
+---
+
+# 5. 실패·재촬영 규칙
+
+1. 장면 하나가 실패하면 TAKE를 `FAILED` 또는 `CLOSED`로 표시한다.
+2. 실패 Event·Alert·Execution과 이유를 삭제하지 않는다.
+3. 같은 TAKE에서 외부 Write를 반복해 성공 장면만 만들지 않는다.
+4. 수동 Reset Gate를 통과한 뒤 새 TAKE_ID를 발급한다.
+5. 새 TAKE 본편은 SC-00부터 다시 시작한다.
+6. 여러 TAKE를 사용한 편집본은 `단일 E2E Runtime 증명`이라고 부르지 않는다.
+
+Reset은 본편 Recovery가 아니라 재촬영을 위해 취약 Lab을 다시 여는 별도 운영 절차다.
+
+---
+
+# 6. 공개 전 최종 검수
 
 - [ ] 영상 제목이 실제 완료 범위를 과장하지 않는다.
-- [ ] 모든 본편 Runtime 장면의 `TAKE_ID`가 같다.
-- [ ] Source Event·Wazuh Alert·Shuffle Outcome·GitHub Run·Argo Revision을 대조했다.
-- [ ] `command.execution` 2건을 Incident 2건으로 설명하지 않는다.
-- [ ] 빠른 탐지만으로 S3 접근 성공을 주장하지 않는다.
-- [ ] Lab Prefix Deny를 Credential 폐기로 설명하지 않는다.
-- [ ] `low → impossible`을 Containment라고 부르지 않는다.
-- [ ] Plan-only 항목을 Runtime 완료로 말하지 않는다.
-- [ ] 재공격 실패와 정상 기능 성공을 함께 보여준다.
-- [ ] Reset을 Recovery라고 부르지 않는다.
-- [ ] Secret·실제 개인정보·전체 식별자가 음성·화면·자막에 없다.
-- [ ] 실패 TAKE나 다른 날짜의 Evidence를 하나의 Incident처럼 합치지 않는다.
+- [ ] 모든 Runtime 장면의 TAKE와 UTC가 연결된다.
+- [ ] Rule `100103`을 S3 침해 확정 Rule로 설명하지 않는다.
+- [ ] 고신뢰 S3 Rule 조건과 정상 대조군을 보여준다.
+- [ ] `S3 접근 순간 즉시`가 아니라 `Wazuh 고신뢰 Alert 직후` 자동 격리라고 설명한다.
+- [ ] Wazuh Alert와 Shuffle Execution이 실제 일대일로 연결된다.
+- [ ] 중복 Alert가 자동 조치를 반복하지 않는다.
+- [ ] 조사 View의 상관 기준과 관측 공백을 설명한다.
+- [ ] 구현하지 않은 자동 그래프·AI 분석을 주장하지 않는다.
+- [ ] Workload 격리, Resource/Permission 제한, Credential 대응을 구분한다.
+- [ ] `low → impossible`을 Credential 폐기나 Workload 격리로 설명하지 않는다.
+- [ ] Plan·Source 존재를 Runtime 완료로 말하지 않는다.
+- [ ] 동일 공격 실패와 정상 기능 성공을 함께 보여준다.
+- [ ] Secret·실제 개인정보·전체 식별자가 화면·음성·자막에 없다.
+- [ ] 다른 날짜·다른 TAKE의 Evidence를 하나의 Incident처럼 합치지 않는다.
