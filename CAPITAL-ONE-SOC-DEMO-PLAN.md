@@ -34,7 +34,7 @@ Rule 100103
 = Credential 탈취·S3 접근 가능성
 = 자동 격리 Trigger 아님
 
-Rule 100100 또는 새 엄격한 Rule
+Rule 100104
 = 보호 대상 validation/* GetObject 성공
 + 승인 Account
 + 공격 시나리오 Principal/Role Session
@@ -125,7 +125,9 @@ CloudTrail의 별도 저지연 Route 전환은 촬영 필수 조건이 아니다
 | `CAPITAL-ONE-SOC-E2E-BLUEPRINT.md` | Hop별 Interface·Schema·실패 계약 |
 | `OBSERVABILITY-CURRENT-STATUS.md` | 실제 최신 Runtime 상태 |
 
-이번 설계로 기존 Blueprint·Scenario의 `Rule 100103 → Containment` 표현이 충돌하면, 구현 전에 해당 정본을 보정해야 한다. 이번 커밋에서는 두 촬영 문서 외에는 수정하지 않는다.
+이번 설계로 기존 Blueprint·Scenario의 `Rule 100103 → Containment` 표현이 충돌하면,
+구현 전에 해당 정본을 보정한다. 두 촬영 문서를 기준으로 활성 지원 문서도 같은 계약으로
+정렬하되, 과거 Runtime Evidence와 Git 이력은 삭제하지 않는다.
 
 ---
 
@@ -200,6 +202,26 @@ CloudTrail의 별도 저지연 Route 전환은 촬영 필수 조건이 아니다
 
 # 5. Gate
 
+## 공통 검증 기록 원칙
+
+- 기본 완료 기록은 각 Gate의 체크박스와 짧은 Runtime 결과다. 모든 Gate마다 별도 Bundle·Manifest·
+  SHA 파일을 만들지는 않는다.
+- 별도 Evidence 파일은 최종 영상의 핵심 Runtime 주장, Alert↔Execution 일대일, 실제 자동 조치·
+  복구처럼 나중에 다시 확인해야 하는 항목에만 만든다.
+- 합성 Test·Preflight·Catch-up/Drain은 `TEST`, `PRE-RUNTIME`, `PRECONDITION`으로 구분하며
+  뒤 Gate의 PASS를 대신하지 않는다. Stale backlog는 개별 메시지를 Evidence 목적으로 보존하지 않는다.
+- 기록을 남길 때도 실제 Credential·Token·Cookie·Webhook URI·원문 Secret은 저장하지 않는다.
+
+### 현재 핵심 Evidence 참고 — 2026-08-20
+
+| Gate | 현재 판정 | 정본 Evidence |
+|---|---|---|
+| `GT-00` | `PASS` | `C:\Users\Unoh\Documents\aws-topology-evidence\gt00\gt00-three-take-index-20260820T102636Z.json` / `b4b0bf0df457d454e59370b0b2bc274e53a16adcd0504f05c39c23c29b6512ee` |
+| `GT-01` | `PASS` | `C:\Users\Unoh\Documents\aws-topology-evidence\capital-one-20260820T092407Z-a5bca9cd\gt01-wazuh-timeline.json` / `fc7c7ec3991002d529f25c153c9038d9a5935866b32e1eb6c7d8b256497e8a98` |
+| `GT-02` | `NOT RUN` | 없음. Stale backlog Drain은 별도 `PRECONDITION` Evidence로만 보존한다. |
+| `GT-03` | `PRE-RUNTIME PASS`, Gate 미통과 | `C:\Users\Unoh\Documents\aws-topology-evidence\gt03-pre-runtime\gt03-wazuh-rule-matrix-20260820T102542Z.json` / `81e4caf545cd25906abc313fcf3a4d1961225aadc1da87f4afcec35860a7d365` |
+| `GT-04`~`GT-11` | `NOT RUN` | 없음 |
+
 ## GT-00 — 공격·Lab Scope·공개본
 
 ### 목적
@@ -208,13 +230,13 @@ CloudTrail의 별도 저지연 Route 전환은 촬영 필수 조건이 아니다
 
 ### 해야 할 일
 
-- [ ] 촬영용 새 `TAKE_ID` 발급 계약 고정
-- [ ] Account·Region·Bucket·`validation/*` 고정
-- [ ] 가짜 Object 내용·Hash 고정
-- [ ] 실제 Credential 원문 비저장 확인
-- [ ] 공격 Runner 3회 Rehearsal
-- [ ] 실패 시 Credential 제거·환경 원복
-- [ ] 공개 화면용 마스킹 Profile 확정
+- [x] 촬영용 새 `TAKE_ID` 발급 계약 고정
+- [x] Account·Region·Bucket·`validation/*` 고정
+- [x] 가짜 Object 내용·Hash 고정
+- [x] 실제 Credential 원문 비저장 확인
+- [x] 공격 Runner 3회 Rehearsal
+- [x] 실패 시 Credential 제거·환경 원복
+- [x] 공개 화면용 마스킹 Profile 확정
 
 ### PASS Evidence
 
@@ -222,6 +244,27 @@ CloudTrail의 별도 저지연 Route 전환은 촬영 필수 조건이 아니다
 - 실제 데이터 0
 - Credential 노출 0
 - 시작·종료 UTC·Object Hash·TAKE 기록
+
+### Runtime Result — 2026-08-20
+
+- 독립 TAKE 3개에서 IMDS Role 발견→임시 Credential Memory 사용→고정 가짜
+  `validation/capital-one-demo.csv` 읽기 3/3 성공
+- 고정 가짜 Object SHA-256:
+  `625dad237e31a1ba4c6de1b0bf0153c2f62e56f5b6a18d97242d4c41665a4d9e`
+- TAKE:
+  - `capital-one-20260820T092251Z-238b87c3`
+  - `capital-one-20260820T092331Z-93e0af3c`
+  - `capital-one-20260820T092407Z-a5bca9cd`
+- 세 Evidence 모두 임시 Credential 환경 제거와 Credential 원문 비저장을 기록
+- 세 TAKE Evidence와 현재 변경 파일 Secret Scan: 0 findings
+- 공개 마스킹 계약:
+  `observability/scenarios/capital-one-public-masking.json`
+- 3-TAKE Evidence Index:
+  `C:\Users\Unoh\Documents\aws-topology-evidence\gt00\gt00-three-take-index-20260820T102636Z.json`
+- Evidence SHA-256:
+  `b4b0bf0df457d454e59370b0b2bc274e53a16adcd0504f05c39c23c29b6512ee`
+- 첫 두 TAKE는 원본 `capital-one-baseline.json`만 보존됐고 전체 Manifest Bundle은 없다.
+  Index는 세 원본 파일을 SHA-256으로 결속하지만 당시 수집되지 않은 파일을 복구하지는 않는다.
 
 ---
 
@@ -243,12 +286,12 @@ CloudTrail S3 Data Event
 
 ### 해야 할 일
 
-- [ ] 새 공격 TAKE에서 5개 Source 수집
-- [ ] 각 Source Event Time·필드·Index 확인
-- [ ] 동일 TAKE와 다른 날짜 보존 Event 분리
-- [ ] Source별 관측 의미와 한계 기록
-- [ ] Pod→IMDS 네트워크 직접 관측 공백 표시
-- [ ] 모든 Source를 관통하는 공통 ID가 없음을 Dashboard에 표시
+- [x] 새 공격 TAKE에서 5개 Source 수집
+- [x] 각 Source Event Time·필드·Index 확인
+- [x] 동일 TAKE와 다른 날짜 보존 Event 분리
+- [x] Source별 관측 의미와 한계 기록
+- [x] Pod→IMDS 네트워크 직접 관측 공백 표시
+- [x] 모든 Source를 관통하는 공통 ID가 없음을 Evidence에 표시
 
 ### PASS Evidence
 
@@ -260,6 +303,21 @@ CloudTrail S3 Data Event
 | WAF ↔ ALB ↔ DVWA | 시간·Method·Path·Client/Target 문맥 |
 | DVWA ↔ CloudTrail | 시간·Role·Bucket/Key·공격 단계 |
 
+### Runtime Result — 2026-08-20
+
+- TAKE: `capital-one-20260820T092407Z-a5bca9cd`
+- Wazuh archive와 `wazuh-archives-4.x-2026.08.20` Index에서 같은 사건 시간창 확인
+  - CloudFront `2`, WAF `2`, ALB `2`, DVWA 안전 Audit `2`, CloudTrail S3 Data Event `1`
+- CloudFront↔WAF: Edge Request ID `2/2` exact match
+- ALB↔DVWA: ALB Trace ID와 DVWA Request ID `2/2` exact match
+- WAF↔ALB: 같은 Method·Path와 요청 시작 시각 차이 `3ms`, `4ms`
+- 마지막 DVWA Event에서 보호 대상 CloudTrail `GetObject`까지 `4초`
+- 공통 전역 ID가 없으며 Pod→IMDS 네트워크를 직접 관측하지 않는다는 한계를 보존
+- Evidence:
+  `C:\Users\Unoh\Documents\aws-topology-evidence\capital-one-20260820T092407Z-a5bca9cd\gt01-wazuh-timeline.json`
+- Evidence SHA-256:
+  `fc7c7ec3991002d529f25c153c9038d9a5935866b32e1eb6c7d8b256497e8a98`
+
 ---
 
 ## GT-02 — Rule 100103 조기 이상 징후
@@ -270,8 +328,8 @@ S3 침해 확정 전 조기 징후를 실제 Push Alert로 보여준다.
 
 ### 해야 할 일
 
-- [ ] 실제 공격 `command.execution` Event 3회
-- [ ] 각 Event→Rule `100103` Alert 일대일
+- [ ] 실제 공격 독립 `TAKE` 3회
+- [ ] 각 TAKE에서 실제 발생한 `command.execution` Event N→Rule `100103` Alert N 일대일
 - [ ] `event_id`, Event Time, Alert Time 보존
 - [ ] 정상 Route·Resource·Result 대조군 Alert 0
 - [ ] Offline Catch-up과 동일 `event_id` 중복 Alert 0
@@ -280,12 +338,16 @@ S3 침해 확정 전 조기 징후를 실제 Push Alert로 보여준다.
 ### PASS Evidence
 
 ```text
-실제 공격 Event 3
-Rule 100103 Alert 3
+독립 공격 TAKE 3
+실제 공격 Event N
+Rule 100103 Alert N
 누락 0
 동일 event_id 중복 0
 정상 대조군 Alert 0
 ```
+
+`N`은 공격 Runner가 실제로 만든 승인 Event 수로 정한다. 한 공격이 여러 IMDS 단계
+Event를 만들 수 있으므로 TAKE당 1건이나 총 3건으로 하드코딩하지 않는다.
 
 ---
 
@@ -310,9 +372,9 @@ Principal/Role Session = 공격 시나리오 승인 대상
 
 ### 해야 할 일
 
-- [ ] 현재 Rule `100100`의 실제 Decoded Field·조건 재검토
-- [ ] 부족하면 새 Rule ID 생성
-- [ ] Rule Level·Group·Description 확정
+- [x] 현재 Rule `100100`의 실제 Decoded Field·조건 재검토
+- [x] 부족하면 새 Rule ID 생성
+- [x] Rule Level·Group·Description 확정
 - [ ] Alert에 CloudTrail `eventID`, Principal, Bucket/Key, 성공 여부 포함
 - [ ] 공격 Positive 3회
 - [ ] 정상 `terra-user` Negative Control 3회
@@ -331,6 +393,24 @@ Principal/Role Session = 공격 시나리오 승인 대상
 ```
 
 Rule이 이 기준을 통과하기 전에는 Shuffle Write를 연결하지 않는다.
+
+### 2026-08-20 Pre-Runtime 결과
+
+- 기존 Rule `100100`은 정상 성공 Event를 탐지하지만, 합성
+  `errorCode=AccessDenied + HTTP 200`도 탐지해 자동 조치용 fail-closed 계약에는 부족하다.
+- 신규 고신뢰 Source 계약은 Rule `100104` Level 12로 고정했다. 현재 Wazuh `4.14.7`의
+  `aws-eventnames` CDB에는 `GetObject`가 없으므로 부모는 `80202`가 아니라 `80200`을 사용한다.
+- Rule `100104`는 Account·Region·`AssumedRole`·Node Role·현재 승인 Bucket·고정 Object Key·
+  HTTP 200·UUID `eventID`를 모두 exact 조건으로 확인한다.
+- Rule `100105` Level 0 child는 `errorCode`가 존재하는 모순 Event를 억제한다.
+- `wazuh-analysisd -t`와 합성 `wazuh-logtest` Matrix는 통과했다. Positive는 `100104/12`,
+  `errorCode + HTTP 200`은 `100105/0`, 나머지 비대상·누락 조건은 `100104`가 발생하지 않았다.
+- Pre-Runtime Evidence:
+  `C:\Users\Unoh\Documents\aws-topology-evidence\gt03-pre-runtime\gt03-wazuh-rule-matrix-20260820T102542Z.json`
+- Evidence SHA-256:
+  `81e4caf545cd25906abc313fcf3a4d1961225aadc1da87f4afcec35860a7d365`
+- 이는 Source/Rule 단위 Test이며 GT-03 Runtime PASS가 아니다. Manager 적용 후 실제 공격 Positive
+  3회, 정상·비대상 Negative, 원본 `eventID` 일대일, 실제 지연은 아직 남아 있다.
 
 ---
 
@@ -490,7 +570,7 @@ Rule ID
 - [ ] 기존 `SOC-LIVE-OVERVIEW.ndjson`·Saved Objects 재검토
 - [ ] 기존 `security-log-investigation.json`에서 재사용 가능한 Query 확인
 - [ ] 새 TAKE 5-Source Timeline으로 Dashboard 갱신
-- [ ] Rule `100100/최종 ID` Seed View 고정
+- [ ] Rule `100104` Seed View 고정
 - [ ] 자동 조치 결과 표시
 - [ ] 관측 공백 표시
 - [ ] 공개본 마스킹 View 분리
@@ -612,7 +692,7 @@ DVWA defaultSecurityLevel: low → impossible
 - [ ] 기존 Credential/Session의 보호 대상 접근 실패
 - [ ] 정상 로그인 성공
 - [ ] 승인 기능 성공
-- [ ] 새 Rule `100103` 위협 Event·고신뢰 S3 성공 Alert 증가 없음
+- [ ] 새 Rule `100103` 조기 위협 Event·Rule `100104` 고신뢰 S3 성공 Alert 증가 없음
 - [ ] 관찰 시간창 고정
 
 ### PASS 기준

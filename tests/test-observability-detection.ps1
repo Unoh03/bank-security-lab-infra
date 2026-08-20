@@ -140,24 +140,45 @@ if ($capitalOneQueries.Count -ne 1 -or
 }
 foreach ($field in @(
     'event_time',
+    'event_id',
+    'account_id',
+    'aws_region',
     'role_arn',
     'caller_arn',
     'source_ip',
     'user_agent',
     'bucket_name',
     'object_key',
+    'http_status_code',
     'error_code',
     'request_id'
 )) {
     Assert-Contains $capitalOneQuery ([regex]::Escape($field)) `
         "The Capital One investigation query is missing field: $field"
 }
-Assert-Contains $capitalOneQuery 'eventName\s*=\s*"GetObject"' `
-    'The Capital One investigation query is not restricted to GetObject.'
-Assert-Contains $capitalOneQuery 'primary-karpenter-node\$/' `
-    'The Capital One investigation query is not restricted to the Primary Karpenter Node Role suffix.'
-Assert-Contains $capitalOneQuery 'requestParameters\.key\s+like\s+/\^validation' `
-    'The Capital One investigation query is not restricted to validation/.'
+foreach ($queryFieldPattern in @(
+    'eventID\s+as\s+event_id',
+    'recipientAccountId\s+as\s+account_id',
+    'awsRegion\s+as\s+aws_region',
+    'additionalEventData\.httpStatusCode\s+as\s+http_status_code'
+)) {
+    Assert-Contains $capitalOneQuery $queryFieldPattern `
+        "The Capital One investigation query is missing field expression: $queryFieldPattern"
+}
+foreach ($queryFilter in @(
+    @{ Pattern = 'eventSource\s*=\s*"s3\.amazonaws\.com"'; Message = 'eventSource filter' },
+    @{ Pattern = 'eventName\s*=\s*"GetObject"'; Message = 'GetObject filter' },
+    @{ Pattern = 'recipientAccountId\s*=\s*"433048100798"'; Message = 'approved account filter' },
+    @{ Pattern = 'awsRegion\s*=\s*"ap-northeast-2"'; Message = 'approved region filter' },
+    @{ Pattern = 'requestParameters\.bucketName\s*=\s*"aws-topology-primary-bd56288914d9d31c4d07225deb"'; Message = 'exact approved bucket filter' },
+    @{ Pattern = 'primary-karpenter-node\$/'; Message = 'Primary Karpenter Node Role suffix filter' },
+    @{ Pattern = 'requestParameters\.key\s+like\s+/\^validation'; Message = 'validation/ prefix filter' },
+    @{ Pattern = 'not\s+ispresent\(errorCode\)'; Message = 'errorCode absence filter' },
+    @{ Pattern = 'additionalEventData\.httpStatusCode\s*=\s*"200"'; Message = 'HTTP 200 filter' }
+)) {
+    Assert-Contains $capitalOneQuery $queryFilter.Pattern `
+        "The Capital One investigation query is missing the $($queryFilter.Message)."
+}
 if ($capitalOneQuery -match '@message|(?i)accessKey|secret|sessionToken|authorization') {
     throw 'The Capital One investigation query includes raw messages or credential-bearing fields.'
 }

@@ -23,6 +23,12 @@ $ErrorActionPreference = 'Stop'
 $Scope = $Scope.ToLowerInvariant()
 $ResponseMode = $ResponseMode.ToLowerInvariant()
 
+# The current Active TAKE contract emits Rule 100103, which is OBSERVE_ONLY
+# until the final high-confidence S3 Rule has been validated and registered.
+if ($ResponseMode -ceq 'contain') {
+    throw 'Rule 100103 is OBSERVE_ONLY only; the final high-confidence S3 Rule is not validated/registered yet.'
+}
+
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $foundationRoot = Join-Path $repositoryRoot 'foundation'
 $expectedAccountId = '433048100798'

@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "profile_id": "capital-one-final-recording-public-v1",
+  "scope": "final-recording-evidence-and-screen",
+  "rules": {
+    "aws_account_id": {
+      "action": "replace",
+      "replacement": "<ACCOUNT_ID>"
+    },
+    "bucket_name": {
+      "action": "replace",
+      "replacement": "<PRIMARY_BUCKET>"
+    },
+    "client_ipv4": {
+      "action": "mask_last_octet",
+      "replacement_format": "A.B.C.xxx"
+    },
+    "arn": {
+      "action": "retain_type_and_approved_role_only",
+      "session_identifier": "sha256"
+    },
+    "cloudtrail_event_id": {
+      "action": "show_prefix_and_suffix",
+      "prefix_chars": 8,
+      "suffix_chars": 4
+    },
+    "wazuh_alert_id": {
+      "action": "show_prefix_and_suffix",
+      "prefix_chars": 8,
+      "suffix_chars": 4
+    },
+    "shuffle_execution_id": {
+      "action": "show_prefix_and_suffix",
+      "prefix_chars": 8,
+      "suffix_chars": 4
+    },
+    "git_commit_sha": {
+      "action": "show_prefix",
+      "prefix_chars": 12
+    }
+  },
+  "remove_keys_case_insensitive": [
+    "accesskeyid",
+    "secretaccesskey",
+    "sessiontoken",
+    "securitytoken",
+    "authorization",
+    "cookie",
+    "set-cookie",
+    "password",
+    "command",
+    "full_log",
+    "webhook_url",
+    "webhook_key",
+    "api_key",
+    "pat"
+  ],
+  "forbidden_value_classes": [
+    "aws_access_key_id",
+    "aws_secret_access_key",
+    "aws_session_token",
+    "http_authorization",
+    "cookie",
+    "private_key",
+    "shuffle_webhook_uri",
+    "shuffle_webhook_header_value"
+  ],
+  "required_visible_fields": [
+    "take_id",
+    "event_time_utc",
+    "rule_id",
+    "cloudtrail_event_id_masked",
+    "principal_role_name",
+    "bucket_alias",
+    "object_key",
+    "wazuh_alert_id_masked",
+    "shuffle_execution_id_masked",
+    "containment_outcome",
+    "git_commit_sha_short",
+    "argo_revision_short"
+  ]
+}

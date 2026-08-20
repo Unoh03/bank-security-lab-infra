@@ -292,9 +292,10 @@ Bridge 종료 뒤 Primary Queue의 Visible·In-flight·Delayed와 DLQ의 동일 
 
 ### P5 — SOAR 연결
 
-- [ ] Wazuh Alert → Shuffle Dry Run
-- [ ] `event_id` 기준 중복 대응 차단
-- [ ] Rule `100103` 실제 Runtime Gate 통과 뒤에만 v2 대응 계약으로 이동
+- [ ] Rule `100103`은 조기 경보 observe-only로 유지
+- [ ] GT-03을 통과한 고신뢰 S3 Alert → Shuffle Dry Run
+- [ ] CloudTrail `eventID` 기준 중복 대응 차단
+- [ ] GT-03 고신뢰 S3 Rule의 Positive·Negative Runtime Gate 통과 뒤에만 대응 계약으로 이동
 - [ ] Workload/IAM Containment와 GitOps Remediation을 별도 Gate·Workflow로 유지
 
 ## 11. 구현 소유권

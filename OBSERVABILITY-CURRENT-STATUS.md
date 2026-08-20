@@ -1,11 +1,23 @@
 # Observability Current Status
 
 > **용도:** 지금 어디까지 왔고, 바로 다음에 무엇을 해야 하는지만 확인하는 현황판  
-> **기준 시점:** 2026-08-13
-> **현재 Focus:** Gate 4 Wazuh Raw Archive 활성화·Capital One Custom Rule 오프라인 검증
+> **기준 시점:** 2026-08-20
+> **현재 Focus:** `GT-00·GT-01` PASS 뒤 `GT-02` 실제 Push Alert 검증 준비
 > **관련 결정:** [`OBSERVABILITY-IAM-DECISIONS.md`](./OBSERVABILITY-IAM-DECISIONS.md)  
 > **전체 계획:** [`OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md`](./OBSERVABILITY-IAM-IMPLEMENTATION-PLAN.md)  
 > **보고서 Evidence:** [`report/OBSERVABILITY-EVIDENCE-INDEX.md`](./report/OBSERVABILITY-EVIDENCE-INDEX.md)
+
+> [!IMPORTANT]
+> 아래 장문은 2026-08-13 관측성 Snapshot을 보존한 기록이다. 현재 시연 순서와 완료
+> 판정은 `CAPITAL-ONE-SOC-DEMO-PLAN.md`만 따른다. Rule `100103`은 조기 경보이며
+> 자동 격리 Trigger가 아니다. 다음 활성 작업은 `GT-00 → GT-01 → GT-02 → GT-03`이고,
+> 고신뢰 S3 Rule이 `GT-03`을 통과하기 전에는 최종 Shuffle Write를 연결하지 않는다.
+
+> [!STATUS]
+> 2026-08-20 Runtime 기준 `GT-00` 공격 Rehearsal 3/3과 `GT-01` 동일 TAKE
+> 5-Source Wazuh Timeline이 PASS했다. `GT-02`는 기존 Primary Queue backlog를 새
+> TAKE와 분리하는 작업 전까지 시작하지 않는다. `GT-03`은 Rule `100104/100105` Source와
+> 합성 `wazuh-logtest` Matrix까지만 통과했으며 실제 Event Runtime 판정은 아직 아니다.
 
 현재 상태는 다음 우선순위로 판정한다.
 

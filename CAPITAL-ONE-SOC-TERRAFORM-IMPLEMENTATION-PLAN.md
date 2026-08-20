@@ -1,8 +1,8 @@
 # Capital One SOC 시연 Terraform 단계별 실행 계획
 
-> **상태:** CURRENT DRAFT — Terraform 범위 유지, 대응 의미는 침해 대응 정본에 맞춰 확정
+> **상태:** SUPPORTING REFERENCE — Terraform 세부 후보, 실행 순서는 CURRENT PLAN이 우선
 > **기준 시점:** 2026-08-18
-> **현재 단계:** Gate 4 Terraform 지원 — DVWA Push 비파괴 Plan 완료, 비용 검토·명시적 Apply 대기
+> **현재 단계:** 2026-08-20 시연 재설계 전 Snapshot. 이 문서만 보고 Apply하지 않음
 > **번호 구분:** 이 문서의 `T0~T6`는 Terraform 구현 단계다. 상위 계획의 `Gate 0~8`은 시연 Evidence 단계이며 같은 번호끼리 같은 작업이 아니다.
 > **상위 계획:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)
 > **대응 의미 정본:** [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](./CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md)
@@ -12,6 +12,12 @@
 이 문서는 전체 SOC 시연 중 **Terraform이 책임질 부분만** 실제 파일과 실행 순서로
 내린 계획서다. 이 문서가 생겼다는 것만으로 구현이나 Runtime 검증이 끝난 것은
 아니다.
+
+> [!WARNING]
+> 이 문서의 과거 `Rule 100103 → 즉시 Containment` 순서와 Gate 번호는 현행 시연
+> 계약이 아니다. Rule `100103`은 조기 경보이고, `CAPITAL-ONE-SOC-DEMO-PLAN.md`의
+> `GT-03`을 통과한 엄격한 S3 Rule만 자동 격리 Trigger다. 이 문서는 CURRENT PLAN이
+> 요청하는 Terraform·IAM·IMDS 세부사항을 검토할 때만 참고한다.
 
 ```text
 Terraform의 책임
@@ -61,9 +67,10 @@ Terraform 밖의 책임
 → 로그 수집 기능 확인·보강
 → 탐지 방식 결정
 → Foundation·통제된 취약 Profile Plan·Apply
-→ 공격·빠른 경보
+→ 공격·Rule 100103 조기 경보
+→ CloudTrail S3 고신뢰 Alert
 → Workload Quarantine·제한된 IAM 영향 Containment
-→ 느린 증거 상관분석
+→ 같은 TAKE의 증거 상관분석
 → DVWA low → impossible Remediation
 → 촬영 실패 시 격리를 유지한 수동 Reset 후 마지막에 격리 해제
 → 최종 사용할 영상 확인

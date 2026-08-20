@@ -25,28 +25,30 @@
 
 ## 2. 현재 재개점
 
-가장 먼저 닫을 Gate는 실제 AWS `command.execution → Wazuh Rule 100103`이다.
+`CAPITAL-ONE-SOC-DEMO-PLAN.md`의 `GT-00`부터 순서대로 재개한다.
 
-- 독립된 `TAKE_ID` 3개
-- 각 TAKE의 Source Event와 Wazuh Alert 대조
-- 지연, 누락, 동일 `event_id` 중복 기록
-- 정상 대조군 Alert 0
-- 이 단계의 Shuffle은 `observe_only`
+- 공격·가짜 Object·TAKE·공개 마스킹 계약 고정
+- 통제 공격 3회 반복성과 Credential 비저장 확인
+- 같은 TAKE의 5-Source Timeline
+- Rule `100103` 독립 3 TAKE의 실제 Event N↔Alert N, 정상 0, 자동 Write 0
+- 엄격한 S3 고신뢰 Rule과 전체 대조군
 
-이 Gate 전에는 Workload 격리, IAM 영향 차단, `low → impossible` Remediation, Reset을
-Runtime 완료로 표현하지 않는다.
+Rule `100103`은 자동 격리 Trigger가 아니다. 고신뢰 S3 Rule이 `GT-03`을 통과하기
+전에는 최종 Shuffle Write나 Containment를 연결하지 않는다.
 
 ## 3. 이후 실행 순서
 
 ```text
-Fast AWS → Wazuh 실제 3 TAKE
-→ Offline Catch-up·DLQ·DVWA Poll Rollback
-→ Wazuh → Shuffle sanitized observe_only
-→ Workload Quarantine Runtime
-→ 제한된 IAM 영향 차단 Runtime
-→ low → impossible Remediation와 Argo exact SHA
-→ 영구 IAM·IMDS 복구와 Recovery
-→ 필요할 때만 수동 Retake Reset
+GT-00 공격 반복성
+→ GT-01 동일 TAKE 5-Source
+→ GT-02 Rule 100103 조기 경보
+→ GT-03 S3 고신뢰 Rule
+→ GT-04 고신뢰 Alert → Shuffle
+→ GT-05/06 자동 격리·영향 범위
+→ GT-07/08 조사 View·Runbook
+→ GT-09 Remediation·Recovery
+→ GT-10 재검증
+→ GT-11 Rehearsal·촬영
 ```
 
 앞 Gate의 Runtime Evidence가 없으면 뒤 Gate의 Source나 정적 Test로 대체하지 않는다.

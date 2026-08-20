@@ -194,7 +194,7 @@ Live Tail 자체는 새 AWS Resource를 생성하지 않는다. 기존 `terra-us
 | D18 | Wazuh 배치 | Local Runtime 기동 확인 | Local Docker single-node를 사용한다. Wazuh 4.14.7 Manager·Indexer·Dashboard와 Docker·WSL 사전 조건을 확인했으며 AWS 원본 입력은 아직 연결하지 않았다. |
 | D19 | Wazuh 원본 입력 | 확정 | CloudTrail은 Security Log S3, WAF와 Primary DVWA는 기존 CloudWatch Logs에서 직접 읽는다. CloudWatch Alarm State Change를 SIEM 입력으로 사용하지 않는다. |
 | D20 | AWS Native 경보 | 확정 | 기존 Metric Filter→CloudWatch Alarm→SNS는 사람 알림과 독립 검증 경로로 유지한다. |
-| D21 | SIEM→SOAR | 확정 | Wazuh Custom Alert를 Shuffle의 단일 자동 대응 입력으로 사용하고 같은 사건을 CloudWatch에서도 Shuffle로 중복 전송하지 않는다. |
+| D21 | SIEM→SOAR | 확정 | GT-03을 통과한 고신뢰 S3 Custom Alert만 Shuffle 자동 대응 입력으로 사용한다. Rule `100103`은 조기 경보 observe-only이며 자동 격리 입력에서 제외한다. 같은 사건을 CloudWatch에서도 Shuffle로 중복 전송하지 않는다. |
 | D22 | Wazuh IAM | Apply·Runtime Trust 검증 완료 | 기본 비활성 전용 Read-only Role만 Terraform으로 만들고 장기 Access Key·User·Credential은 만들지 않는다. 2 Add, 0 Change, 0 Destroy Apply와 실제 네 Read Action, AssumeRole, Post-Apply 0-change를 확인했다. |
 | D23 | Wazuh 원본 보존 | Runtime Gate | Scoped Source의 `wazuh-archives-*`와 Docker Volume을 사용하고 재시작 뒤 설정·Rule·Event 보존을 증명한다. |
 | D24 | Wazuh 최초 수집 경계 | 확정 | 첫 AWS 모듈 실행 전에 `only_logs_after=2026-AUG-12`, 승인 Account ID, Source별 Region을 고정한다. 뒤늦은 범위 변경·무계획 `reparse`로 인한 누락·중복 Alert를 피한다. |

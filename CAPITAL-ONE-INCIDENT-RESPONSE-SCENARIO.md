@@ -1,291 +1,231 @@
 # Capital One 기반 침해 대응 시나리오
 
-> **상태:** CURRENT DECISION — 대응 의미와 Gate 순서 확정, 후속 대응 구현은 미완료
->
-> **기준 시점:** 2026-08-18
->
-> **정본 범위:** 탐지 이후 Containment·Investigation·Remediation·Recovery·재촬영 Reset
->
-> **우선순위:** 실제 `command.execution → Wazuh Rule 100103` Gate를 먼저 닫는다.
-> 그 전에는 NetworkPolicy·IAM 차단·Remediation·Reset을 Runtime 완료로 표현하지 않는다.
+> **상태:** CURRENT DECISION — 2026-08-20 설계로 재정렬
+> **대응 의미 정본:** 이 문서
+> **구축·검증 Gate:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)
+> **최종 촬영:** [`CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md`](./CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md)
 
-이 문서는 대표 시연의 **대응 의미**를 정하는 단일 기준이다. 전달 구조와 필드 계약은
-`CAPITAL-ONE-SOC-E2E-BLUEPRINT.md`, 전체 Gate와 완료 조건은
-`CAPITAL-ONE-SOC-DEMO-PLAN.md`, 촬영 범위·화면·조작·내레이션은
-`CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md`를 사용한다. 서로 충돌하면 대응 의미는 이
-문서를 우선하되, 실제 Source와 Runtime Evidence가 문서보다 우선한다.
+이 문서는 공격·탐지·Containment·Investigation·Remediation·Recovery의 의미만
+정의한다. Source 존재나 과거 테스트 성공은 현재 Runtime 완료를 뜻하지 않는다.
 
 ---
 
-## 1. 최종 판단
-
-대표 시나리오는 다음 순서를 사용한다.
+## 1. 최종 시나리오
 
 ```text
-DVWA command.execution 탐지
-→ 의심 Workload와 실습 데이터 접근 영향의 즉시·가역적 Containment
-→ 느린 5-Source Evidence로 공격 경로·성공 여부·영향 조사
-→ DVWA low → impossible 보안 설정 패치(Remediation)
-→ IAM·IMDS·Node·애플리케이션의 근본 원인 제거
-→ 격리 해제·정상 기능·재공격 Negative Test
-→ Recovery·사후 검토
+통제된 DVWA Command Injection
+→ Rule 100103 조기 이상 징후
+→ CloudTrail 보호 대상 GetObject 성공
+→ 엄격한 S3 고신뢰 Rule
+→ Shuffle 사전 승인 자동 격리
+→ Wazuh Alert 중심 사건 조사
+→ 관제자 승인 Remediation·Recovery
+→ 동일 공격 실패·정상 기능 성공 확인
 ```
 
-`low → impossible`은 실행 동작을 바꾸는 실제 배포 변경이므로 **애플리케이션 보안 설정
-패치**라고 부를 수 있다. 그러나 침해 자산이나 유출 자격증명을 격리하지 않으므로
-Containment 또는 Credential Revocation이라고 부르지 않는다. 소스코드 자체를 수정하지
-않으므로 발표에서는 `코드 패치`보다 `보안 설정 패치` 또는 `Remediation 배포`를 사용한다.
+핵심 경계는 다음 두 Rule의 역할을 섞지 않는 것이다.
 
-느린 CloudTrail Event를 기다린 뒤에야 처음 대응하는 구조도 사용하지 않는다. Rule
-`100103`의 고신뢰 조건으로 좁고 가역적인 Containment를 먼저 수행하고, CloudTrail Rule
-`100100`과 WAF·ALB·CloudFront는 Incident를 확인·보강한다.
+| 신호 | 의미 | 자동 조치 |
+|---|---|---|
+| Rule `100103` | `command.execution + ec2_imds + succeeded` 조기 이상 징후 | 없음. Alert·Evidence만 보존 |
+| Rule `100100` 또는 새 엄격한 Rule | 승인 범위의 `validation/* GetObject` 성공을 정상 흐름과 구분한 고신뢰 침해 확인 | 사전 승인된 좁고 가역적인 격리 |
 
----
-
-## 2. 실무 원칙과 시연 각색의 경계
-
-### 실무 원칙으로 유지할 것
-
-- 탐지·분석·Containment·Remediation·Recovery의 목적을 섞지 않는다.
-- 빠른 자동 조치는 고신뢰 신호, 좁은 범위, 가역성, 감사 기록을 전제로 한다.
-- 자산 격리와 Identity·Credential 영향 차단을 별도로 판단한다.
-- 증거를 보존한 뒤 취약점과 지속성 원인을 제거하고 정상 기능을 검증한다.
-- 자동 조치는 대상과 권한이 사전 Allowlist된 경우에만 실행한다.
-- 공유 Role·공유 Node처럼 Blast Radius가 큰 대상은 자동 Deny하지 않는다.
-- Reset은 운영 Recovery가 아니라 통제된 촬영 환경을 다시 여는 별도 절차다.
-
-### 학생 시연에 맞게 축소할 것
-
-- 실제 SSRF 대신 DVWA Command Injection을 진입점으로 사용한다.
-- 24시간 SOC가 아니라 노트북이 켜진 예약된 TAKE 시간창에서 실행한다.
-- NetworkPolicy와 IAM 조치는 `CAPITAL-ONE` Lab 대상만 다룬다.
-- `low → impossible`은 실제 조직의 범용 치료 코드가 아니라 DVWA 전용 설정 패치다.
-- 느린 Source는 실시간 대응 Trigger가 아니라 조사 Timeline과 보고서 Evidence로 사용한다.
+현재 Rule `100100`이 고신뢰 계약을 모두 만족하면 재사용한다. 부족하면 기존 Rule의
+의미를 조용히 바꾸지 않고 새 Rule ID를 만든다.
 
 ---
 
-## 3. 현재 As-built와 Target을 분리한다
-
-| 항목 | 현재 Source·Runtime | Target | 현재 판정 |
-|---|---|---|---|
-| DVWA Push | Lambda·SQS·Local Bridge·JSONL·Rule `100102` 무해 검증 존재 | 실제 공격 Rule `100103` 3 TAKE | **현재 최우선 Gate** |
-| Rule `100103` | Rule과 합성 검증 Alert 존재 | 실제 AWS `command.execution` 저지연 반복 검증 | 미완료 |
-| 느린 Evidence | 5-Source 10분 Poll·보존 화면 존재 | 조사·확인 경로로 유지 | 역할 확정 |
-| Workload 격리 | 적용 Source·Runtime Evidence 없음 | DVWA 전용 Quarantine NetworkPolicy | 미구현 |
-| NetworkPolicy 강제 | EKS VPC CNI의 Network Policy 활성 Evidence 없음 | Enforcing CNI와 실제 Deny/Allow Test | 미검증 |
-| IAM 영향 차단 | DVWA 권한이 공유 Primary Karpenter Node Role에 연결 | Lab Prefix 임시 Deny 또는 전용 Principal Containment | 미구현 |
-| Remediation | 분리된 실행 Source·Runtime Evidence 없음 | Containment 뒤 `low → impossible` 설정 패치 | 미구현 |
-| Reset | 전체 복원 순서의 Source·Runtime Evidence 없음 | 격리·IAM·설정 상태를 안전한 순서로 복원 | 미구현 |
-| Wazuh → Shuffle | 최소 Schema와 Custom Integration Source 존재 | 먼저 `observe_only`, 이후 승인된 대응 분기 | E2E 미완료 |
-
-분리된 Containment·Remediation·Reset 계약을 Source와 Runtime으로 각각 검증하기 전에는
-Production 대응 경로에서 호출하지 않는다. 이름이 비슷한 파일이나 기존 Source의 존재를
-새 시나리오 구현 완료로 세지 않는다.
-
----
-
-## 4. 단계별 대응 시나리오
+## 2. 단계별 대응
 
 ### Phase 0 — Preparation
 
-촬영 전 다음 조건을 만족해야 한다.
+- 새 `TAKE_ID`와 시작 UTC를 발급한다.
+- Account·Region·가짜 Object·`validation/*` 범위를 고정한다.
+- DVWA는 `low`, Argo CD는 예상 Revision의 `Synced + Healthy` 상태여야 한다.
+- Wazuh·Shuffle·5개 로그 Source가 READY여야 한다.
+- 이전 TAKE의 Credential·임시 조치·활성 실행이 남아 있으면 공격하지 않는다.
+- TAKE_ID는 Evidence Bundle을 묶는 외부 식별자이며 CloudTrail Event 필드라고 주장하지 않는다.
 
-- Wazuh·Bridge·Rule `100103`이 READY이고 새 `TAKE_ID`가 발급됐다.
-- DVWA는 `low`, Argo CD는 예상 Revision으로 `Synced + Healthy`다.
-- 실습 Object와 권한은 `validation/*`에만 한정된다.
-- 이전 TAKE의 임시 Credential이 공격 Process 환경에 남아 있지 않다.
-- Quarantine과 IAM 임시 Deny의 적용·해제 Target이 고정돼 있다.
-- NetworkPolicy가 실제로 강제되는지 별도 Positive/Negative Test를 통과했다.
-- IAM 자동 조치가 공유 Role 전체를 중단시키지 않는다는 Blast Radius 검토가 끝났다.
-
-마지막 두 조건이 없으면 대응은 `observe_only` 또는 사람 승인 모드로만 실행한다.
-
-### Phase 1 — Detection and Analysis
+### Phase 1 — Early Detection
 
 ```text
-DVWA 안전 Audit CWL
-→ Subscription → Lambda Allowlist → SQS → Local Bridge
+DVWA 안전 Audit
+→ CloudWatch Logs
+→ Lambda/SQS/Local Bridge
 → Wazuh Rule 100103
 ```
 
-빠른 Trigger 조건:
+Rule `100103`은 IMDS를 겨냥한 명령 실행 성공을 조기에 알린다. 이 시점에는
+Credential 획득이나 S3 접근 성공을 확정하지 않으며 자동 격리를 시작하지 않는다.
 
-- `source=dvwa`
-- `transport=push`
-- `event_type=command.execution`
-- `result=succeeded`
-- `context.resource=ec2_imds`
-- 승인 Account·Region·Route·Scenario
+성공 판단:
 
-Rule `100103`은 **IMDS를 겨냥한 명령 실행 성공 Event**를 의미한다. 이것만으로 임시
-Credential 탈취나 S3 `GetObject` 성공까지 확정했다고 주장하지 않는다.
+- 각 TAKE에서 실제로 발생한 Event N과 Alert N이 같은 `event_id`로 일대일 연결된다.
+- 정상 Route·Resource·Result 대조군은 Alert를 만들지 않는다.
+- Offline 재수집이 같은 `event_id`의 중복 Alert를 만들지 않는다.
 
-### Phase 2 — Immediate Containment
-
-첫 Alert가 유효하면 Shuffle은 같은 `TAKE_ID`의 `incident_confidence`를 `SUSPECTED`로
-만들고 `response_phase`를 `DETECTED`로 기록한 뒤, 동일 Source `event_id`와 TAKE 대응을
-중복 차단한다. 확신도와 대응 단계는 서로 다른 필드다.
-
-#### 2-A. Workload Containment
-
-고정된 DVWA Label만 선택하는 Quarantine NetworkPolicy를 적용한다.
+### Phase 2 — High-confidence Confirmation
 
 ```text
-대상: namespace=dvwa,
-      app.kubernetes.io/name=dvwa,
-      app.kubernetes.io/instance=dvwa
-기본: Ingress·Egress 차단
-예외: 검증된 Health·DNS·관측 경로만 최소 허용
-금지: 임의 Namespace·Selector·CIDR 입력
+S3 GetObject
+→ CloudTrail Data Event
+→ 기존 S3 Archive
+→ Wazuh 수집
+→ 고신뢰 S3 Rule
 ```
 
-YAML 존재만으로 성공 처리하지 않는다. EKS의 Network Policy enforcing 기능과 실제
-허용·차단 Test가 모두 필요하다. 격리 후에도 기존 Pod·Node·Wazuh Evidence를 삭제하지
-않는다.
+고신뢰 Rule은 최소한 다음을 함께 확인한다.
 
-#### 2-B. IAM Impact Containment
+- `eventSource=s3.amazonaws.com`
+- `eventName=GetObject`
+- 승인 Account·Region·Bucket
+- `validation/*` 보호 Prefix
+- 공격 시나리오에서 예상한 Principal 또는 Role Session
+- `errorCode` 없음과 성공 응답
+- 정상 Principal Allowlist 불일치
 
-현재 Credential Source는 공유 Primary Karpenter Node Role이므로 Role 전체 Deny·비활성화를
-무조건 자동 실행하지 않는다. 다음 두 모드만 허용한다.
+단순 `GetObject` 하나나 Rule `100103`만으로 이 단계를 통과하지 않는다. 공격
+Positive와 정상·비대상·실패 Negative Control을 Runtime으로 통과하기 전에는 Shuffle
+Write를 연결하지 않는다.
 
-| 조건 | 허용 조치 | 표현 |
-|---|---|---|
-| 현재 공유 Role | `validation/*` 실습 자산에 대한 사전 검토된 임시 Explicit Deny 또는 사람 승인 | Lab 데이터 접근 영향 차단 |
-| 향후 DVWA 전용 Role·Node | 사전 승인된 Principal Containment와 Session 영향 차단 | IAM Principal Containment |
+### Phase 3 — Automatic Containment
 
-Lab Prefix Deny는 유출 Credential 자체를 무효화하지 않는다. 따라서 발표에서도
-`Credential 폐기`가 아니라 `실습 데이터 추가 접근 차단`이라고 설명한다.
+고신뢰 S3 Alert가 발생한 뒤 Wazuh Integrator가 최소 필드만 인증된 Shuffle Webhook으로
+보낸다. Shuffle은 Schema·Account·Rule·Resource Allowlist와 CloudTrail `eventID`
+Dedupe를 통과한 경우에만 다음 조치를 한 번 실행한다.
 
-### Phase 3 — Investigation and Confirmation
+1. 고정된 DVWA Workload를 Quarantine한다.
+2. 공유 Node Role 전체가 아니라 `validation/*` 추가 접근 또는 사전 승인된 전용
+   Principal만 제한한다.
+3. Action·Execution·정책 UID/Revision과 Rollback 정보를 보존한다.
 
-다음 느린 Evidence를 Wazuh에서 같은 Incident Timeline으로 연결한다.
+자동 조치 금지:
 
-- WAF: 요청 검사 결과와 Label
-- ALB·CloudFront: 외부 요청 경로와 시각
-- DVWA Poll: 원본 감사 Event 재확인
-- CloudTrail Rule `100100`: 예상 Role의 `validation/* GetObject` 성공 여부
-- EKS·Argo Evidence: 이후 대응 배포와 Workload 변경
+- 공유 Karpenter Node Role 전체 `DenyAll`
+- Alert가 제공한 임의 Namespace·Selector·CIDR·Repository 실행
+- Alert 원문이나 `full_log`를 Shell Input으로 사용
+- IAM 최소 권한·IMDS·Node 교체·애플리케이션 패치를 무승인 실행
 
-CloudTrail 성공 Event가 도착하면 `incident_confidence`만 `CONFIRMED`로 갱신한다.
-`response_phase=CONTAINED` 또는 `INVESTIGATING`은 그대로 유지하며, 늦은 확인 Event가
-이미 수행한 Containment를 다시 실행하지 않는다. 정상 사용자나 다른 Object의 Event를
-같은 Incident에 억지로 합치지 않는다.
+자동 격리는 S3 API 호출 순간이 아니라 CloudTrail Event가 Wazuh의 고신뢰 Alert가 된
+직후 시작된다고 표현한다.
 
-### Phase 4 — Eradication and Remediation
+### Phase 4 — Investigation
 
-증거 보존과 범위 확인 뒤 다음 순서로 원인을 제거한다.
+고신뢰 S3 Alert를 Seed로 다음 키를 읽어 미리 만든 Wazuh View에서 관련 로그를 좁힌다.
 
-1. DVWA `defaultSecurityLevel: low → impossible` 보안 설정 패치를 GitOps로 배포한다.
-2. Argo CD가 정확한 Commit SHA를 `Synced + Healthy`로 배포했는지 확인한다.
-3. 새 Pod에서 동일 Command Injection이 애플리케이션 계층에서 실패하는지 확인한다.
-4. Terraform으로 실습 IAM 권한 제거·최소 권한, IMDSv2 강제, Hop Limit, 필요한 Node
-   교체를 계획하고 사람 승인 뒤 적용한다.
-5. 필요하면 취약 애플리케이션 코드·Image를 별도 Patch한다.
+```text
+Event Time window
+CloudTrail eventID
+Principal / Role Session
+Source IP
+Bucket / Key
+URI / Method
+Rule ID
+```
 
-`low → impossible` 검증 때는 NetworkPolicy 때문에 실패한 것과 설정 패치 때문에 실패한
-것을 구분한다. 애플리케이션 Remediation의 Negative Test는 필요한 접근 경로를 제한적으로
-복구한 뒤 수행하되, IAM 임시 Deny는 영구 IAM 복구가 확인될 때까지 유지한다.
+CloudFront·WAF·ALB·DVWA·CloudTrail을 같은 TAKE의 연속 시간창에서 보여준다. 모든
+Source를 관통하는 공통 ID와 Pod→IMDS 직접 네트워크 Event가 없다는 관측 공백도 함께
+표시한다. 이 화면은 자동 인과 그래프나 AI 진단이 아니다.
 
-### Phase 5 — Recovery
+### Phase 5 — Human-approved Remediation and Recovery
 
-다음 조건을 모두 만족한 뒤에만 격리를 해제한다.
+자동 격리 뒤 관제자가 Evidence와 Runbook을 보고 다음 조치를 결정·승인한다.
 
-- 예상 Remediation Commit이 배포됐다.
-- 동일 공격이 실패하고 정상 로그인·허용 기능은 성공한다.
-- 실습 IAM 권한과 IMDS 경로가 목표 상태다.
-- 기존 탈취 Credential의 `validation/*` 접근이 `AccessDenied`다.
-- 새 Rule `100103`·CloudTrail 위협 Event가 관찰창 동안 증가하지 않는다.
-- 임시 NetworkPolicy·IAM Deny의 해제 주체와 시각이 Evidence에 남는다.
+1. DVWA `defaultSecurityLevel: low → impossible` 보안 설정 패치
+2. 정확한 GitHub Commit SHA와 Argo CD Revision 배포 확인
+3. IAM 최소 권한과 `validation/*` 실습 권한 제거
+4. IMDSv2·Hop Limit·필요한 Node 교체 검토·적용
+5. 동일 공격과 정상 기능 재검증
+6. 조건 충족 뒤 임시 격리 해제와 Incident 종료
 
-정상 운영 복귀 후에도 Wazuh Alert와 원본 로그를 삭제하지 않는다.
+`low → impossible`은 애플리케이션 Remediation이다. Workload 격리나 Credential
+폐기가 아니다.
 
-### Phase 6 — Post-incident
+### Phase 6 — Retest and Closure
 
-- 탐지·Containment·확인·Remediation·Recovery 시간을 각각 기록한다.
-- 오탐, 누락, 중복 대응, 서비스 영향과 수동 개입을 기록한다.
-- 공유 Node Role이 만든 자동화 한계를 보고서에 남긴다.
-- 영구 통제로 전환할 항목과 학생 시연에서만 유지할 항목을 분리한다.
+완료 조건:
+
+```text
+동일 공격: FAIL
+기존 공격 문맥의 validation/* 추가 접근: DENIED
+정상 로그인·승인 기능: PASS
+새 보호 대상 GetObject 성공 Event·Alert: 0
+임시 조치 해제 주체·UTC: 기록됨
+```
 
 ---
 
-## 5. Trigger와 조치 결정표
+## 3. 상태 전이와 중복 방지
 
-| 입력 | Incident 확신도 | 자동 조치 | 하지 않는 주장 |
-|---|---|---|---|
-| Rule `100103` 첫 유효 Event | `SUSPECTED` | Workload Quarantine, 허용된 IAM 영향 차단 | S3 접근 성공 확정 |
-| 같은 TAKE의 두 번째 명령 Event | 기존 Incident 보강 | 새 격리 없음 | Event 삭제·은폐 |
-| Rule `100100` 예상 `GetObject` 성공 | `CONFIRMED` | Timeline·영향 갱신, 기존 격리 유지 | Containment 재실행 |
-| WAF 단독 Event | 변경 없음 | 조사 보강 | 자동 격리 |
-| 잘못된 TAKE·Account·Route | 변경 없음 | `REJECTED` Outcome, Incident 미생성 | 허용 범위 확대 |
-| NetworkPolicy 미강제·공유 Role 위험 | `OBSERVE_ONLY` 또는 승인 대기 | Alert·Evidence만 보존 | 자동 대응 완료 |
+```text
+UNASSESSED
+→ Rule 100103: SUSPECTED
+→ 고신뢰 S3 Rule: CONFIRMED
+→ Shuffle 격리 성공: CONTAINED
+→ Wazuh 조사: INVESTIGATING
+→ 사람 승인 조치: REMEDIATING
+→ 재검증 통과: RECOVERED / CLOSED
+```
+
+- Rule `100103`은 `SUSPECTED`만 만든다.
+- 고신뢰 S3 Rule만 자동 Containment를 시작할 수 있다.
+- Dedupe Key는 Wazuh Alert ID가 아니라 원본 CloudTrail `eventID`다.
+- 같은 `eventID` 재수집은 Timeline을 보강할 수 있지만 조치를 반복하지 않는다.
+- 잘못된 Header·Rule·Account·Prefix·Principal은 Incident나 Write를 만들지 않는다.
 
 ---
 
-## 6. 재촬영용 수동 Reset
+## 4. Containment와 Blast Radius
 
-Reset은 Incident Recovery가 아니다. 이미 제거한 취약 조건을 통제된 촬영을 위해 다시
-여는 **Lab 전용 역방향 절차**다. 자동 Trigger와 SOAR는 Reset을 호출할 수 없다.
+Workload Quarantine은 고정 Namespace와 Label만 선택한다. NetworkPolicy YAML 존재가
+아니라 실제 Egress 차단과 정상 Health·관측 경로 유지를 Runtime으로 증명한다.
 
-안전한 순서:
+Resource/Permission 제한은 `validation/*` 또는 전용 Lab Principal에만 적용한다.
+다른 Namespace·Object Prefix·정상 서비스에 영향이 생기면 자동 조치 Gate는 실패다.
 
-1. 이전 TAKE를 `CLOSED`로 표시하고 모든 Evidence·Hash를 보존한다.
+모든 자동 조치는 Idempotent하고 Rollback 가능해야 한다. Rollback은 촬영 재시도 편의를
+위한 무조건 원복이 아니라, 실패 시 안전 상태로 복구하기 위한 별도 검증 대상이다.
+
+---
+
+## 5. 재촬영 Reset
+
+Reset은 Incident Recovery가 아니라 취약한 Lab을 다시 여는 촬영 전용 역방향 절차다.
+
+1. 실패 TAKE를 `FAILED` 또는 `CLOSED`로 표시하고 Event·Alert·Execution을 보존한다.
 2. Quarantine을 유지한 채 `impossible → low` Reset Commit을 배포한다.
-3. Lab Prefix의 임시 IAM Deny를 제거하거나 전용 Lab 권한을 복원한다.
-4. 새 Pod·Alarm 실제 `OK`·Credential 환경 정리·Wazuh·Bridge READY를 확인한다.
-5. 새 TAKE를 발급한다.
-6. Quarantine을 **마지막에** 해제하고 제한된 촬영 시간창을 시작한다.
-7. 준비 실패·통제권 상실·자리 비움이면 즉시 다시 격리하거나 Daily Runtime을 종료한다.
+3. `validation/*` 임시 Deny 또는 전용 Lab 권한을 승인된 범위로 복원한다.
+4. 새 Pod·Argo Revision·Wazuh·Shuffle·로그 Source READY를 확인한다.
+5. 이전 Credential과 실행 상태를 제거하고 새 TAKE_ID를 발급한다.
+6. Quarantine을 마지막에 해제한다.
+7. 새 촬영은 `SC-00`부터 다시 시작한다.
 
-Reset 완료 조건:
-
-- History Rewrite·Force Push·기존 로그 삭제 없음
-- 정확한 Reset Commit과 Argo Revision 일치
-- 새 Pod의 `low` 확인
-- 임시 IAM Deny 제거 대상이 `validation/*` 또는 전용 Lab Principal로 한정
-- NetworkPolicy 해제 전 새 TAKE와 관측 경로 READY
-- 이전 Credential이 Process 환경에 남지 않음
-- 새 TAKE가 이전 Event ID와 섞이지 않음
-
-최종 채택 영상을 확인한 뒤에는 Reset하지 않고 영구 복구로 이동한다.
+기존 로그·실패 Evidence·Git History는 삭제하지 않는다.
 
 ---
 
-## 7. 구현 Gate 순서
+## 6. 주장 경계
 
-| 순서 | Gate | 종료 조건 |
-|---:|---|---|
-| 1 | Fast AWS → Wazuh | 실제 `command.execution → Rule 100103` 3 TAKE, 지연·누락·중복·대조군 확인 |
-| 2 | Transport resilience | Offline Catch-up·DLQ·DVWA Poll Rollback 검증 |
-| 3 | Wazuh → Shuffle observe-only | Sanitized Payload·Allowlist·Dedup·GitHub 호출 0 |
-| 4 | Workload Containment | NetworkPolicy enforcement·대상·차단·관측·Rollback Runtime 검증 |
-| 5 | IAM Impact Containment | 공유 Role용 Lab Prefix Deny 또는 전용 Principal, Blast Radius·Rollback 검증 |
-| 6 | Remediation | `low → impossible` 정확한 Diff·Argo SHA·애플리케이션 Negative Test |
-| 7 | Recovery | 영구 IAM·IMDS 복구, 격리 해제, 정상 기능·재공격 실패 |
-| 8 | Retake Reset | Evidence 보존, 안전한 역순 복원, 새 TAKE 독립성 |
+금지:
 
-앞 Gate의 Runtime Evidence가 없으면 뒤 Gate의 Source 존재로 대체하지 않는다.
+```text
+Rule 100103으로 S3 침해를 확정했다.
+Rule 100103이 자동 격리를 시작했다.
+S3 API 호출 순간 즉시 격리했다.
+GetObject 하나만 보고 공격으로 판정했다.
+Wazuh가 모든 로그의 인과관계를 자동 분석했다.
+low → impossible로 Credential을 폐기했다.
+```
 
----
+권장:
 
-## 8. 공식 근거
+```text
+Rule 100103은 조기 이상 징후다.
+엄격한 보호 대상 S3 성공 접근 Rule이 자동 격리 Trigger다.
+고신뢰 Alert 직후 사전 승인된 좁은 격리를 자동 실행했다.
+Alert의 시간·Principal·Bucket/Key로 저장된 관련 로그를 좁혀 조사했다.
+관제자가 Evidence와 Runbook을 보고 근본 대응을 승인했다.
+```
 
-- [NIST SP 800-61 Rev. 3](https://csrc.nist.gov/pubs/sp/800/61/r3/final): Incident Response를
-  CSF 2.0의 Detect·Respond·Recover와 조직 위험 관리에 통합한다.
-- [CISA Incident Response Playbook](https://www.cisa.gov/sites/default/files/2024-08/Federal_Government_Cybersecurity_Incident_and_Vulnerability_Response_Playbooks_508C.pdf):
-  Containment 뒤 증거 보존, Eradication·Recovery와 재진입 모니터링을 분리한다.
-- [AWS EKS Incident response and forensics](https://docs.aws.amazon.com/eks/latest/best-practices/incident-response-and-forensics.html):
-  Pod·Node 격리, NetworkPolicy, Credential 대응, 증거 보존과 재배포를 다룬다.
-- [AWS Security Incident Response — Contain](https://docs.aws.amazon.com/security-ir/latest/userguide/contain.html):
-  Containment를 단계적이고 가역적으로 수행하고 운영 영향과 증거 보존을 고려한다.
-- [AWSSupport-ContainIAMPrincipal](https://docs.aws.amazon.com/systems-manager-automation-runbooks/latest/userguide/awssupport-contain-iam-principal.html):
-  IAM Principal에 Deny를 적용하는 가역적 Runbook이며 Workload 영향 검토와 Dry Run이 필요하다.
-- [Kubernetes Network Policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/):
-  NetworkPolicy를 지원·강제하는 네트워크 구현이 없으면 정책 Resource만 만들어도 효과가 없다.
-- [EKS VPC CNI Network Policy](https://docs.aws.amazon.com/eks/latest/userguide/cni-network-policy-configure.html):
-  EKS에서 Network Policy 기능을 명시적으로 구성하고 검증해야 한다.
-- [Microsoft Defender Automatic Attack Disruption](https://learn.microsoft.com/en-us/defender-xdr/automatic-attack-disruption):
-  고신뢰 공격 신호에 대해 Device·Identity·Session을 빠르게 격리하고 이후 조사·Remediation을
-  이어가는 비교 사례다.
-
-이 자료들이 특정 제품 조합을 의무화하지는 않는다. 이 시나리오는 공통 원칙인 좁은 자동
-격리, Identity 영향 차단, 증거 보존, 별도 Remediation과 Recovery를 실습 환경에 맞춰 적용한다.
+구축·Runtime 완료 판정과 촬영 순서는 `CAPITAL-ONE-SOC-DEMO-PLAN.md`의
+`GT-00~GT-11`을 그대로 따른다.

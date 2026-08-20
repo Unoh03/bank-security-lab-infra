@@ -1,171 +1,174 @@
 # Shuffle Cloud SOC Workflow 설정 기준
 
-> **상태:** CURRENT TARGET — Wazuh → Shuffle E2E Runtime 미완료
->
-> 이 문서는 현행 Cloud Workflow의 설정·검증 기준만 다룬다. 이전 절차 전문은 Git commit
-> `5c20848`에 보존했으며 현재 실행 기준으로 사용하지 않는다.
->
-> 대응 의미는 [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](../../CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md),
-> 필드와 상태 계약은 [`CAPITAL-ONE-SOC-E2E-BLUEPRINT.md`](../../CAPITAL-ONE-SOC-E2E-BLUEPRINT.md)가 정본이다.
+> **상태:** CURRENT TARGET — 고신뢰 S3 Alert 기반 E2E·Containment Runtime 미완료
+> **상위 Gate:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](../../CAPITAL-ONE-SOC-DEMO-PLAN.md)
+> **Interface:** [`CAPITAL-ONE-SOC-E2E-BLUEPRINT.md`](../../CAPITAL-ONE-SOC-E2E-BLUEPRINT.md)
 
-## 1. 현재 목표
+과거 Rule `100103 → repeat_back_to_me` 경로는 Webhook 인증과 전달 Scaffold를 검증한
+기반이다. 최종 시연의 자동 조치 Trigger가 아니다.
 
-첫 목표는 Wazuh Rule `100103` Alert를 최소 필드로 Shuffle에 보내고 `observe_only` Outcome을
-남기는 것이다. 이 단계에서는 GitHub·Argo·NetworkPolicy·IAM 변경을 호출하지 않는다.
+---
+
+## 1. 역할
 
 ```text
-Wazuh Rule 100103
-→ Custom Integration Sanitizer
-→ HTTPS Webhook + Required Header
-→ Schema·Allowlist·TAKE 검증
-→ OBSERVE_ONLY Outcome
-→ 실제 외부 대응 호출 0
+Rule 100103
+→ EARLY WARNING
+→ 자동 Write 0
+
+GT-03을 통과한 S3 고신뢰 Rule
+→ custom-shuffle-soc S3 Sanitizer
+→ authenticated Webhook
+→ Validator
+→ CloudTrail eventID Dedupe
+→ bounded Containment
 ```
 
-실제 AWS `command.execution → Rule 100103` 독립 3 TAKE가 먼저 끝나야 한다. 빠른 탐지
-Runtime이 미완료인 상태에서 Shuffle 조립을 전체 대응 완료로 세지 않는다.
+`repeat_back_to_me/$exec`는 새 Schema의 인증·왕복을 확인할 때만 사용한다. G2가
+통과하면 실제 Validator·Dedupe·Containment Workflow로 교체한다.
 
-## 2. 책임 경계
+---
 
-| 구성요소 | 책임 | 책임이 아닌 것 |
-|---|---|---|
-| Wazuh Integration | Rule Filter, 최소 Schema, HTTPS 전송 | 대응 정책 결정 |
-| Shuffle Validator | Schema·Hash·Account·Region·Scenario·TAKE 검증 | 임의 명령 실행 |
-| Shuffle Workflow | Outcome, Allowlist, 안전 Gate, Dedupe | GitHub Run·Argo 완료 판정 |
-| GitHub Workflow | 고정된 승인 대상 변경 | 임의 Repository·파일·값 변경 |
-| Local E2E Orchestrator | GitHub Run·Commit·Argo·EKS Runtime 대조 | Secret 보존 |
+## 2. 선행 Gate
 
-## 3. Wazuh가 보낼 유일한 Body
+다음이 모두 PASS하기 전 Shuffle의 외부 Write Action을 연결하지 않는다.
 
-```json
-{
-  "schema_version": 1,
-  "source_system": "wazuh",
-  "sent_at_utc": "<UTC>",
-  "account_alias": "primary-lab",
-  "aws_account_id": "<expected account>",
-  "aws_region": "ap-northeast-2",
-  "scenario_id": "CAPITAL-ONE",
-  "rule": {
-    "id": "100103",
-    "level": 10
-  },
-  "incident": {
-    "take_id": "<validated TAKE_ID>",
-    "event_id": "<CloudWatch-derived event_id>",
-    "wazuh_alert_id": "<Wazuh alert id>",
-    "event_time_utc": "<source event UTC>",
-    "result": "succeeded",
-    "route": "/vulnerabilities/exec/"
-  },
-  "integrity": {
-    "raw_message_sha256": "<sha256>",
-    "body_sha256": "<canonical body sha256>"
-  }
-}
-```
+- Rule `100103` 독립 3 TAKE의 실제 Event N↔Alert N, 정상 대조군 0, 자동 Write 0
+- 최종 S3 Rule 공격 Positive 3/3
+- 정상 `terra-user`·다른 Bucket·Prefix·Principal·실패 응답 Alert 0
+- 원본 CloudTrail `eventID`↔Wazuh Alert 일대일
+- Sanitizer allowlist와 Runtime Secret 경로 확정
 
-Webhook Header:
+---
+
+## 3. Workflow 최소 구조
+
+### Transport 검증
 
 ```text
-Content-Type: application/json
-X-SOC-Webhook-Key: <runtime secret>
+Authenticated Webhook
+→ repeat_back_to_me($exec)
 ```
 
-원본 Wazuh Alert 전체, 공격 명령, Credential, Cookie, Authorization Header, Webhook URL과
-Header Key는 전송하거나 Evidence에 남기지 않는다.
+- 외부 Side Effect Action 0
+- 정상 Header: 신규 Execution 1, `FINISHED/SUCCESS`
+- wrong/missing Header: 신규 Execution 0
+- Request = Execution Argument = Result의 parsed JSON semantic equality
 
-## 4. Workflow 순서
+### 최종 Workflow
 
-Workflow 이름은 `CAPITAL-ONE-SOC-RESPONSE-v2`로 고정한다.
+```text
+Authenticated Webhook
+→ Validate S3 Alert v2
+→ Claim Dedupe(eventID)
+├─ rejected / duplicate: Outcome only
+└─ new approved incident
+   → Quarantine fixed DVWA workload
+   → Restrict fixed validation/* access
+   → Persist outcome and rollback reference
+```
 
-1. Wazuh Webhook 수신
-2. Required Header 검증
-3. 정확한 Schema와 Body SHA-256 검증
-4. Account·Region·Scenario·Rule Allowlist 검증
-5. Active TAKE Allowlist와 만료 시각 확인
-6. `response_mode` 확인
-7. `observe_only`이면 Outcome을 남기고 즉시 종료
-8. `contain`이면 NetworkPolicy·Target·Rollback 안전 Gate 확인
-9. 안전 조건 불충족이면 `SAFETY_GATE_BLOCKED`로 종료
-10. 안전 조건 충족 뒤에만 TAKE Dedupe를 Claim
-11. 신규 TAKE만 고정 Workload Quarantine Workflow 호출
-12. 공유 Role IAM 조치는 자동 실행하지 않고 `IAM_APPROVAL_REQUIRED` 기록
+Outgoing Branch는 명시적 조건만 사용하며 암묵적 `else`에 의존하지 않는다.
 
-`observe_only`는 Containment Dedupe Key를 소비하지 않는다. 여러 outgoing branch를
-자동 `else`로 가정하지 말고 각 조건을 명시한다.
+---
 
-## 5. 필수 Outcome
+## 4. Validator 계약
 
-| Outcome | 의미 | GitHub 호출 |
+필수 exact match:
+
+- `schema_version=2`
+- `scenario_id=CAPITAL-ONE`
+- 승인 Account·Region
+- 최종 고신뢰 Rule ID·Level·Role
+- `event_source=s3.amazonaws.com`
+- `event_name=GetObject`
+- 승인 Principal Role
+- 승인 Bucket alias
+- `object_key`가 `validation/` Allowlist 안
+- `result=success`
+- timestamp·SHA-256·CloudTrail eventID 형식
+
+금지:
+
+- Alert 원문·`full_log`
+- Credential·Token·Cookie·Authorization
+- Webhook URL·Header Key·PAT
+- Command 원문
+- 임의 Namespace·Selector·Repository·Ref·Policy
+- Schema에 없는 필드
+
+---
+
+## 5. Dedupe와 Outcome
+
+Dedupe Key:
+
+```text
+CAPITAL-ONE:<aws_account_id>:<cloudtrail_event_id>
+```
+
+Validation PASS 뒤에만 Claim한다. 같은 Key 10회 전달 시 Containment Action은 1회다.
+
+| Outcome | 의미 | 외부 Write |
 |---|---|---:|
-| `REJECTED_SCHEMA` | Schema·Hash 불일치 | 0 |
-| `REJECTED_ALLOWLIST` | Account·Region·Scenario·Rule 거부 | 0 |
-| `REJECTED_TAKE` | TAKE 미등록·만료 | 0 |
-| `OBSERVE_ONLY` | 탐지 전달 확인 | 0 |
-| `SAFETY_GATE_BLOCKED` | 대응 안전 조건 미충족 | 0 |
-| `DUPLICATE_SUPPRESSED` | 같은 TAKE의 후속 Alert | 0 |
-| `CONTAINMENT_DISPATCHED` | 고정 Workload Quarantine 요청 | 1 |
-| `IAM_APPROVAL_REQUIRED` | 공유 Role 영향 차단 승인 대기 | 0 |
-| `RESPONSE_FAILED` | Dispatch 수락 여부 미확정 | 자동 재호출 금지 |
+| `REJECTED_SCHEMA` | Schema·Hash 거부 | 0 |
+| `REJECTED_ALLOWLIST` | Rule·Account·Resource 거부 | 0 |
+| `DUPLICATE_SUPPRESSED` | 같은 CloudTrail Event 재수집 | 0 |
+| `SAFETY_GATE_BLOCKED` | Target·Rollback·enforcement 불확정 | 0 |
+| `CONTAINMENT_SUCCEEDED` | 두 승인 조치와 증명 완료 | 1 logical incident |
+| `CONTAINMENT_FAILED` | 일부 또는 전체 실패 | 자동 재호출 금지 |
 
-HTTP Timeout이나 네트워크 오류로 요청 수락 여부를 확정할 수 없으면 같은 TAKE를 자동
-재호출하지 않는다. 실패 Outcome을 남기고 GitHub Run을 별도로 대조한다.
+Timeout으로 요청 수락 여부가 불명확하면 같은 Event를 자동 재호출하지 않고 Execution과
+대상 Runtime을 대조한다.
 
-## 6. 단계별 Gate
+---
 
-### S0 — Local Contract
+## 6. Containment 경계
 
-- [ ] Custom Integration은 Rule `100103`만 수락
-- [ ] 허용 필드 외 전송 0
-- [ ] Secret 정적 검사 통과
-- [ ] 실패 시 Wazuh Alert와 로컬 Evidence 보존
+허용:
 
-### S1 — Webhook Smoke
+1. 고정 DVWA Workload Quarantine
+2. `validation/*` 추가 접근 제한 또는 전용 Lab Principal 제한
 
-- [ ] 정상 Required Header 수락
-- [ ] 누락·오류 Header 거부
-- [ ] 정상 Schema Outcome 1
-- [ ] GitHub 호출 0
+금지:
 
-### S2 — Observe-only E2E
+- 공유 Karpenter Node Role 전체 `DenyAll`
+- Alert 값으로 임의 Target 선택
+- Shell 문자열 조립
+- 미승인 GitHub Workflow·Ref
+- 사람 승인 없는 IAM·IMDS·Remediation
 
-- [ ] 실제 Rule `100103` 독립 3 TAKE 수신
-- [ ] TAKE별 `OBSERVE_ONLY` Outcome
-- [ ] Source Event·Wazuh Alert·Shuffle Execution의 ID와 UTC 연결
-- [ ] 금지 필드·누락·동일 Event 중복 0
-- [ ] GitHub 호출 0
+NetworkPolicy Resource 생성만으로 성공하지 않는다. 실제 공격 Egress 실패, 정상
+Health·관측 경로, 다른 Namespace와 비대상 Resource 영향을 함께 확인한다.
 
-### S3 — Dedupe Stress
-
-- [ ] 안전한 Stub으로 동일 TAKE 동시 10회 실행
-- [ ] 신규 Claim 1, 중복 억제 9
-- [ ] 원자성 결과를 Runtime으로 확인
-- [ ] 실제 GitHub 호출 0
-
-### S4 — Containment 연결
-
-다음 조건을 모두 충족한 뒤 별도 승인으로 진행한다.
-
-- [ ] EKS NetworkPolicy enforcing Runtime 확인
-- [ ] 고정 Namespace·Label 외 Target 거부
-- [ ] 실제 Deny·Allow·Rollback Test 통과
-- [ ] 공유 Role Blast Radius 검토 완료
-- [ ] 고정 GitHub Workflow와 최소 권한 Authentication 검증
-- [ ] 정확한 Run ID·Commit SHA·Argo Revision 대조 가능
-
-이 Gate 전에는 `response_mode=contain`이나 Production Credential을 활성화하지 않는다.
+---
 
 ## 7. Secret과 Evidence
 
-- Webhook URL·Header Key·API Key·PAT은 Git에 저장하지 않는다.
-- Shuffle Authentication 값은 화면·Export·로그에 노출하지 않는다.
-- Evidence에는 Hash, Execution ID, Outcome, UTC, TAKE_ID, 확인된 Dispatch 수만 남긴다.
-- Workflow Export는 Secret 값이 없는지 검사한 뒤 Hash와 함께 보존한다.
-- 문서·정적 Test·HTTP 200만으로 전체 대응 성공을 선언하지 않는다.
+- Webhook URI·Header Key·Shuffle API Key·PAT은 Runtime Secret에서만 읽는다.
+- Workflow Export·Source·Git·Evidence·로그·Shell History에 Secret 값을 남기지 않는다.
+- Evidence에는 Hash, Rule ID, CloudTrail eventID, Wazuh Alert ID, Execution ID, Outcome,
+  UTC, Target alias, Policy UID/Revision, Rollback 결과만 남긴다.
+- Cloud API Read-back은 필요한 필드만 추출하며 전체 JSON을 Dump하지 않는다.
+
+---
 
 ## 8. 완료 판정
 
-Wazuh → Shuffle의 첫 완료점은 S2다. 즉, 실제 Rule `100103` Alert 3개가 Sanitized Body로
-전달되고 각 TAKE가 `OBSERVE_ONLY`로 종료되며 GitHub 호출이 0임을 Runtime Evidence로
-확인한 상태다. Containment·Remediation·Recovery는 각각 뒤 Gate로 별도 판정한다.
+Shuffle 단계 완료는 다음을 모두 뜻한다.
+
+```text
+actual strict S3 Wazuh Alert 1
+= authenticated Webhook request 1
+= new Shuffle Execution 1
+= successful containment incident 1
+
+wrong/missing header execution 0
+unregistered rule/account/prefix write 0
+duplicate eventID action 0
+unexpected side effect 0
+secret exposure 0
+```
+
+합성 Payload 왕복, Rule `100103` OBSERVE_ONLY, Source·Workflow 존재는 이 완료 판정을
+대신하지 않는다.

@@ -21,6 +21,19 @@ function Assert-NotMatch {
     if ($text -match $Pattern) { throw $Message }
 }
 
+$containDiagnostic = 'Rule 100103 is OBSERVE_ONLY only; the final high-confidence S3 Rule is not validated/registered yet.'
+Assert-Match "Rule 100103 is OBSERVE_ONLY only; the final high-confidence S3 Rule is not validated/registered yet\." `
+    'Start does not fail closed before runtime for the unvalidated Rule 100103 containment mode.'
+Assert-Match "ResponseMode\s*-ceq\s*'observe_only'" `
+    'Start no longer exposes the allowed Rule 100103 OBSERVE_ONLY mode.'
+$containOutput = @(& (Get-Command pwsh -ErrorAction Stop).Source -NoProfile -File $path `
+    -Scope full -ResponseMode contain 2>&1)
+$containExitCode = $LASTEXITCODE
+$containText = ($containOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+if ($containExitCode -eq 0 -or $containText -notmatch [regex]::Escape($containDiagnostic)) {
+    throw 'Start did not reject Rule 100103 containment at the CLI boundary.'
+}
+
 Assert-Match "ConfirmStart\s+-cne\s+'START SOC LAB'" 'Start lacks its exact mutation confirmation.'
 Assert-Match '\$Scope\s*=\s*\$Scope\.ToLowerInvariant\(\)[\s\S]*?\$ResponseMode\s*=\s*\$ResponseMode\.ToLowerInvariant\(\)' 'Start does not normalize case-insensitive ValidateSet values before case-sensitive routing.'
 Assert-Match "ValidateSet\('detection_only','full'\)[\s\S]*?Scope\s*=\s*'detection_only'" 'Start does not default to the bounded Detection-only scope.'

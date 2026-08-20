@@ -1,13 +1,16 @@
-# Purpose: Karpenter Node Role 자격 증명으로 validation/ 객체를 읽은 성공·실패를 조사한다.
+# Purpose: Karpenter Node Role 자격 증명으로 validation/ 객체를 읽은 성공 Event만 조사한다.
 # Log group: /aws/cloudtrail/aws-topology-security
-# Detector match: GetObject + Primary Karpenter Node Role + validation/* + errorCode 없음
+# Detector match: GetObject + 승인 Account/Region/Bucket + Primary Karpenter Node Role + validation/* + errorCode 없음 + HTTP 200
 # Normal: 승인된 CAPITAL-ONE 실습 시간 밖에서는 0건
 # Attack/abuse: 외부 Source IP 또는 예상하지 않은 User Agent에서 성공한 GetObject
 # False positive: 승인된 실습 시간·실행자에서 발생한 계획된 성공 GetObject는 실제 사고로 분류하지 않음
-# Remediation evidence: 같은 Role·Prefix의 재시도가 AccessDenied 또는 Credential 실패
+# Remediation evidence: 같은 Role·Prefix의 별도 재시도가 AccessDenied 또는 Credential 실패여야 하며, 이 query는 성공 Event만 반환한다.
 # Runtime verification: 2026-08-12 성공 Event 1행 확인; hardened 복구 후 실패 Event는 미검증.
 fields @timestamp as ingestion_time,
        eventTime as event_time,
+       eventID as event_id,
+       recipientAccountId as account_id,
+       awsRegion as aws_region,
        eventName as event_name,
        userIdentity.sessionContext.sessionIssuer.arn as role_arn,
        userIdentity.arn as caller_arn,
@@ -15,11 +18,17 @@ fields @timestamp as ingestion_time,
        userAgent as user_agent,
        requestParameters.bucketName as bucket_name,
        requestParameters.key as object_key,
+       additionalEventData.httpStatusCode as http_status_code,
        errorCode as error_code,
        requestID as request_id
 | filter eventSource = "s3.amazonaws.com"
 | filter eventName = "GetObject"
+| filter recipientAccountId = "433048100798"
+| filter awsRegion = "ap-northeast-2"
+| filter requestParameters.bucketName = "aws-topology-primary-bd56288914d9d31c4d07225deb"
 | filter userIdentity.sessionContext.sessionIssuer.userName like /-primary-karpenter-node$/
 | filter requestParameters.key like /^validation\//
+| filter not ispresent(errorCode)
+| filter additionalEventData.httpStatusCode = "200"
 | sort event_time asc
 | limit 200

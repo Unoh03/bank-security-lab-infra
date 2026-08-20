@@ -15,8 +15,9 @@
 
 ## 재개점
 
-실제 AWS `command.execution → Wazuh Rule 100103` 독립 3 TAKE를 먼저 검증한다. 그 뒤
-Wazuh → Shuffle `observe_only`, Containment, Remediation, Recovery 순서로 진행한다.
+`CAPITAL-ONE-SOC-DEMO-PLAN.md`의 `GT-00`부터 순서대로 진행한다. Rule `100103`은
+조기 경보로만 검증하고, 엄격한 S3 고신뢰 Rule이 `GT-03`을 통과한 뒤에만 최종
+Wazuh→Shuffle과 Containment를 연결한다.
 
 현재 상태는 이 파일의 날짜를 근거로 추정하지 않는다. 반드시 Git 상태, 실행 중 Process,
 Wazuh·Bridge·AWS Runtime 출력과 보존 Evidence를 다시 읽고 판단한다.
