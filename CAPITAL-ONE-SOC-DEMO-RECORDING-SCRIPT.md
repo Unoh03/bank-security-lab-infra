@@ -1,7 +1,7 @@
 # Capital One 기반 SOC 시연 녹화 대본
 
 > **상태:** TARGET RECORDING SCRIPT — 모든 촬영 Gate가 PASS한 완성형 관제 시스템을 전제로 함  
-> **촬영 가능 조건:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)의 `GT-00~GT-11` PASS  
+> **촬영 가능 조건:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)의 `GT-00~GT-10`과 `GT-11A` PASS
 > **공격·대응 의미:** [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](./CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md)
 
 이 문서는 촬영 당일 펼쳐놓는 실제 대본이다. 구현 방법과 남은 작업은 시연 계획에서 관리한다.
@@ -33,8 +33,8 @@
 
 - Rule `100103`은 `command.execution + ec2_imds + succeeded` 조기 이상 징후다.
 - Rule `100103`만으로 Credential 탈취나 S3 접근 성공을 확정하지 않는다.
-- 보호 대상 `validation/*`의 성공한 `GetObject`를 엄격한 조건으로 탐지한 Rule을 고신뢰 자동 조치 Trigger로 사용한다.
-- 현재 Rule `100100`이 그 계약을 충족하면 그대로 사용하고, 충족하지 않으면 새 Rule ID를 사용한다.
+- 보호 대상 `validation/*`의 성공한 `GetObject`를 엄격한 조건으로 탐지한 Rule `100104`를 고신뢰 자동 조치용으로 사용한다.
+- Rule `100104`의 `GT-03` 탐지, `GT-04` Wazuh→Shuffle, `GT-05` Containment Runtime이 모두 PASS하지 않으면 이 대본으로 촬영하지 않는다.
 - `GetObject` 성공은 보호 대상 Object 읽기 성공을 뜻한다. 외부 반출 전체를 별도로 증명하지 않았다면 `대규모 유출 완료`라고 말하지 않는다.
 - 자동 격리는 **S3 API 호출 순간**이 아니라 해당 CloudTrail Event가 Wazuh에 도착해 고신뢰 Alert가 발생한 직후 시작된다.
 - Wazuh의 사건 조사 화면은 저장된 로그를 미리 정의한 상관 키로 좁혀 보여주는 화면이다. 실제로 구현하지 않은 자동 인과 그래프나 AI 진단으로 과장하지 않는다.
@@ -49,7 +49,7 @@
 FINAL_TAKE_ID=<새 촬영 ID>
 START_UTC=<UTC ISO 8601>
 BASELINE_DVWA_REVISION=<공격 전 main SHA>
-HIGH_CONFIDENCE_RULE_ID=<100100 또는 최종 확정 ID>
+HIGH_CONFIDENCE_RULE_ID=100104
 REMEDIATION_REVISION=<촬영 중 생성될 SHA>
 RECOVERY_EVIDENCE_ID=<최종 검증 Evidence ID>
 ```
@@ -94,7 +94,7 @@ RECOVERY_EVIDENCE_ID=<최종 검증 Evidence ID>
 
 | Scene | 장면 | 관제 관점의 핵심 주장 | 필수 Gate |
 |---|---|---|---|
-| `SC-00` | Slate·평상시 관제 | 로그가 평소부터 Wazuh에 축적되고 시스템이 READY다 | `GT-00`, `GT-01`, `GT-11` |
+| `SC-00` | Slate·평상시 관제 | 로그가 평소부터 Wazuh에 축적되고 시스템이 READY다 | `GT-00`, `GT-01`, `GT-11A` |
 | `SC-01` | 공격 범위 설명 | Capital One 기반 Lab 각색이며 보호 대상은 `validation/*`다 | `GT-00` |
 | `SC-02` | 공격 1회 | Command Injection → IMDS → 임시 자격증명 → S3 접근을 한 TAKE로 실행한다 | `GT-00` |
 | `SC-03` | 조기 이상 징후 | Rule `100103`은 S3 침해 확정 전 조기 경보다 | `GT-02` |
@@ -280,7 +280,7 @@ IMDS 대상 명령 실행 성공
 ### 자막
 
 ```text
-고신뢰 침해 확인 — Rule <ID>
+고신뢰 침해 확인 — Rule 100104
 Protected S3 GetObject: SUCCESS
 CloudTrail 도착·Wazuh 탐지까지 실제 N분 N초
 ```
@@ -553,7 +553,9 @@ Reset은 본편 Recovery가 아니라 재촬영을 위해 취약 Lab을 다시 �
 
 ---
 
-# 6. 공개 전 최종 검수
+# 6. 공개 전 최종 검수 — GT-11B 정본
+
+- [ ] 최종 촬영 파일이 처음부터 끝까지 정상적으로 열리고 재생된다.
 
 - [ ] 영상 제목이 실제 완료 범위를 과장하지 않는다.
 - [ ] 모든 Runtime 장면의 TAKE와 UTC가 연결된다.

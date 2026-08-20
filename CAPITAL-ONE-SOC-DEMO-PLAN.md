@@ -44,7 +44,13 @@ Rule 100104
 = Shuffle 자동 격리 Trigger
 ```
 
-현재 Rule `100100`이 위 계약을 정확히 충족하면 재사용한다. 부족하면 기존 의미를 조용히 바꾸지 않고 새 Rule ID를 만든다.
+Rule `100104`를 고신뢰 자동 조치용 설계 ID로 확정한다. 현재는 `Pre-Runtime` 상태이며,
+`GT-03` PASS 전에는 Runtime 검증된 탐지 Rule로, `GT-04` PASS 전에는 실제
+Wazuh Alert→Shuffle Trigger로, `GT-05` PASS 전에는 승인된 Containment Action이 실제
+실행되는 자동 Containment 경로로 표현하지 않는다.
+
+기존 Rule `100100`의 과거 양성 Runtime은 역사적 Evidence로 보존하되 자동 조치용으로
+재사용하지 않는다.
 
 ### 0.3 고신뢰의 의미
 
@@ -161,7 +167,8 @@ CloudTrail의 별도 저지연 Route 전환은 촬영 필수 조건이 아니다
 |---|---|---|---|
 | 공격 Baseline | Node Role 임시 자격증명으로 `validation/*` 가짜 Object 읽기 성공·CloudTrail Event 존재 | Runtime 확인 | 새 TAKE 반복성·촬영용 공개본 |
 | 5-Source 수집 | CloudFront·WAF·ALB·DVWA·CloudTrail의 Wazuh Raw/Index 연결 | Source별 Runtime 확인 | 동일 TAKE Timeline |
-| Rule `100100` | 보호 대상 S3 `GetObject` Alert와 CloudTrail `eventID` 연결 | 양성 Runtime 확인 | 엄격한 자동 조치 계약·Wazuh 정상 대조군 |
+| Rule `100100` | 보호 대상 S3 `GetObject` Alert와 CloudTrail `eventID` 연결 | 과거 양성 Runtime 확인 | 역사적 Evidence로만 보존·자동 조치 제외 |
+| Rule `100104` | 고신뢰 Source 계약·Level 12·합성 Positive/Negative Matrix | `PRE-RUNTIME PASS`, `GT-03` 미통과 | 실제 공격·정상 대조군·원본 `eventID` 일대일·지연 |
 | Rule `100103` | Rule·Push·Integrator 설정 G3 strict PASS, 무해 Rule `100102` N=3 | 부분 확인 | 실제 공격 Event→Rule `100103` Alert·정상 대조군 |
 | Shuffle G0 | Private Workflow·Webhook·Header·Shape Snapshot | PASS | 최종 Rule/Action 계약 갱신 |
 | Shuffle G1 | `repeat_back_to_me`가 `$exec`를 읽는 구조 Read-back | PASS | 실제 Containment Workflow로 교체 |
@@ -220,7 +227,7 @@ CloudTrail의 별도 저지연 Route 전환은 촬영 필수 조건이 아니다
 | `GT-01` | `PASS` | `C:\Users\Unoh\Documents\aws-topology-evidence\capital-one-20260820T092407Z-a5bca9cd\gt01-wazuh-timeline.json` / `fc7c7ec3991002d529f25c153c9038d9a5935866b32e1eb6c7d8b256497e8a98` |
 | `GT-02` | `NOT RUN` | 없음. Stale backlog Drain은 별도 `PRECONDITION` Evidence로만 보존한다. |
 | `GT-03` | `PRE-RUNTIME PASS`, Gate 미통과 | `C:\Users\Unoh\Documents\aws-topology-evidence\gt03-pre-runtime\gt03-wazuh-rule-matrix-20260820T102542Z.json` / `81e4caf545cd25906abc313fcf3a4d1961225aadc1da87f4afcec35860a7d365` |
-| `GT-04`~`GT-11` | `NOT RUN` | 없음 |
+| `GT-04`~`GT-10`, `GT-11A`, `GT-11B` | `NOT RUN` | 없음 |
 
 ## GT-00 — 공격·Lab Scope·공개본
 
@@ -706,11 +713,11 @@ DVWA defaultSecurityLevel: low → impossible
 
 ---
 
-## GT-11 — 촬영 준비·Rehearsal·공개본
+## GT-11A — 촬영 전 준비·Rehearsal·Final Recording Baseline
 
 ### 해야 할 일
 
-- [ ] 모든 Gate Evidence Index 작성
+- [ ] `GT-00~GT-10`의 체크박스·짧은 Runtime 결과 확인
 - [ ] Secret Scan
 - [ ] 공개 마스킹 확인
 - [ ] 화면 배치·브라우저 탭·폰트 크기 고정
@@ -720,11 +727,51 @@ DVWA defaultSecurityLevel: low → impossible
 - [ ] 실패 TAKE 처리·수동 Reset Rehearsal
 - [ ] 팀원별 내레이션 담당 확정
 - [ ] 본편 전체 2회 무중단 Rehearsal
-- [ ] 최종 촬영 파일 열기·재생 확인
+
+### FINAL RECORDING BASELINE
+
+- [ ] DVWA가 촬영용 취약 Baseline인 `defaultSecurityLevel=low`
+- [ ] 이전 DVWA Quarantine 해제
+- [ ] 이전 `validation/*` 임시 Deny·추가 접근 제한 해제
+- [ ] Wazuh Manager·Indexer·Dashboard와 최종 Shuffle Workflow READY
+- [ ] Baseline Git SHA 고정, Argo CD가 같은 Revision으로 `Synced + Healthy`, 새 Pod Ready
+- [ ] 이전 임시 Credential 잔존 0
+- [ ] 새 `FINAL_TAKE_ID`와 `START_UTC` 기록
+- [ ] DLQ `0`
+- [ ] stale Event와 새 TAKE를 명확히 구분 가능
+- [ ] 이전 Event가 새 자동 조치를 오발하지 않음
+
+별도 대형 Evidence Bundle은 만들지 않는다. 다음 수준의 짧은 Secret-safe Preflight 결과면 충분하다.
+
+```text
+FINAL RECORDING BASELINE: PASS
+DVWA vulnerable baseline: READY
+Previous containment: RELEASED
+Wazuh / Shuffle: READY
+Argo CD: Synced + Healthy / revision <SHA>
+Previous temporary credential: 0
+DLQ: 0
+Stale event / new TAKE separation: PASS
+FINAL_TAKE_ID: <ID>
+START_UTC: <UTC>
+```
+
+Queue 전체 Purge나 과거 Event의 Evidence 목적 재보존은 요구하지 않는다. Reset은 Incident Recovery가 아니라
+촬영·재촬영을 위해 취약 Lab을 초기 상태로 되돌리는 별도 운영 절차다.
 
 ### 촬영 시작 조건
 
-`GT-00~GT-10`의 미완료 항목이 0이어야 한다. Plan-only나 합성 Payload 성공으로 대체하지 않는다.
+`GT-00~GT-10`이 각 Gate의 PASS 기준을 만족하고 `GT-11A`가 PASS여야 한다. Plan-only나
+합성 Payload 성공으로 대체하지 않는다.
+
+---
+
+## GT-11B — 촬영 후 파일·공개본 검수
+
+- [ ] [`CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md`](./CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md)의
+  `공개 전 최종 검수` 전체 PASS(최종 파일의 처음부터 끝까지 정상 재생 포함)
+
+`GT-11B`까지 PASS해야 최종 시연 완료다.
 
 ---
 
@@ -732,11 +779,10 @@ DVWA defaultSecurityLevel: low → impossible
 
 ## WS-1 — Rule 계약 확정
 
-1. Rule `100100` 현재 조건·Decoded Field 재검토
-2. 정상·비대상 대조군 추가
-3. 재사용 또는 새 Rule ID 결정
-4. Alert Field·Description·Level 고정
-5. GT-03 Runtime
+1. Rule `100100` 과거 Runtime 보존·자동 조치 제외 확인
+2. Rule `100104` Alert Field·Description·Level 계약 확인
+3. 정상·비대상 대조군 추가
+4. GT-03 Runtime
 
 ## WS-2 — Wazuh→Shuffle Trigger 전환
 
@@ -779,7 +825,9 @@ DVWA defaultSecurityLevel: low → impossible
 2. Scene별 Evidence 배치
 3. 대기시간·자막 확정
 4. Rehearsal 2회
-5. 최종 촬영
+5. `GT-11A` Final Recording Baseline
+6. 최종 촬영
+7. `GT-11B` 파일·공개본 검수
 
 ### 권장 의존 순서
 
@@ -794,8 +842,10 @@ GT-00
 → GT-07·GT-08
 → GT-09
 → GT-10
-→ GT-11
-→ 촬영
+→ GT-11A
+→ Recording Script 실행
+→ GT-11B
+→ 최종 완료
 ```
 
 뒤 Gate의 성공으로 앞 Gate를 대체하지 않는다.
