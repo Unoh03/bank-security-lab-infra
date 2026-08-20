@@ -15,6 +15,7 @@ foreach ($requiredText in @(
     'active_state_provenance',
     'Assert-SocHardeningDpapiBinding',
     'Get-SocJsonBooleanProperty',
+    'wazuh_major_version',
     'Get-SocJsonTimestampText',
     'Invoke-SocFreshHardeningEvidence',
     'invocationStartedAtUtc',
@@ -23,6 +24,9 @@ foreach ($requiredText in @(
     if ($startText -notmatch [regex]::Escape($requiredText)) {
         throw "Start-SocLab is missing the hardening reader contract: $requiredText"
     }
+}
+if ($startText -notmatch '(?s)\$hardeningEvidence\s*=\s*Invoke-SocFreshHardeningEvidence.*?Add-WazuhManagerSocIntegrationText') {
+    throw 'Start-SocLab does not verify Wazuh version Evidence before applying the integration fragment.'
 }
 if ($startText -match 'wazuh_rotated_auth|complete credential rotation') {
     throw 'Start-SocLab retains misleading rotated-auth hardening semantics.'
@@ -125,6 +129,7 @@ function Write-TestEvidenceRecord {
         checked_at = $CheckedAt.ToUniversalTime().ToString('o')
         runtime_session_id = $RuntimeSessionId
         wazuh_version = '4.14.7'
+        wazuh_major_version = 4
         wazuh_authentication_verified = $true
         wazuh_credential_rotation_observed = [bool]$isMutating
         local_only_ports = if ($StringBoolean) { 'true' } else { $true }
@@ -242,6 +247,22 @@ try {
         $selected.ProducerMode -cne 'verify_existing') {
         throw 'The exact hardening reader did not consume only its returned path and hash.'
     }
+
+    $unsupportedVersionId = New-TestRuntimeSessionId
+    $unsupportedVersionPath = Write-TestEvidenceRecord -Root $hardeningRoot `
+        -RuntimeSessionId $unsupportedVersionId -CheckedAt $now
+    $unsupportedVersionRecord = Get-Content -LiteralPath $unsupportedVersionPath -Raw | ConvertFrom-Json -Depth 20 -DateKind String
+    $unsupportedVersionRecord.wazuh_version = '5.0.0'
+    $unsupportedVersionRecord.wazuh_major_version = 5
+    [IO.File]::WriteAllText(
+        $unsupportedVersionPath,
+        (($unsupportedVersionRecord | ConvertTo-Json -Depth 20) + "`n"),
+        [Text.UTF8Encoding]::new($false)
+    )
+    Assert-TestReaderFails {
+        Read-TestEvidence -Path $unsupportedVersionPath -RuntimeSessionId $unsupportedVersionId `
+            -NotBeforeUtc $notBefore | Out-Null
+    } 'version is unsupported'
 
     $script:nativeFixture = {
         $freshId = New-TestRuntimeSessionId

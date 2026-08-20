@@ -20,6 +20,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$Scope = $Scope.ToLowerInvariant()
+$ResponseMode = $ResponseMode.ToLowerInvariant()
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $foundationRoot = Join-Path $repositoryRoot 'foundation'
@@ -50,8 +52,14 @@ Write-Host 'SOC lab one-command READY preview'
 Write-Host "Scope: $Scope"
 Write-Host "Response mode: $ResponseMode"
 if ($Scope -ceq 'full') {
-    Write-Host 'Read-only preflight: Daily, DVWA, Shuffle, GitHub, Argo CD, Foundation.'
-    Write-Host 'Runtime actions: local Wazuh/Bridge start, harmless Rule 100102 probe, TAKE allow registration.'
+    if ($ResponseMode -ceq 'observe_only') {
+        Write-Host 'Read-only preflight: Daily, DVWA, Shuffle, Foundation.'
+        Write-Host 'Runtime actions: local Wazuh/Bridge start, harmless Rule 100102 probe, local TAKE/session only.'
+        Write-Host 'Skipped in OBSERVE_ONLY: GitHub, Argo CD, Shuffle Datastore TAKE registration.'
+    } else {
+        Write-Host 'Read-only preflight: Daily, DVWA, Shuffle, GitHub, Argo CD, Foundation.'
+        Write-Host 'Runtime actions: local Wazuh/Bridge start, harmless Rule 100102 probe, TAKE allow registration.'
+    }
 } else {
     Write-Host 'Read-only preflight: Daily, DVWA, Foundation.'
     Write-Host 'Runtime actions: local Wazuh/Bridge start and harmless Rule 100102 probe.'
@@ -260,6 +268,68 @@ function Wait-SocComposeServices {
     throw 'The Wazuh services did not become running and healthy in time.'
 }
 
+function Get-SocWazuhPreflightRuntimeState {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ComposePath,
+        [scriptblock]$ComposeAdapter = $null,
+        [scriptblock]$InspectAdapter = $null
+    )
+
+    $services = @('wazuh.manager','wazuh.indexer','wazuh.dashboard')
+    $records = [Collections.Generic.List[object]]::new()
+    foreach ($service in $services) {
+        $idsText = if ($null -ne $ComposeAdapter) {
+            & $ComposeAdapter -File @($ComposePath) -Arguments @('ps','-a','-q',$service)
+        } else {
+            Invoke-SocComposeCapture -File @($ComposePath) `
+                -Arguments @('ps','-a','-q',$service) `
+                -FailureMessage "The existing Wazuh container state is unavailable: $service"
+        }
+        $ids = @([string]$idsText -split "`r?`n" | ForEach-Object {
+            $_.Trim()
+        } | Where-Object { $_ })
+        if ($ids.Count -gt 1) {
+            throw "The existing Wazuh runtime contains duplicate containers for $service."
+        }
+        if ($ids.Count -eq 0) {
+            $records.Add([pscustomobject]@{ Service=$service; State='absent'; ContainerId=$null })
+            continue
+        }
+        if ([string]$ids[0] -notmatch '^[a-f0-9]{12,64}$') {
+            throw "The existing Wazuh runtime returned an unsafe container ID for $service."
+        }
+        $stateText = if ($null -ne $InspectAdapter) {
+            & $InspectAdapter -ContainerId ([string]$ids[0])
+        } else {
+            Invoke-SocNativeCapture -FilePath 'docker' -Arguments @(
+                'inspect','--format','{{.State.Status}}',[string]$ids[0]
+            ) -FailureMessage "The existing Wazuh container state is unavailable: $service"
+        }
+        $state = ([string]$stateText).Trim().ToLowerInvariant()
+        if ($state -notin @('running','created','exited','dead','paused')) {
+            throw "The existing Wazuh runtime has an unsupported $service state: $state"
+        }
+        $records.Add([pscustomobject]@{
+            Service=$service; State=$state; ContainerId=[string]$ids[0]
+        })
+    }
+
+    $running = @($records | Where-Object { $_.State -ceq 'running' })
+    if ($running.Count -eq $services.Count) {
+        return [pscustomobject]@{ Mode='running'; Records=@($records) }
+    }
+    $absent = @($records | Where-Object { $_.State -ceq 'absent' })
+    $stopped = @($records | Where-Object {
+        $_.State -in @('created','exited','dead')
+    })
+    if ($running.Count -eq 0 -and
+        ($absent.Count -eq $services.Count -or $stopped.Count -eq $services.Count)) {
+        return [pscustomobject]@{ Mode='deferred_stopped_runtime'; Records=@($records) }
+    }
+    throw 'The existing Wazuh runtime is partial or mixed; refusing to infer a safe preflight state.'
+}
+
 function Set-SocIndexerInternalUsers {
     param(
         [Parameter(Mandatory)][string[]]$File,
@@ -377,7 +447,8 @@ function Invoke-SocLoopbackRequest {
         [Parameter(Mandatory)][uri]$Uri,
         [Parameter(Mandatory)][string]$UserName,
         [Parameter(Mandatory)][string]$Password,
-        [AllowNull()][object]$Body = $null
+        [AllowNull()][object]$Body = $null,
+        [switch]$AllowObserveOnlyPassword
     )
 
     if ($Uri.Scheme -cne 'https' -or $Uri.Host -cne '127.0.0.1' -or
@@ -385,10 +456,16 @@ function Invoke-SocLoopbackRequest {
         throw 'A Wazuh local request escaped the fixed loopback endpoints.'
     }
     $knownDefaultCredential = (
-        $UserName -ceq 'admin' -and $Password -ceq ('Secret' + 'Password')
+        ($UserName -ceq 'admin' -and $Password -ceq ('Secret' + 'Password')) -or
+        ($UserName -ceq 'kibanaserver' -and $Password -ceq ('kibana' + 'server')) -or
+        ($UserName -ceq 'wazuh-wui' -and $Password -ceq ('MyS3cr37P450r.' + '*-'))
     )
     if ($UserName -notin @('admin','kibanaserver','wazuh-wui') -or
-        ($Password -notmatch '^[A-Za-z0-9.*+?\-]{24,64}$' -and
+        ($Password -notmatch $(if ($AllowObserveOnlyPassword) {
+                '^[A-Za-z0-9.*+?\-]{8,64}$'
+            } else {
+                '^[A-Za-z0-9.*+?\-]{24,64}$'
+            }) -and
          -not $knownDefaultCredential)) {
         throw 'A Wazuh local request credential violates the generated-secret contract.'
     }
@@ -483,7 +560,8 @@ function Test-SocLoopbackBasicAuth {
         [Parameter(Mandatory)][uri]$Uri,
         [Parameter(Mandatory)][string]$UserName,
         [Parameter(Mandatory)][string]$Password,
-        [ValidateSet('GET','POST')][string]$Method = 'GET'
+        [ValidateSet('GET','POST')][string]$Method = 'GET',
+        [switch]$AllowObserveOnlyPassword
     )
 
     $response = Invoke-SocLoopbackRequest `
@@ -491,7 +569,8 @@ function Test-SocLoopbackBasicAuth {
         -Method $Method `
         -Uri $Uri `
         -UserName $UserName `
-        -Password $Password
+        -Password $Password `
+        -AllowObserveOnlyPassword:$AllowObserveOnlyPassword
     try {
         if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300) {
             return $true
@@ -509,7 +588,8 @@ function Get-SocWazuhProbeAlerts {
     param(
         [Parameter(Mandatory)][string[]]$File,
         [Parameter(Mandatory)][string]$TakeId,
-        [Parameter(Mandatory)][string]$AdminPassword
+        [Parameter(Mandatory)][string]$AdminPassword,
+        [switch]$AllowObserveOnlyPassword
     )
 
     $query = [ordered]@{
@@ -530,7 +610,8 @@ function Get-SocWazuhProbeAlerts {
         -Uri 'https://127.0.0.1:9200/wazuh-alerts-4.x-*/_search' `
         -UserName admin `
         -Password $AdminPassword `
-        -Body $query
+        -Body $query `
+        -AllowObserveOnlyPassword:$AllowObserveOnlyPassword
     try {
         if ($response.StatusCode -ne 200) {
             throw 'The Wazuh safe-probe query was rejected.'
@@ -865,7 +946,11 @@ function Assert-SocHardeningEvidenceRecord {
         $checkedAt -lt $NotBeforeUtc.ToUniversalTime()) {
         throw 'The Wazuh hardening Evidence checked_at is not a fresh UTC timestamp.'
     }
-    if ((Get-SocJsonStringProperty -Object $Record -Name 'wazuh_version') -cne '4.14.7') {
+    $wazuhVersion = Get-SocJsonStringProperty -Object $Record -Name 'wazuh_version'
+    $wazuhMajorVersion = Get-SocJsonIntegerProperty -Object $Record -Name 'wazuh_major_version'
+    if ($wazuhVersion -cne '4.14.7' -or
+        $wazuhVersion -notmatch '^4\.\d+\.\d+$' -or
+        $wazuhMajorVersion -ne 4) {
         throw 'The Wazuh hardening Evidence version is unsupported.'
     }
     foreach ($name in @('local_only_ports','named_volumes_removed','named_volumes_identical_before_after','secrets_printed','wazuh_authentication_verified','wazuh_credential_rotation_observed')) {
@@ -1206,10 +1291,12 @@ $apiPassword = $null
 $shuffleApiKey = $null
 $shuffleWebhookUrl = $null
 $shuffleHeaderKey = $null
+$allowObserveOnlyPassword = $false
 $takeRecord = $null
 $shuffleAllowRegistered = $false
 $configuration = $null
 $shuffleWorkflowStage = 'not_checked'
+$preflightHardeningMode = 'not_checked'
 $gateB5Evidence = $null
 $shuffleCloudProvenance = $null
 $githubState = $null
@@ -1220,7 +1307,7 @@ try {
         throw 'An active or unclean SOC session exists. Run Stop-SocLab before starting another session.'
     }
     $requiredCommands = @('terraform','aws','docker','pwsh')
-    if ($Scope -ceq 'full') { $requiredCommands += @('gh','ssh') }
+    if ($Scope -ceq 'full' -and $ResponseMode -ceq 'contain') { $requiredCommands += @('gh','ssh') }
     foreach ($name in $requiredCommands) {
         if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
             throw "Required command is unavailable: $name"
@@ -1288,12 +1375,20 @@ try {
     if (([datetimeoffset]$dailySession.HardDeadlineAtUtc - [datetimeoffset]::UtcNow).TotalMinutes -lt $MinimumDailyRemainingMinutes) {
         throw "The Active Daily Session has less than $MinimumDailyRemainingMinutes minutes remaining."
     }
-    $hardeningEvidence = Invoke-SocFreshHardeningEvidence `
-        -WazuhRoot $wazuhRoot `
-        -EvidenceRoot $EvidenceRoot `
-        -SecretRoot $resolvedSecretRoot `
-        -NotBeforeUtc ([datetimeoffset]$dailySession.StartedAtUtc)
-    $hardeningEvidencePath = [string]$hardeningEvidence.Path
+    $preflightRuntimeState = Get-SocWazuhPreflightRuntimeState `
+        -ComposePath $baseComposePath
+    if ([string]$preflightRuntimeState.Mode -ceq 'running') {
+        $hardeningEvidence = Invoke-SocFreshHardeningEvidence `
+            -WazuhRoot $wazuhRoot `
+            -EvidenceRoot $EvidenceRoot `
+            -SecretRoot $resolvedSecretRoot `
+            -NotBeforeUtc ([datetimeoffset]$dailySession.StartedAtUtc)
+        $preflightHardeningMode = 'verified_existing'
+    } else {
+        $hardeningEvidence = $null
+        $preflightHardeningMode = 'deferred_stopped_runtime'
+    }
+    $hardeningEvidencePath = if ($hardeningEvidence) { [string]$hardeningEvidence.Path } else { $null }
 
     $identity = Invoke-SocNativeCapture -FilePath 'aws' -Arguments @(
         'sts','get-caller-identity','--profile',[string]$configuration.aws_profile,
@@ -1341,14 +1436,26 @@ try {
             $webhookUri.AbsolutePath -notmatch "^/api/v1/(?:hooks/(?:webhook_)?$webhookId|webhooks/webhook_$webhookId)$") {
             throw 'The protected Shuffle Webhook URL does not match the configured trigger.'
         }
-        $shuffleWorkflow = Get-ShuffleSocWorkflow `
-            -WorkflowId ([string]$configuration.shuffle_workflow_id) `
-            -WebhookId ([string]$configuration.shuffle_webhook_id) `
-            -ApiKey $shuffleApiKey `
-            -OrgId ([string]$configuration.shuffle_org_id) `
-            -BaseUri ([uri][string]$configuration.shuffle_api_base)
-        $shuffleWorkflowStage = 'core'
+        if ($ResponseMode -ceq 'observe_only') {
+            $shuffleWorkflow = Get-ShuffleSocObserveOnlyWorkflow `
+                -WorkflowId ([string]$configuration.shuffle_workflow_id) `
+                -WebhookId ([string]$configuration.shuffle_webhook_id) `
+                -ExpectedHeaderValue $shuffleHeaderKey `
+                -ApiKey $shuffleApiKey `
+                -OrgId ([string]$configuration.shuffle_org_id) `
+                -BaseUri ([uri][string]$configuration.shuffle_api_base)
+            $shuffleWorkflowStage = 'observe_only'
+        } else {
+            $shuffleWorkflow = Get-ShuffleSocWorkflow `
+                -WorkflowId ([string]$configuration.shuffle_workflow_id) `
+                -WebhookId ([string]$configuration.shuffle_webhook_id) `
+                -ApiKey $shuffleApiKey `
+                -OrgId ([string]$configuration.shuffle_org_id) `
+                -BaseUri ([uri][string]$configuration.shuffle_api_base)
+            $shuffleWorkflowStage = 'core'
+        }
     }
+    $allowObserveOnlyPassword = ($ResponseMode -ceq 'observe_only')
     if ($Scope -ceq 'full' -and $ResponseMode -ceq 'contain') {
         [void](Assert-ShuffleSocProductionWorkflow `
             -Workflow $shuffleWorkflow `
@@ -1378,7 +1485,7 @@ try {
         }
         $shuffleWorkflowStage = 'production'
     }
-    if ($Scope -ceq 'full') {
+    if ($Scope -ceq 'full' -and $ResponseMode -ceq 'contain') {
         $githubState = Get-SocGithubState -Configuration $configuration
         $argoState = Get-SocArgoState -Configuration $configuration -ExpectedRevision $githubState.Sha
     }
@@ -1394,8 +1501,10 @@ try {
         )
         $liveStream.Dispose()
     }
-    $adminHash = Get-WazuhPasswordHash -Password $adminPassword
-    $kibanaHash = Get-WazuhPasswordHash -Password $kibanaPassword
+    $adminHash = Get-WazuhPasswordHash -Password $adminPassword `
+        -AllowObserveOnlyPassword:$allowObserveOnlyPassword
+    $kibanaHash = Get-WazuhPasswordHash -Password $kibanaPassword `
+        -AllowObserveOnlyPassword:$allowObserveOnlyPassword
     $internalUsersText = Get-Content -LiteralPath $internalUsersSourcePath -Raw
     $internalUsersText = Set-WazuhInternalUserHashText `
         -Text $internalUsersText -UserName admin -Hash $adminHash
@@ -1403,7 +1512,8 @@ try {
         -Text $internalUsersText -UserName kibanaserver -Hash $kibanaHash
     $dashboardText = Set-WazuhDashboardApiPasswordText `
         -Text (Get-Content -LiteralPath $dashboardSourcePath -Raw) `
-        -Password $apiPassword
+        -Password $apiPassword `
+        -AllowObserveOnlyPassword:$allowObserveOnlyPassword
     $managerText = if ($Scope -ceq 'full') {
         Add-WazuhManagerSocIntegrationText `
             -ManagerConfigText (Get-Content -LiteralPath $managerSourcePath -Raw) `
@@ -1429,7 +1539,8 @@ try {
     $secretOverride = New-WazuhSecretOverrideText -Phase Final `
         -InternalUsersPath $internalUsersPath -AdminPassword $adminPassword `
         -KibanaserverPassword $kibanaPassword -ApiPassword $apiPassword `
-        -DashboardConfigPath $dashboardPath
+        -DashboardConfigPath $dashboardPath `
+        -AllowObserveOnlyPassword:$allowObserveOnlyPassword
     $secretOverridePath = Write-SocRuntimeSecretFile -SessionId $runtimeSessionId `
         -RelativePath 'compose\docker-compose.secrets.yml' -Content $secretOverride -RuntimeRoot $resolvedRuntimeRoot
     $socOverride = if ($Scope -ceq 'full') {
@@ -1476,9 +1587,12 @@ try {
         [void](Invoke-SocComposeCapture -File $composeFiles -Arguments $command `
             -FailureMessage 'The Wazuh Manager configuration, module, Rule, or integration test failed.')
     }
-    if (-not (Test-SocLoopbackBasicAuth -File $composeFiles -Uri 'https://127.0.0.1:9200/' -UserName admin -Password $adminPassword) -or
-        -not (Test-SocLoopbackBasicAuth -File $composeFiles -Uri 'https://127.0.0.1:9200/_plugins/_security/authinfo' -UserName kibanaserver -Password $kibanaPassword) -or
-        -not (Test-SocLoopbackBasicAuth -File $composeFiles -Uri 'https://127.0.0.1:55000/security/user/authenticate?raw=true' -Method POST -UserName wazuh-wui -Password $apiPassword)) {
+    if (-not (Test-SocLoopbackBasicAuth -File $composeFiles -Uri 'https://127.0.0.1:9200/' -UserName admin -Password $adminPassword `
+            -AllowObserveOnlyPassword:$allowObserveOnlyPassword) -or
+        -not (Test-SocLoopbackBasicAuth -File $composeFiles -Uri 'https://127.0.0.1:9200/_plugins/_security/authinfo' -UserName kibanaserver -Password $kibanaPassword `
+            -AllowObserveOnlyPassword:$allowObserveOnlyPassword) -or
+        -not (Test-SocLoopbackBasicAuth -File $composeFiles -Uri 'https://127.0.0.1:55000/security/user/authenticate?raw=true' -Method POST -UserName wazuh-wui -Password $apiPassword `
+            -AllowObserveOnlyPassword:$allowObserveOnlyPassword)) {
         throw 'A Wazuh credential was rejected during the READY authentication verification.'
     }
     if (Test-SocLoopbackBasicAuth -File $composeFiles -Uri 'https://127.0.0.1:9200/' -UserName admin -Password ('Secret'+'Password')) {
@@ -1535,7 +1649,8 @@ try {
     $probeHits = @()
     do {
         $probeHits = @(Get-SocWazuhProbeAlerts -File $composeFiles `
-            -TakeId $probeTakeId -AdminPassword $adminPassword)
+            -TakeId $probeTakeId -AdminPassword $adminPassword `
+            -AllowObserveOnlyPassword:$allowObserveOnlyPassword)
         if ($probeHits.Count -eq 1) { break }
         if ($probeHits.Count -gt 1) {
             throw 'The harmless Rule 100102 probe produced duplicate Wazuh alerts.'
@@ -1556,7 +1671,7 @@ try {
     $takeRecord = New-SocTakeRecord -TakeId $takeId `
         -ResponseMode $ResponseMode -LifetimeMinutes $TakeLifetimeMinutes
     [void](Write-SocTakeRecord -Record $takeRecord -RuntimeRoot $sessionPath)
-    if ($Scope -ceq 'full') {
+    if ($Scope -ceq 'full' -and $ResponseMode -ceq 'contain') {
         $shuffleAllow = Register-ShuffleSocTake `
             -TakeRecord $takeRecord `
             -OrgId ([string]$configuration.shuffle_org_id) `
@@ -1590,6 +1705,7 @@ try {
         wazuh_local_only_ports     = $true
         wazuh_authentication_verified = $true
         wazuh_credential_rotation_observed = [bool]$hardeningEvidence.Record.wazuh_credential_rotation_observed
+        wazuh_preflight_hardening     = $preflightHardeningMode
         bridge_pid                 = $bridgeProcess.Id
         bridge_state               = [string]$bridgeHeartbeat.state
         bridge_dlq_visible         = [int]$bridgeHeartbeat.dlq_visible

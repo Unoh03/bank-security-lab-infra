@@ -263,9 +263,33 @@ function New-G4ExpectedBody {
         }
         integrity=[ordered]@{raw_message_sha256=[string]$AlertRecord.raw_message_sha256}
     }
-    $bodyHash = Get-G4Sha256 (ConvertTo-G4CanonicalJson $body)
-    $body.integrity.body_sha256 = $bodyHash
+    $body.integrity.body_sha256 = Get-G4CanonicalBodySha256 -Body $body
     return $body
+}
+
+function Get-G4CanonicalBodySha256 {
+    param([Parameter(Mandatory)][object]$Body)
+
+    $bodyWithoutHash = ConvertTo-G4OrderedValue -Value $Body
+    if ($bodyWithoutHash -isnot [Collections.IDictionary] -or
+        -not $bodyWithoutHash.Contains('integrity')) {
+        Throw-G4Failure payload_mismatch
+    }
+    $integrity = $bodyWithoutHash['integrity']
+    if ($integrity -isnot [Collections.IDictionary]) { Throw-G4Failure payload_mismatch }
+    if ($integrity.Contains('body_sha256')) { [void]$integrity.Remove('body_sha256') }
+    return Get-G4Sha256 (ConvertTo-G4CanonicalJson $bodyWithoutHash)
+}
+
+function Assert-G4CanonicalBodyIntegrity {
+    param([Parameter(Mandatory)][object]$Body)
+
+    $integrity = Get-G4Property $Body 'integrity'
+    $provided = [string](Get-G4Property $integrity 'body_sha256')
+    if ($provided -cnotmatch $script:G4Sha256Pattern) { Throw-G4Failure payload_mismatch }
+    $recomputed = Get-G4CanonicalBodySha256 -Body $Body
+    if ($provided -cne $recomputed) { Throw-G4Failure payload_mismatch }
+    return $recomputed
 }
 
 function Get-G4RepeatObservation {
@@ -410,6 +434,7 @@ function Invoke-G4Phase {
         if (-not $eventId -or $byEvent.ContainsKey($eventId)) { Throw-G4Failure execution_duplicate }
         $alert = @($alerts | Where-Object { $_.event_id -ceq $eventId })
         if ($alert.Count -ne 1) { Throw-G4Failure execution_contract }
+        $canonicalBodySha256 = Assert-G4CanonicalBodyIntegrity -Body $argument
         $expected = New-G4ExpectedBody -AlertRecord $alert[0] -SentAtUtc (Get-G4Property $argument 'sent_at_utc')
         if (-not (Test-G4SemanticEqual $expected $argument)) { Throw-G4Failure payload_mismatch }
         $repeat = $repeatObservation.Value
@@ -426,14 +451,17 @@ function Invoke-G4Phase {
         if ($bridgeTime -lt $eventTime.AddSeconds(-$MaxClockSkewSeconds) -or
             $alertTime -lt $eventTime.AddSeconds(-$MaxClockSkewSeconds) -or
             $executionTime -lt $alertTime.AddSeconds(-$MaxClockSkewSeconds)) { Throw-G4Failure clock_skew }
-        $latency = [math]::Round(($executionTime-$alertTime).TotalSeconds,3)
-        $bodySha = [string](Get-G4Property (Get-G4Property $argument 'integrity') 'body_sha256')
-        if ($bodySha -cnotmatch $script:G4Sha256Pattern) { Throw-G4Failure payload_mismatch }
+        if ($executionTime -lt $alertTime) { Throw-G4Failure clock_skew }
+        $latencyMilliseconds = [long]([math]::Round(
+            (($executionTime-$alertTime).Ticks / [double][TimeSpan]::TicksPerMillisecond),
+            0,
+            [MidpointRounding]::AwayFromZero
+        ))
         $record = [ordered]@{
             take_id=$TakeId;event_id=$eventId;wazuh_alert_id=[string]$alert[0].wazuh_alert_id
-            raw_message_sha256=[string]$alert[0].raw_message_sha256;body_sha256=$bodySha
-            shuffle_execution_id=$executionId;alert_timestamp_utc=$alertTime.ToString('o')
-            execution_timestamp_utc=$executionTime.ToString('o');latency_seconds=$latency
+            raw_message_sha256=[string]$alert[0].raw_message_sha256;canonical_body_sha256=$canonicalBodySha256
+            shuffle_execution_id=$executionId;alert_timestamp=$alertTime.ToString('o')
+            execution_timestamp=$executionTime.ToString('o');alert_to_execution_latency_ms=$latencyMilliseconds
         }
         $byEvent[$eventId]=$record;$records.Add([pscustomobject]$record)
     }

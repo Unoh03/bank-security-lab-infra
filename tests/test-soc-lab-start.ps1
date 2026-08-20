@@ -22,6 +22,7 @@ function Assert-NotMatch {
 }
 
 Assert-Match "ConfirmStart\s+-cne\s+'START SOC LAB'" 'Start lacks its exact mutation confirmation.'
+Assert-Match '\$Scope\s*=\s*\$Scope\.ToLowerInvariant\(\)[\s\S]*?\$ResponseMode\s*=\s*\$ResponseMode\.ToLowerInvariant\(\)' 'Start does not normalize case-insensitive ValidateSet values before case-sensitive routing.'
 Assert-Match "ValidateSet\('detection_only','full'\)[\s\S]*?Scope\s*=\s*'detection_only'" 'Start does not default to the bounded Detection-only scope.'
 Assert-Match "ResponseMode\s+-ceq\s+'contain'[\s\S]*?Scope\s+-cne\s+'full'" 'Start allows containment without the Full SOC scope.'
 Assert-Match "if \(\`$Scope -ceq 'full'\) \{[\s\S]*?SocLab\.Shuffle\.psm1[\s\S]*?SocLab\.Configuration\.psm1" 'Detection-only still imports the Full Shuffle/configuration modules.'
@@ -35,6 +36,8 @@ Assert-Match 'daily_hard_deadline_at_utc' 'Start does not bind READY to the Dail
 Assert-Match 'runtime_profile[\s\S]*?minimal' 'Start does not verify the minimal Runtime.'
 Assert-Match 'Assert-SocDvWaLow' 'Start does not verify the DVWA low baseline.'
 Assert-Match 'Get-ShuffleSocWorkflow' 'Start does not read back the frozen Shuffle Workflow.'
+Assert-Match 'Get-ShuffleSocObserveOnlyWorkflow' 'OBSERVE_ONLY does not read back its dedicated Shuffle Workflow contract.'
+Assert-Match "ResponseMode\s+-ceq\s+'observe_only'[\s\S]*?Get-ShuffleSocObserveOnlyWorkflow[\s\S]*?shuffleWorkflowStage\s*=\s*'observe_only'" 'OBSERVE_ONLY does not use the observe-only Workflow assertion and evidence stage.'
 Assert-Match "ResponseMode\s+-ceq\s+'contain'[\s\S]*?Assert-ShuffleSocProductionWorkflow[\s\S]*?shuffleWorkflowStage\s*=\s*'production'" 'Contain READY does not require the strict Production Workflow export contract.'
 Assert-Match "ResponseMode\s+-ceq\s+'contain'[\s\S]*?Get-ShuffleSocAppUploadEvidence[\s\S]*?Get-ShuffleSocCloudProvenance[\s\S]*?authentication_active[\s\S]*?secret_value_inspected" 'Contain READY does not bind the Workflow to the uploaded private Apps and encrypted Dispatcher Authentication.'
 Assert-Match "ResponseMode\s+-ceq\s+'contain'[\s\S]*?Assert-ShuffleSocGateB5Evidence" 'Contain READY does not require prior Gate B5 Runtime atomicity Evidence.'
@@ -44,9 +47,12 @@ Assert-Match 'shuffle_cloud_provenance[\s\S]*?validator_app_id[\s\S]*?dispatcher
 Assert-Match 'shuffle_gate_b5_evidence[\s\S]*?manifest_sha256[\s\S]*?workflow_core_sha256' 'READY Evidence does not bind the prior Gate B5 manifest and core fingerprint.'
 Assert-Match 'Get-SocGithubState' 'Start does not verify both remote GitHub Workflows and main.'
 Assert-Match 'Get-SocArgoState' 'Start does not verify exact Argo health and revision.'
+Assert-Match "if \(\`$Scope -ceq 'full' -and \`$ResponseMode -ceq 'contain'\) \{[\s\S]*?\`$githubState = Get-SocGithubState[\s\S]*?\`$argoState = Get-SocArgoState" 'OBSERVE_ONLY still requires GitHub or Argo reads.'
 Assert-Match 'Assert-SocEffectiveCompose' 'Start does not inspect its effective local-only Compose configuration.'
 Assert-Match 'Read-SocHardeningEvidence' 'Start does not read the hardening Evidence.'
 Assert-Match 'Read-DailySessionState[\s\S]*?Invoke-SocFreshHardeningEvidence[\s\S]*?-NotBeforeUtc \(\[datetimeoffset\]\$dailySession\.StartedAtUtc\)' 'Start does not bind fresh hardening Evidence to the Active Daily Session start.'
+Assert-Match 'Get-SocWazuhPreflightRuntimeState[\s\S]*?deferred_stopped_runtime[\s\S]*?partial or mixed' 'Start does not classify stopped versus partial Wazuh preflight state fail-closed.'
+Assert-Match 'preflightRuntimeState\.Mode[\s\S]*?verified_existing[\s\S]*?deferred_stopped_runtime' 'Start does not defer fresh preflight only for an entirely stopped/absent runtime.'
 Assert-Match 'invocationStartedAtUtc[\s\S]*?minimumCheckedAtUtc[\s\S]*?Read-SocHardeningEvidence' 'Start allows a pre-existing hardening Evidence file to satisfy a fresh preflight.'
 Assert-Match '-EvidencePath \$evidencePath[\s\S]*?-ExpectedSha256 \$evidenceSha256[\s\S]*?-ExpectedRuntimeSessionId \$runtimeSessionId' 'Start does not consume the exact path, hash, and runtime ID returned by the fresh runner.'
 Assert-Match 'TotalMinutes -gt 30' 'Start does not enforce the 30-minute hardening Evidence age limit.'
@@ -70,6 +76,8 @@ Assert-Match 'bridgeLiveFilePath[\s\S]*?FileMode\]::CreateNew[\s\S]*?LiveSpoolPa
 Assert-Match '--config[\s\S]*?RedirectStandardInput\s*=\s*\$true[\s\S]*?StandardInput\.WriteLine' 'Start does not pass loopback credentials through curl configuration on standard input.'
 Assert-Match "Port -eq 9200[\s\S]*?'wazuh\.indexer'[\s\S]*?'localhost'[\s\S]*?/var/ossec/api/configuration/ssl/server\.crt" 'Start does not verify the Wazuh API against its localhost-only server certificate.'
 Assert-Match "official default admin credential[\s\S]*?official default kibanaserver credential[\s\S]*?official default wazuh-wui credential" 'Post-start READY checks do not reject all three official Wazuh defaults.'
+Assert-Match '\$knownDefaultCredential\s*=\s*\([\s\S]*?admin[\s\S]*?Secret.*?Password[\s\S]*?kibanaserver[\s\S]*?kibana.*?server[\s\S]*?wazuh-wui[\s\S]*?MyS3cr37P450r' 'Loopback negative probes do not whitelist all three exact official default credentials.'
+Assert-Match '-notmatch[\s\S]*?-and[\s\S]*?-not \$knownDefaultCredential' 'Loopback requests no longer reject arbitrary credentials outside the generated-secret contract.'
 Assert-Match 'official default wazuh-wui credential[\s\S]*?Invoke-SocFreshHardeningEvidence[\s\S]*?\$hardeningEvidencePath' 'READY is not rebound to a fresh post-start container, port, volume, and six-probe observation.'
 Assert-Match 'Wait-SocBridgeReady[\s\S]*?dlq_visible[\s\S]*?queue_oldest_age_seconds' 'Start does not enforce the Bridge heartbeat readiness contract.'
 Assert-Match "Invoke-WazuhPushValidation\.ps1[\s\S]*?SEND WAZUH PUSH VALIDATION" 'Start does not execute the harmless Rule 100102 probe.'
@@ -77,6 +85,9 @@ Assert-Match "rule\.id'\s*=\s*'100102'[\s\S]*?data\.payload\.take_id" 'Start doe
 Assert-Match 'ConvertTo-SocProcessArgument[\s\S]*?bridgeArgumentLine[\s\S]*?-ArgumentList \$bridgeArgumentLine' 'Start does not preserve multiword confirmations and spaced paths when spawning the Bridge.'
 Assert-Match 'hooks/\(\?:webhook_\)\?\$webhookId\|webhooks/webhook_\$webhookId' 'Start does not accept the bounded Shuffle Cloud hooks/webhook_UUID endpoint shape.'
 Assert-Match 'Register-ShuffleSocTake[\s\S]*?Set-SocTakeStatus[\s\S]*?READY' 'Start does not register and verify the TAKE before READY.'
+Assert-Match "if \(\`$Scope -ceq 'full' -and \`$ResponseMode -ceq 'contain'\) \{[\s\S]*?Register-ShuffleSocTake" 'OBSERVE_ONLY still registers a Shuffle Datastore TAKE.'
+Assert-Match "requiredCommands[\s\S]*?Scope -ceq 'full' -and \`$ResponseMode -ceq 'contain'[\s\S]*?gh','ssh" 'OBSERVE_ONLY still requires gh or ssh.'
+Assert-Match 'Skipped in OBSERVE_ONLY: GitHub, Argo CD, Shuffle Datastore TAKE registration' 'The preview does not disclose OBSERVE_ONLY exclusions.'
 Assert-Match 'SOC_LAB_READY=yes[\s\S]*?ACTIVE_TAKE_ID=[\s\S]*?RESPONSE_MODE=[\s\S]*?READY_EVIDENCE=' 'Start lacks the frozen four-line READY output.'
 Assert-Match "Invoke-SocComposeCapture[\s\S]*?Arguments @\('down'\)" 'Start does not stop Wazuh on partial failure before deleting Runtime Secrets.'
 Assert-NotMatch "Invoke-SocNativeCapture\s+-FilePath\s+'terraform'[\s\S]{0,240}'(apply|destroy)'|Invoke-SocNativeCapture\s+-FilePath\s+'gh'[\s\S]{0,300}'--method','(POST|PUT|PATCH|DELETE)'" 'Start contains a forbidden Terraform or GitHub mutation.'
@@ -137,6 +148,84 @@ try {
 }
 if (-not $foreignArnRejected) {
     throw 'The Queue URL fallback accepted a foreign account ARN.'
+}
+
+$preflightFunction = $ast.Find({
+    param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -ceq 'Get-SocWazuhPreflightRuntimeState'
+}, $true)
+if ($null -eq $preflightFunction) {
+    throw 'The Wazuh preflight runtime classifier could not be loaded for its mock contract test.'
+}
+Invoke-Expression $preflightFunction.Extent.Text
+$script:preflightIds = @{}
+$script:preflightStates = @{}
+$preflightComposeAdapter = {
+    param([string[]]$File,[string[]]$Arguments)
+    [string]$script:preflightIds[[string]$Arguments[-1]]
+}
+$preflightInspectAdapter = {
+    param([string]$ContainerId)
+    [string]$script:preflightStates[$ContainerId]
+}
+$script:preflightIds = @{
+    'wazuh.manager' = ('a' * 64)
+    'wazuh.indexer' = ('b' * 64)
+    'wazuh.dashboard' = ('c' * 64)
+}
+$script:preflightStates = @{
+    (('a' * 64)) = 'running'
+    (('b' * 64)) = 'running'
+    (('c' * 64)) = 'running'
+}
+$runningState = Get-SocWazuhPreflightRuntimeState -ComposePath 'C:\fixture\docker-compose.yml' `
+    -ComposeAdapter $preflightComposeAdapter -InspectAdapter $preflightInspectAdapter
+if ([string]$runningState.Mode -cne 'running') {
+    throw 'The Wazuh preflight classifier did not accept exactly one running container per service.'
+}
+$script:preflightStates[('a' * 64)] = 'exited'
+$script:preflightStates[('b' * 64)] = 'exited'
+$script:preflightStates[('c' * 64)] = 'exited'
+$stoppedState = Get-SocWazuhPreflightRuntimeState -ComposePath 'C:\fixture\docker-compose.yml' `
+    -ComposeAdapter $preflightComposeAdapter -InspectAdapter $preflightInspectAdapter
+if ([string]$stoppedState.Mode -cne 'deferred_stopped_runtime') {
+    throw 'The Wazuh preflight classifier did not defer an entirely stopped runtime.'
+}
+$script:preflightIds['wazuh.manager'] = ''
+$mixedStoppedRejected = $false
+try {
+    [void](Get-SocWazuhPreflightRuntimeState -ComposePath 'C:\fixture\docker-compose.yml' `
+        -ComposeAdapter $preflightComposeAdapter -InspectAdapter $preflightInspectAdapter)
+} catch {
+    $mixedStoppedRejected = $_.Exception.Message -match 'partial or mixed'
+}
+if (-not $mixedStoppedRejected) {
+    throw 'The Wazuh preflight classifier accepted a mixed absent/stopped runtime.'
+}
+$script:preflightIds['wazuh.manager'] = ('a' * 64)
+$script:preflightStates[('a' * 64)] = 'running'
+$partialRejected = $false
+try {
+    [void](Get-SocWazuhPreflightRuntimeState -ComposePath 'C:\fixture\docker-compose.yml' `
+        -ComposeAdapter $preflightComposeAdapter -InspectAdapter $preflightInspectAdapter)
+} catch {
+    $partialRejected = $_.Exception.Message -match 'partial or mixed'
+}
+if (-not $partialRejected) {
+    throw 'The Wazuh preflight classifier accepted a partial runtime.'
+}
+$script:preflightStates[('a' * 64)] = 'running'
+$script:preflightIds['wazuh.manager'] = (('a' * 64) + "`n" + ('d' * 64))
+$duplicateRejected = $false
+try {
+    [void](Get-SocWazuhPreflightRuntimeState -ComposePath 'C:\fixture\docker-compose.yml' `
+        -ComposeAdapter $preflightComposeAdapter -InspectAdapter $preflightInspectAdapter)
+} catch {
+    $duplicateRejected = $_.Exception.Message -match 'duplicate containers'
+}
+if (-not $duplicateRejected) {
+    throw 'The Wazuh preflight classifier accepted duplicate containers.'
 }
 
 Write-Host 'SOC lab one-command READY static tests passed.'

@@ -243,6 +243,173 @@ function Assert-ShuffleSocWorkflow {
     return $Workflow
 }
 
+function Get-ShuffleSocObserveOnlyHeaderValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Trigger,
+        [Parameter(Mandatory)][string]$ExpectedHeaderValue
+    )
+
+    $configuredHeaders = [Collections.Generic.List[string]]::new()
+    foreach ($propertyName in @('auth','authentication')) {
+        $property = $Trigger.PSObject.Properties[$propertyName]
+        if ($null -ne $property -and
+            -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+            $configuredHeaders.Add([string]$property.Value)
+        }
+    }
+    $parameterHeaders = if ($null -ne $Trigger.PSObject.Properties['parameters']) {
+        @($Trigger.parameters | Where-Object {
+            $null -ne $_ -and
+            [string]$_.name -match '(?i)^(auth|auth_headers|authentication)$'
+        })
+    } else {
+        @()
+    }
+    foreach ($parameter in $parameterHeaders) {
+        if ([string]::IsNullOrWhiteSpace([string]$parameter.value)) {
+            throw 'The observe-only Shuffle Webhook authentication parameter is empty.'
+        }
+        $configuredHeaders.Add([string]$parameter.value)
+    }
+    if ($configuredHeaders.Count -ne 1) {
+        throw 'The observe-only Shuffle Webhook must configure exactly one authentication header.'
+    }
+    $header = [string]$configuredHeaders[0]
+    $match = [regex]::Match(
+        $header,
+        '^\s*X-SOC-Webhook-Key\s*(?::|=)\s*(?<value>\S+)\s*$'
+    )
+    if (-not $match.Success -or $header -match '[\r\n]') {
+        throw 'The observe-only Shuffle Webhook authentication header is malformed or contains an extra header.'
+    }
+    $actualValue = [string]$match.Groups['value'].Value
+    if ($actualValue -cne $ExpectedHeaderValue) {
+        throw 'The observe-only Shuffle Webhook authentication header value does not match the protected secret.'
+    }
+    return $actualValue
+}
+
+function Assert-ShuffleSocObserveOnlyWorkflow {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Workflow,
+        [Parameter(Mandatory)][string]$WorkflowId,
+        [Parameter(Mandatory)][string]$WebhookId,
+        [Parameter(Mandatory)][string]$ExpectedHeaderValue
+    )
+
+    Assert-ShuffleUuid -Value $WorkflowId -Label 'Shuffle Workflow ID'
+    Assert-ShuffleUuid -Value $WebhookId -Label 'Shuffle Webhook ID'
+    if ([string]$Workflow.id -cne $WorkflowId -or
+        [string]$Workflow.sharing -cne 'private' -or
+        [bool]$Workflow.is_valid -ne $true) {
+        throw 'The observe-only Shuffle Workflow identity, sharing, or validity does not match the frozen contract.'
+    }
+    if ([string]::IsNullOrWhiteSpace($ExpectedHeaderValue)) {
+        throw 'The expected observe-only Shuffle Webhook header value is empty.'
+    }
+
+    $allTriggers = @($Workflow.triggers)
+    if ($allTriggers.Count -ne 1) {
+        throw 'The observe-only Shuffle Workflow must contain exactly one trigger.'
+    }
+    $trigger = $allTriggers[0]
+    if ([string]$trigger.id -cne $WebhookId) {
+        throw 'The observe-only Shuffle Webhook trigger is absent from the Workflow.'
+    }
+    $triggerType = if ($null -ne $trigger.PSObject.Properties['trigger_type']) {
+        [string]$trigger.trigger_type
+    } elseif ($null -ne $trigger.PSObject.Properties['type']) {
+        [string]$trigger.type
+    } else {
+        ''
+    }
+    if ($triggerType.ToLowerInvariant() -cne 'webhook') {
+        throw 'The observe-only Shuffle trigger is not a webhook.'
+    }
+    $triggerStatus = if ($null -ne $trigger.PSObject.Properties['status']) {
+        [string]$trigger.status
+    } else {
+        ''
+    }
+    if ($triggerStatus.ToLowerInvariant() -notin @('running','active')) {
+        throw 'The observe-only Shuffle Webhook trigger is not active.'
+    }
+    [void](Get-ShuffleSocObserveOnlyHeaderValue `
+        -Trigger $trigger -ExpectedHeaderValue $ExpectedHeaderValue)
+
+    $actions = @($Workflow.actions)
+    if ($actions.Count -ne 1) {
+        throw 'The observe-only Shuffle Workflow must contain exactly one Action.'
+    }
+    $action = $actions[0]
+    if ([string]$action.app_name -cne 'Shuffle Tools' -or
+        [string]$action.name -cne 'repeat_back_to_me' -or
+        [string]::IsNullOrWhiteSpace([string]$action.id) -or
+        [string]::IsNullOrWhiteSpace([string]$action.label) -or
+        ([string]$action.label).Length -gt 128 -or
+        [string]::IsNullOrWhiteSpace([string]$action.app_version) -or
+        ([string]$action.app_version).Length -gt 64) {
+        throw 'The observe-only Shuffle Action is not Shuffle Tools/repeat_back_to_me.'
+    }
+    Assert-ShuffleUuid -Value ([string]$action.id) -Label 'Shuffle observe-only Action ID'
+    foreach ($propertyName in @(
+        'authentication_id','authentication','auth','authentication_ref','auth_id',
+        'app_authentication_id'
+    )) {
+        $property = $action.PSObject.Properties[$propertyName]
+        if ($null -ne $property -and
+            -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+            throw 'The observe-only Shuffle Action contains an authentication reference.'
+        }
+    }
+    $parameters = @($action.parameters)
+    if ($parameters.Count -ne 1 -or
+        [string]$parameters[0].name -cne 'call' -or
+        [string]$parameters[0].value -cne '$exec') {
+        throw 'The observe-only Shuffle Action must contain exactly one call=$exec parameter.'
+    }
+
+    $branches = @($Workflow.branches)
+    if ($branches.Count -ne 1) {
+        throw 'The observe-only Shuffle Workflow must contain exactly one trigger-to-Action branch.'
+    }
+    $branch = $branches[0]
+    Assert-ShuffleUuid -Value ([string]$branch.id) -Label 'Shuffle observe-only Branch ID'
+    $sourceId = if ($null -ne $branch.PSObject.Properties['source_id']) {
+        [string]$branch.source_id
+    } elseif ($null -ne $branch.PSObject.Properties['source']) {
+        [string]$branch.source
+    } else {
+        ''
+    }
+    $destinationId = if ($null -ne $branch.PSObject.Properties['destination_id']) {
+        [string]$branch.destination_id
+    } elseif ($null -ne $branch.PSObject.Properties['destination']) {
+        [string]$branch.destination
+    } else {
+        ''
+    }
+    if ($sourceId -cne $WebhookId -or $destinationId -cne [string]$action.id) {
+        throw 'The observe-only Shuffle branch is not trigger-to-repeat_back_to_me.'
+    }
+    foreach ($propertyName in @('condition','conditions')) {
+        $property = $branch.PSObject.Properties[$propertyName]
+        if ($null -eq $property -or $null -eq $property.Value -or
+            ($property.Value -is [string] -and [string]$property.Value -ceq '') -or
+            ($property.Value -is [Collections.IDictionary] -and $property.Value.Count -eq 0) -or
+            ($property.Value -is [Collections.IEnumerable] -and
+                $property.Value -isnot [string] -and @($property.Value).Count -eq 0) -or
+            ($property.Value -is [pscustomobject] -and
+                @($property.Value.PSObject.Properties).Count -eq 0)) {
+            continue
+        }
+        throw 'The observe-only Shuffle trigger-to-Action branch must be unconditional.'
+    }
+    return $Workflow
+}
+
 function Get-ShuffleActionParameterMap {
     param([Parameter(Mandatory)][object]$Action)
 
@@ -915,6 +1082,31 @@ function Get-ShuffleSocWorkflow {
         -WebhookId $WebhookId
 }
 
+function Get-ShuffleSocObserveOnlyWorkflow {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$WorkflowId,
+        [Parameter(Mandatory)][string]$WebhookId,
+        [Parameter(Mandatory)][string]$ExpectedHeaderValue,
+        [Parameter(Mandatory)][string]$ApiKey,
+        [Parameter(Mandatory)][string]$OrgId,
+        [uri]$BaseUri = 'https://shuffler.io/'
+    )
+
+    Assert-ShuffleUuid -Value $WorkflowId -Label 'Shuffle Workflow ID'
+    $workflow = Invoke-ShuffleApiRequest `
+        -Method GET `
+        -RelativePath "/api/v1/workflows/$WorkflowId" `
+        -ApiKey $ApiKey `
+        -OrgId $OrgId `
+        -BaseUri $BaseUri
+    return Assert-ShuffleSocObserveOnlyWorkflow `
+        -Workflow $workflow `
+        -WorkflowId $WorkflowId `
+        -WebhookId $WebhookId `
+        -ExpectedHeaderValue $ExpectedHeaderValue
+}
+
 function Get-ShuffleSocWorkflowExecutions {
     [CmdletBinding()]
     param(
@@ -1439,10 +1631,12 @@ function Wait-ShuffleSocObserveOnlyOutcomes {
 Export-ModuleMember -Function @(
     'Invoke-ShuffleApiRequest',
     'Assert-ShuffleSocWorkflow',
+    'Assert-ShuffleSocObserveOnlyWorkflow',
     'Assert-ShuffleSocGateB5Workflow',
     'Assert-ShuffleSocProductionWorkflow',
     'Assert-ShuffleSocGateB5Evidence',
     'Get-ShuffleSocWorkflow',
+    'Get-ShuffleSocObserveOnlyWorkflow',
     'Get-ShuffleSocWorkflowExecutions',
     'Get-ShuffleSocExecutionResult',
     'Get-ShuffleSocExecutionSummary',

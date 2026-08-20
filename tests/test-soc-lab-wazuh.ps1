@@ -39,6 +39,11 @@ $hashB = '$2y$12$' + ('B' * 53)
 $passwordA = 'AdminOnly-A9.*' + ('a' * 18)
 $passwordB = 'KibanaOnly-B8+?' + ('b' * 17)
 $passwordC = 'ApiOnly-C7.-' + ('c' * 20)
+$shortPassword = 'Aa1.-xyz'
+if ($moduleText -notmatch 'Get-WazuhPasswordHash[\s\S]*?AllowObserveOnlyPassword' -or
+    $moduleText -notmatch 'New-WazuhSecretOverrideText[\s\S]*?AllowObserveOnlyPassword') {
+    throw 'The Wazuh password compatibility switch is not threaded through the required functions.'
+}
 
 $internalUsers = @"
 _meta:
@@ -115,6 +120,52 @@ foreach ($defaultPattern in @(
 )) {
     if ($finalOverride -match $defaultPattern) {
         throw 'The final Compose override contains a Wazuh default credential.'
+    }
+}
+
+$relaxedOverride = New-WazuhSecretOverrideText `
+    -Phase Final `
+    -InternalUsersPath 'C:\runtime\short-users.yml' `
+    -AdminPassword $shortPassword `
+    -KibanaserverPassword $shortPassword `
+    -ApiPassword $shortPassword `
+    -DashboardConfigPath 'C:\runtime\short-wazuh.yml' `
+    -AllowObserveOnlyPassword
+if ($relaxedOverride -notmatch 'INDEXER_PASSWORD' -or
+    $relaxedOverride -notmatch [regex]::Escape($shortPassword)) {
+    throw 'The explicit OBSERVE_ONLY password switch did not accept the bounded 8-character fixture.'
+}
+$strictShortRejected = $false
+try {
+    [void](New-WazuhSecretOverrideText `
+        -Phase Final `
+        -InternalUsersPath 'C:\runtime\short-users.yml' `
+        -AdminPassword $shortPassword `
+        -KibanaserverPassword $shortPassword `
+        -ApiPassword $shortPassword `
+        -DashboardConfigPath 'C:\runtime\short-wazuh.yml')
+} catch { $strictShortRejected = $true }
+if (-not $strictShortRejected) {
+    throw 'The strict Wazuh password contract accepted the 8-character fixture.'
+}
+foreach ($defaultPassword in @(
+    ('Secret' + 'Password'),
+    ('kibana' + 'server'),
+    ('MyS3cr37P450r.' + '*-')
+)) {
+    $defaultRejected = $false
+    try {
+        [void](New-WazuhSecretOverrideText `
+            -Phase Final `
+            -InternalUsersPath 'C:\runtime\short-users.yml' `
+            -AdminPassword $shortPassword `
+            -KibanaserverPassword $shortPassword `
+            -ApiPassword $defaultPassword `
+            -DashboardConfigPath 'C:\runtime\short-wazuh.yml' `
+            -AllowObserveOnlyPassword)
+    } catch { $defaultRejected = $true }
+    if (-not $defaultRejected) {
+        throw 'The OBSERVE_ONLY password switch accepted an official Wazuh default credential.'
     }
 }
 

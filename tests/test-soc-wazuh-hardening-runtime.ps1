@@ -26,7 +26,8 @@ foreach ($required in @(
     'named_volumes_after_sha256',
     'CreatedAt',
     'MountpointSha256',
-    'evidence_sha256'
+    'evidence_sha256',
+    'wazuh_major_version'
 )) {
     if ($runnerText -notmatch [regex]::Escape($required)) {
         throw "The verify-only runtime runner is missing its required contract: $required"
@@ -61,6 +62,7 @@ $mockLabels = @{
         (Join-Path $fixtureWazuhRoot 'docker-compose.soc.override.yml'))
 }
 $mockLabelsByService = @{}
+$script:mockWazuhImageVersion = '4.14.7'
 $mockPorts = @{
     'wazuh.manager' = [ordered]@{
         '1514/tcp' = @([ordered]@{ HostIp='127.0.0.1'; HostPort='1514' })
@@ -132,15 +134,15 @@ try {
             $value = switch ($template) {
                 '{{json .Config.Labels}}' { $mockLabelsByService[$service] | ConvertTo-Json -Compress }
                 '{{json .State.Status}}' { '"running"' }
-                '{{json .Config.Image}}' { '"wazuh/wazuh-manager:4.14.7"' }
+                '{{json .Config.Image}}' { '"wazuh/wazuh-manager:' + $script:mockWazuhImageVersion + '"' }
                 '{{json .NetworkSettings.Ports}}' { $mockPorts[$service] | ConvertTo-Json -Depth 10 -Compress }
                 '{{json .Mounts}}' { $mockMounts[$service] | ConvertTo-Json -Depth 10 -Compress }
                 default { throw "unexpected inspect template: $template" }
             }
             if ($service -ceq 'wazuh.indexer') {
-                if ($template -ceq '{{json .Config.Image}}') { $value = '"wazuh/wazuh-indexer:4.14.7"' }
+                if ($template -ceq '{{json .Config.Image}}') { $value = '"wazuh/wazuh-indexer:' + $script:mockWazuhImageVersion + '"' }
             } elseif ($service -ceq 'wazuh.dashboard') {
-                if ($template -ceq '{{json .Config.Image}}') { $value = '"wazuh/wazuh-dashboard:4.14.7"' }
+                if ($template -ceq '{{json .Config.Image}}') { $value = '"wazuh/wazuh-dashboard:' + $script:mockWazuhImageVersion + '"' }
             }
             return [pscustomobject]@{ ExitCode=0; StdOut=[string]$value; StdErr='' }
         }
@@ -290,6 +292,8 @@ try {
     }
     if ([int]$record.schema_version -ne 1 -or
         [string]$record.producer_mode -cne 'verify_existing' -or
+        [string]$record.wazuh_version -cne '4.14.7' -or
+        [int]$record.wazuh_major_version -ne 4 -or
         [int]$record.mutation_summary.docker_mutations -ne 0 -or
         [int]$record.mutation_summary.wazuh_mutations -ne 0 -or
         [string]$record.new_admin_authentication -cne 'accepted' -or
@@ -349,6 +353,27 @@ try {
         (Test-Path -LiteralPath (Join-Path $testRoot 'invalid-status-evidence'))) {
         throw 'The verify-only runner did not fail closed on an invalid authentication status.'
     }
+
+    $script:mockWazuhImageVersion = '5.0.0'
+    $unsupportedVersionEvidenceRoot = Join-Path $testRoot 'unsupported-version-evidence'
+    $probeCountBeforeUnsupportedVersion = $mockProbeCalls.Count
+    $unsupportedVersionFailedClosed = $false
+    try {
+        Invoke-SocWazuhHardeningRuntimeEvidence `
+            -WazuhRoot $fixtureWazuhRoot `
+            -SecretRoot $testSecretRoot `
+            -EvidenceRoot $unsupportedVersionEvidenceRoot `
+            -CommandAdapter $mockCommandAdapter `
+            -HttpAdapter $mockHttpAdapter | Out-Null
+    } catch {
+        $unsupportedVersionFailedClosed = $_.Exception.Message -match 'outside the supported Wazuh 4\.x|not pinned to Wazuh'
+    }
+    if (-not $unsupportedVersionFailedClosed -or
+        (Test-Path -LiteralPath $unsupportedVersionEvidenceRoot) -or
+        $mockProbeCalls.Count -ne $probeCountBeforeUnsupportedVersion) {
+        throw 'The verify-only runner did not fail closed before integration assumptions on a non-4.x Wazuh image.'
+    }
+    $script:mockWazuhImageVersion = '4.14.7'
 
     # Simulate a volume recreation between the before/after snapshots. Both the
     # creation time and mountpoint identity change without changing the name.

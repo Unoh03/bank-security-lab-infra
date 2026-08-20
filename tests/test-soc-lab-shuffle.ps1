@@ -86,6 +86,89 @@ $workflow | Add-Member -NotePropertyName branches -NotePropertyValue @(
     -Workflow $workflow `
     -WorkflowId $workflowId `
     -WebhookId $webhookId)
+
+$observeActionId = '88888888-8888-4888-8888-888888888888'
+$observeWorkflow = [pscustomobject]@{
+    id       = $workflowId
+    name     = 'OBSERVE_ONLY'
+    sharing  = 'private'
+    is_valid = $true
+    triggers = @([pscustomobject]@{
+        id           = $webhookId
+        trigger_type = 'webhook'
+        status       = 'running'
+        auth         = 'X-SOC-Webhook-Key: synthetic-test-only'
+    })
+    actions = @([pscustomobject]@{
+        id         = $observeActionId
+        label      = 'repeat_back_to_me'
+        app_name   = 'Shuffle Tools'
+        app_version = '1.2.0'
+        name       = 'repeat_back_to_me'
+        parameters = @([pscustomobject]@{ name='call'; value='$exec' })
+    })
+    branches = @([pscustomobject]@{
+        id             = '99999999-9999-4999-8999-999999999999'
+        source_id      = $webhookId
+        destination_id = $observeActionId
+        conditions     = @()
+    })
+}
+[void](Assert-ShuffleSocObserveOnlyWorkflow `
+    -Workflow $observeWorkflow -WorkflowId $workflowId -WebhookId $webhookId `
+    -ExpectedHeaderValue 'synthetic-test-only')
+$observeEquals = $observeWorkflow | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+$observeEquals.triggers[0].auth = 'X-SOC-Webhook-Key=synthetic-test-only'
+[void](Assert-ShuffleSocObserveOnlyWorkflow `
+    -Workflow $observeEquals -WorkflowId $workflowId -WebhookId $webhookId `
+    -ExpectedHeaderValue 'synthetic-test-only')
+function Assert-ObserveOnlyRejected {
+    param([object]$Candidate,[string]$ExpectedMessage)
+    $rejected = $false
+    try {
+        [void](Assert-ShuffleSocObserveOnlyWorkflow `
+            -Workflow $Candidate -WorkflowId $workflowId -WebhookId $webhookId `
+            -ExpectedHeaderValue 'synthetic-test-only')
+    } catch {
+        $rejected = $_.Exception.Message -match $ExpectedMessage
+    }
+    if (-not $rejected) {
+        throw "Observe-only validator accepted an invalid fixture: $ExpectedMessage"
+    }
+}
+$observeMalformedHeader = $observeWorkflow | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+$observeMalformedHeader.triggers[0].auth = "X-SOC-Webhook-Key: synthetic-test-only`nX-Extra: rejected"
+Assert-ObserveOnlyRejected $observeMalformedHeader 'malformed or contains an extra header'
+$observeWrongSecret = $observeWorkflow | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+$observeWrongSecret.triggers[0].auth = 'X-SOC-Webhook-Key: wrong-secret'
+Assert-ObserveOnlyRejected $observeWrongSecret 'does not match the protected secret'
+$observeExtraHeader = $observeWorkflow | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+$observeExtraHeader.triggers[0] | Add-Member -NotePropertyName parameters -NotePropertyValue @(
+    [pscustomobject]@{name='auth_headers';value='X-SOC-Webhook-Key: synthetic-test-only'},
+    [pscustomobject]@{name='auth_headers';value='X-SOC-Webhook-Key: duplicate'}
+) -Force
+$observeExtraHeader.triggers[0].auth = $null
+Assert-ObserveOnlyRejected $observeExtraHeader 'exactly one authentication header'
+$observeExtraAction = $observeWorkflow | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+$observeExtraAction.actions += [pscustomobject]@{
+    id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'; label='side_effect'
+    app_name='Shuffle Tools'; name='repeat_back_to_me'; parameters=@()
+}
+Assert-ObserveOnlyRejected $observeExtraAction 'exactly one Action'
+$observeCondition = $observeWorkflow | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+$observeCondition.branches[0].conditions = @([pscustomobject]@{source='x';operator='equals';value=$true})
+Assert-ObserveOnlyRejected $observeCondition 'must be unconditional'
+$observeSingularCondition = $observeWorkflow | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+$observeSingularCondition.branches[0] | Add-Member -NotePropertyName condition `
+    -NotePropertyValue ([pscustomobject]@{source='x';operator='equals';value=$true}) -Force
+Assert-ObserveOnlyRejected $observeSingularCondition 'must be unconditional'
+$observeEmptySingularCondition = $observeWorkflow | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+$observeEmptySingularCondition.branches[0] | Add-Member -NotePropertyName condition `
+    -NotePropertyValue ([pscustomobject]@{}) -Force
+[void](Assert-ShuffleSocObserveOnlyWorkflow `
+    -Workflow $observeEmptySingularCondition -WorkflowId $workflowId -WebhookId $webhookId `
+    -ExpectedHeaderValue 'synthetic-test-only')
+
 [void](Assert-ShuffleSocGateB5Workflow `
     -Workflow $workflow `
     -WorkflowId $workflowId `

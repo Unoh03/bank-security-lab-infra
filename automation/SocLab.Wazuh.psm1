@@ -6,10 +6,19 @@ $ErrorActionPreference = 'Stop'
 function Assert-WazuhGeneratedPassword {
     param(
         [Parameter(Mandatory)][string]$Value,
-        [Parameter(Mandatory)][string]$Label
+        [Parameter(Mandatory)][string]$Label,
+        [switch]$AllowObserveOnlyPassword
     )
 
-    if ($Value.Length -lt 24 -or $Value.Length -gt 64 -or
+    $minimumLength = if ($AllowObserveOnlyPassword.IsPresent) { 8 } else { 24 }
+    if ($Value -in @(
+        ('Secret' + 'Password'),
+        ('kibana' + 'server'),
+        ('MyS3cr37P450r.' + '*-')
+    )) {
+        throw "$Label must not use an official Wazuh default credential."
+    }
+    if ($Value.Length -lt $minimumLength -or $Value.Length -gt 64 -or
         $Value -cnotmatch '[A-Z]' -or
         $Value -cnotmatch '[a-z]' -or
         $Value -notmatch '[0-9]' -or
@@ -21,9 +30,13 @@ function Assert-WazuhGeneratedPassword {
 
 function Get-WazuhPasswordHash {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Password)
+    param(
+        [Parameter(Mandatory)][string]$Password,
+        [switch]$AllowObserveOnlyPassword
+    )
 
-    Assert-WazuhGeneratedPassword -Value $Password -Label 'Wazuh password'
+    Assert-WazuhGeneratedPassword -Value $Password -Label 'Wazuh password' `
+        -AllowObserveOnlyPassword:$AllowObserveOnlyPassword
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         throw 'Docker is unavailable for the Wazuh password hash operation.'
     }
@@ -122,10 +135,12 @@ function Set-WazuhDashboardApiPasswordText {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Text,
-        [Parameter(Mandatory)][string]$Password
+        [Parameter(Mandatory)][string]$Password,
+        [switch]$AllowObserveOnlyPassword
     )
 
-    Assert-WazuhGeneratedPassword -Value $Password -Label 'Wazuh API password'
+    Assert-WazuhGeneratedPassword -Value $Password -Label 'Wazuh API password' `
+        -AllowObserveOnlyPassword:$AllowObserveOnlyPassword
     $newline = if ($Text.Contains("`r`n")) { "`r`n" } else { "`n" }
     $endsWithNewline = $Text.EndsWith("`n")
     $lines = @($Text -split "\r?\n")
@@ -169,10 +184,12 @@ function New-WazuhSecretOverrideText {
         [Parameter(Mandatory)][string]$AdminPassword,
         [string]$KibanaserverPassword = '',
         [string]$ApiPassword = '',
-        [string]$DashboardConfigPath = ''
+        [string]$DashboardConfigPath = '',
+        [switch]$AllowObserveOnlyPassword
     )
 
-    Assert-WazuhGeneratedPassword -Value $AdminPassword -Label 'Wazuh indexer admin password'
+    Assert-WazuhGeneratedPassword -Value $AdminPassword -Label 'Wazuh indexer admin password' `
+        -AllowObserveOnlyPassword:$AllowObserveOnlyPassword
     $internalUsers = ConvertTo-WazuhComposePath -Path $InternalUsersPath
 
     if ($Phase -ceq 'Admin') {
@@ -195,8 +212,10 @@ services:
 "@
     }
 
-    Assert-WazuhGeneratedPassword -Value $KibanaserverPassword -Label 'Wazuh indexer kibanaserver password'
-    Assert-WazuhGeneratedPassword -Value $ApiPassword -Label 'Wazuh API password'
+    Assert-WazuhGeneratedPassword -Value $KibanaserverPassword -Label 'Wazuh indexer kibanaserver password' `
+        -AllowObserveOnlyPassword:$AllowObserveOnlyPassword
+    Assert-WazuhGeneratedPassword -Value $ApiPassword -Label 'Wazuh API password' `
+        -AllowObserveOnlyPassword:$AllowObserveOnlyPassword
     if (-not $DashboardConfigPath) {
         throw 'The Final Wazuh phase requires a dashboard API configuration path.'
     }

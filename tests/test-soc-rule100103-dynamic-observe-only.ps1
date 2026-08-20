@@ -152,6 +152,63 @@ Assert-True ($harness.State.RequestCount -eq 4) 'Each phase must invoke its even
 Assert-True ($result.pilot_excluded_from_take_verdict -and $result.take_completed_count -eq 3) 'PILOT leaked into the TAKE verdict.'
 Assert-True (@($harness.State.Writes|Where-Object{$_.Value.status -ceq 'PASS'}).Count -eq 4) 'Per-phase immutable evidence was not written.'
 
+# Runtime Evidence uses the exact Alert -> Execution projection contract. The nested
+# payload keeps integrity.body_sha256 for the Shuffle schema; only this emitted
+# correlation record uses canonical_body_sha256.
+$pilotEvidence=@($harness.State.Writes|Where-Object{$_.Phase -ceq 'PILOT'})[0].Value
+$event=@($pilotEvidence.events)[0]
+$expectedEventKeys=@(
+    'take_id','event_id','wazuh_alert_id','raw_message_sha256','canonical_body_sha256',
+    'shuffle_execution_id','alert_timestamp','execution_timestamp','alert_to_execution_latency_ms'
+)
+$actualEventKeys=@($event.PSObject.Properties.Name|Sort-Object)
+Assert-True (($actualEventKeys -join '|') -ceq (($expectedEventKeys|Sort-Object) -join '|')) 'G4 event Evidence keyset drifted.'
+Assert-True ($null -eq $event.PSObject.Properties['body_sha256'] -and
+    $null -eq $event.PSObject.Properties['latency_seconds']) 'Ambiguous legacy G4 Evidence keys were emitted.'
+Assert-True ([string]$event.canonical_body_sha256 -match '^[a-f0-9]{64}$') 'Canonical body hash type/shape is invalid.'
+$pilotArgument=$plans.PILOT.Executions[0].execution_argument|ConvertFrom-Json -Depth 100 -DateKind String
+Assert-True ([string]$event.canonical_body_sha256 -ceq (Get-G4CanonicalBodySha256 -Body $pilotArgument)) 'Canonical body hash was not independently recomputed.'
+Assert-True ($event.alert_to_execution_latency_ms -is [long]) 'Alert-to-Execution latency must be an Int64 millisecond value.'
+$expectedLatencyMilliseconds=[long]([math]::Round(
+    (([datetimeoffset]$event.execution_timestamp-[datetimeoffset]$event.alert_timestamp).Ticks /
+        [double][TimeSpan]::TicksPerMillisecond),
+    0,
+    [MidpointRounding]::AwayFromZero
+))
+Assert-True ($event.alert_to_execution_latency_ms -eq $expectedLatencyMilliseconds -and
+    $event.alert_to_execution_latency_ms -eq 2000) 'Alert-to-Execution latency formula is not deterministic.'
+Assert-True ($pilotEvidence.clock_skew_checked -eq $true -and $pilotEvidence.clock_skew_within_limit -eq $true -and
+    $null -eq $pilotEvidence.PSObject.Properties['full_e2e_latency_ms']) 'Latency scope/clock-skew labeling is unsafe.'
+
+# The emitted canonical body hash is independently recomputed from the approved
+# sanitized body projection. A tampered integrity value must fail closed.
+$tamperedBody=$plans.PILOT.Executions[0].execution_argument|ConvertFrom-Json -Depth 100 -DateKind String
+$tamperedBody.integrity.body_sha256=('f' * 64) -join ''
+Assert-G4Throws -Category payload_mismatch -Action {
+    Assert-G4CanonicalBodyIntegrity -Body $tamperedBody | Out-Null
+}
+
+# An exact negative clock-skew boundary remains accepted when the alert is
+# exactly MaxClockSkewSeconds behind the source and execution is after it.
+$plans=New-AllPlans -Counts @(1,1,1,1)
+$plans.PILOT.Alerts[0]._source.timestamp='2026-08-17T23:59:51.000Z'
+$plans.PILOT.Executions[0].started_at='2026-08-17T23:59:52.000Z'
+$harness=New-TestOperations $plans
+$boundaryResult=Invoke-SocRule100103DynamicCore -Operations $harness.Operations -WorkflowContract (New-TestWorkflowContract) `
+    -SourceTimeoutSeconds 10 -DetectionTimeoutSeconds 10 -ShuffleTimeoutSeconds 10 -PollSeconds 1 -StabilityPolls 1 -MaxClockSkewSeconds 10
+Assert-True ($boundaryResult.pilot_status -ceq 'PASS') 'The exact allowed clock-skew boundary was rejected.'
+
+# A negative Alert -> Execution duration inside the old skew tolerance is not
+# semantically usable and must be rejected instead of being recorded.
+$plans=New-AllPlans -Counts @(1,1,1,1)
+$plans.PILOT.Alerts[0]._source.timestamp='2026-08-18T00:00:03.000Z'
+$plans.PILOT.Executions[0].started_at='2026-08-18T00:00:02.000Z'
+$harness=New-TestOperations $plans
+Assert-G4Throws -Category clock_skew -Action {
+    Invoke-SocRule100103DynamicCore -Operations $harness.Operations -WorkflowContract (New-TestWorkflowContract) `
+        -SourceTimeoutSeconds 10 -DetectionTimeoutSeconds 10 -ShuffleTimeoutSeconds 10 -PollSeconds 1 -StabilityPolls 1 -MaxClockSkewSeconds 60
+}
+
 # FINISHED may precede Action-result readiness; bounded result polling must not re-fire the event source.
 $plans=New-AllPlans -Counts @(1,1,1,1);$plans.PILOT.ResultDelay=2;$harness=New-TestOperations $plans
 $result=Invoke-SocRule100103DynamicCore -Operations $harness.Operations -WorkflowContract (New-TestWorkflowContract) `

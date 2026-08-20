@@ -16,6 +16,9 @@ $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $securityModulePath = Join-Path $repositoryRoot 'automation\SocLab.Security.psm1'
 Import-Module $securityModulePath -Force
 
+$script:ExpectedWazuhVersion = '4.14.7'
+$script:ExpectedWazuhMajorVersion = 4
+
 function ConvertTo-SocSha256Text {
     [CmdletBinding()]
     param([AllowNull()][AllowEmptyString()][string]$Text)
@@ -190,6 +193,34 @@ function Get-SocRunningContainerId {
     return $ids[0].ToLowerInvariant()
 }
 
+function Get-SocWazuhImageVersion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Image,
+        [Parameter(Mandatory)][string]$Service
+    )
+
+    if ($Image -notmatch ':(?<version>\d+\.\d+\.\d+)$') {
+        throw "The active $Service container image does not expose a safe Wazuh semantic version."
+    }
+    $version = [string]$Matches.version
+    try {
+        $parsed = [version]$version
+    } catch {
+        throw "The active $Service container image exposes an invalid Wazuh version."
+    }
+    if ($parsed.Major -ne $script:ExpectedWazuhMajorVersion) {
+        throw "The active $Service container is outside the supported Wazuh $($script:ExpectedWazuhMajorVersion).x integration contract."
+    }
+    if ($version -cne $script:ExpectedWazuhVersion) {
+        throw "The active $Service container is not pinned to Wazuh $($script:ExpectedWazuhVersion)."
+    }
+    return [pscustomobject]@{
+        Version = $version
+        Major   = [int]$parsed.Major
+    }
+}
+
 function Resolve-SocAbsolutePathLabel {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
@@ -262,13 +293,13 @@ function Get-SocRuntimeDescriptor {
         if ([string]$state -cne 'running') {
             throw "The active $service container is not running."
         }
-        if ([string]$image -notmatch ':4\.14\.7$') {
-            throw 'The active Wazuh containers are not all pinned to Wazuh 4.14.7.'
-        }
+        $imageVersion = Get-SocWazuhImageVersion -Image ([string]$image) -Service $service
         $records.Add([pscustomobject]@{
             Service          = $service
             ContainerId      = $containerId
             Image            = [string]$image
+            WazuhVersion     = [string]$imageVersion.Version
+            WazuhMajorVersion = [int]$imageVersion.Major
             Project          = $project
             WorkingDir       = $workingDir
             ConfigFilesRaw   = $configFilesRaw
@@ -291,6 +322,8 @@ function Get-SocRuntimeDescriptor {
 
     return [pscustomobject]@{
         Services       = @($records)
+        WazuhVersion   = [string]$records[0].WazuhVersion
+        WazuhMajorVersion = [int]$records[0].WazuhMajorVersion
         Project        = $projects[0]
         WorkingDir     = $workingDirs[0]
         ConfigFilesRaw = $configFileSets[0]
@@ -678,7 +711,8 @@ function Invoke-SocWazuhHardeningRuntimeEvidence {
             producer_mode                    = 'verify_existing'
             checked_at                       = [datetimeoffset]::UtcNow.ToString('o')
             runtime_session_id               = $runtimeSessionId
-            wazuh_version                    = '4.14.7'
+            wazuh_version                    = [string]$runtimeBefore.WazuhVersion
+            wazuh_major_version              = [int]$runtimeBefore.WazuhMajorVersion
             wazuh_authentication_verified    = $true
             wazuh_credential_rotation_observed = $false
             local_only_ports                 = $true
