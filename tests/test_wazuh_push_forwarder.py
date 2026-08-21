@@ -72,12 +72,15 @@ class WazuhPushForwarderTests(unittest.TestCase):
                                 "event_type": "command.execution",
                                 "result": "succeeded",
                                 "route": "/vulnerabilities/exec/",
-                                "take_id": "capital-one-20260818T082500Z-c0de1001",
+                                "take_id": "capital-one-reattack-20260818T082500Z-c0de1001",
                                 "context": {
                                     "action": "shell_command",
                                     "resource": "ec2_imds",
                                     "security_level": "low",
+                                    "stage": "imds_credential_fetch",
+                                    "status": "output_returned",
                                     "command": "must-not-cross-the-push-boundary",
+                                    "credential_role": "must-not-cross-the-push-boundary",
                                 },
                             },
                             "password": "must-not-cross-the-push-boundary",
@@ -114,11 +117,13 @@ class WazuhPushForwarderTests(unittest.TestCase):
                 "event_type": "command.execution",
                 "result": "succeeded",
                 "route": "/vulnerabilities/exec/",
-                "take_id": "capital-one-20260818T082500Z-c0de1001",
+                "take_id": "capital-one-reattack-20260818T082500Z-c0de1001",
                 "context": {
                     "action": "shell_command",
                     "resource": "ec2_imds",
                     "security_level": "low",
+                    "stage": "imds_credential_fetch",
+                    "status": "output_returned",
                 },
                 "normalized": True,
             },
@@ -127,6 +132,7 @@ class WazuhPushForwarderTests(unittest.TestCase):
         self.assertNotIn("log", bodies[0]["payload"])
         self.assertNotIn("password", bodies[0]["payload"])
         self.assertNotIn("command", bodies[0]["payload"]["context"])
+        self.assertNotIn("credential_role", bodies[0]["payload"]["context"])
 
     def test_unstructured_log_keeps_only_a_non_sensitive_marker(self):
         payload = {

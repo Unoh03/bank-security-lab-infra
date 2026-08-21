@@ -36,6 +36,7 @@ SAFE_CONTEXT_FIELDS = (
     "required",
     "resource",
     "security_level",
+    "stage",
     "status",
     "to",
     "validation",
