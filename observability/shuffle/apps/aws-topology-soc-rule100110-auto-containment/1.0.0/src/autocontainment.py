@@ -1,4 +1,4 @@
-"""Fail-closed Rule 100110 validator and fixed GitHub workflow dispatcher."""
+"""Fail-closed Rule 100110/100111 validator and fixed workflow dispatcher."""
 
 from __future__ import annotations
 
@@ -15,6 +15,10 @@ API_VERSION = "2026-03-10"
 DISPATCH_URL = (
     "https://api.github.com/repos/Unoh03/Uns-DVWA/actions/workflows/"
     "soc-contain-dvwa.yml/dispatches"
+)
+HARDEN_DISPATCH_URL = (
+    "https://api.github.com/repos/Unoh03/Uns-DVWA/actions/workflows/"
+    "soc-harden-dvwa.yml/dispatches"
 )
 RUN_API_PREFIX = "https://api.github.com/repos/Unoh03/Uns-DVWA/actions/runs/"
 RUN_HTML_PREFIX = "https://github.com/Unoh03/Uns-DVWA/actions/runs/"
@@ -58,6 +62,13 @@ INCIDENT_KEYS = (
     "result",
 )
 INTEGRITY_KEYS = ("raw_message_sha256", "body_sha256")
+CONFIRMED_S3_KEYS = (
+    "rule_id",
+    "event_time_utc",
+    "wazuh_alert_id",
+    "event_id_sha256",
+    "raw_message_sha256",
+)
 
 
 class ContractError(ValueError):
@@ -204,6 +215,37 @@ def validate_rule_100110_payload(
     }
 
 
+def validate_rule_100111_payload(
+    input_data: Any, now: datetime | None = None
+) -> dict[str, str]:
+    payload = _exact(_parse(input_data), CONFIRMED_S3_KEYS, "root")
+    if payload["rule_id"] != "100111":
+        raise ContractError("rule_id")
+    _text(payload["wazuh_alert_id"], ALERT_ID_PATTERN, "wazuh_alert_id")
+    event_hash = _text(
+        payload["event_id_sha256"], SHA256_PATTERN, "event_id_sha256"
+    )
+    _text(
+        payload["raw_message_sha256"], SHA256_PATTERN, "raw_message_sha256"
+    )
+    body_hash = hashlib.sha256(_canonical(payload)).hexdigest()
+    event_time = _timestamp(payload["event_time_utc"], "event_time_utc")
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None or current.utcoffset() is None:
+        raise ContractError("now_not_aware")
+    current = current.astimezone(timezone.utc)
+    if event_time > current:
+        raise ContractError("future_timestamp")
+    if (current - event_time).total_seconds() > 1200:
+        raise ContractError("event_stale")
+
+    return {
+        "rule_id": "100111",
+        "event_id_sha256": event_hash,
+        "alert_body_sha256": body_hash,
+    }
+
+
 def _safe_reason(error: Exception) -> str:
     reason = str(error)
     if re.fullmatch(r"[a-z0-9_]{1,64}", reason) is None:
@@ -220,14 +262,24 @@ def dispatch_rule_100110(
 ) -> dict[str, Any]:
     try:
         token = _text(github_token, TOKEN_PATTERN, "github_token")
-        inputs = validate_rule_100110_payload(input_data, now=now)
+        parsed = _parse(input_data)
+        rule = parsed.get("rule")
+        rule_id = rule.get("id") if type(rule) is dict else parsed.get("rule_id")
+        if rule_id == "100110":
+            inputs = validate_rule_100110_payload(parsed, now=now)
+            dispatch_url = DISPATCH_URL
+        elif rule_id == "100111":
+            inputs = validate_rule_100111_payload(parsed, now=now)
+            dispatch_url = HARDEN_DISPATCH_URL
+        else:
+            raise ContractError("rule_id")
         body = {
             "ref": "main",
             "return_run_details": True,
             "inputs": inputs,
         }
         request = urllib.request.Request(
-            DISPATCH_URL,
+            dispatch_url,
             data=json.dumps(
                 body, sort_keys=True, separators=(",", ":"), allow_nan=False
             ).encode("utf-8"),
@@ -236,7 +288,7 @@ def dispatch_rule_100110(
                 "Accept": "application/vnd.github+json",
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
-                "User-Agent": "aws-topology-soc-rule100110/1.0",
+                "User-Agent": "aws-topology-soc-auto-response/1.0",
                 "X-GitHub-Api-Version": API_VERSION,
             },
         )
@@ -260,17 +312,23 @@ def dispatch_rule_100110(
             raise ContractError("github_run_url")
         if result.get("html_url") != f"{RUN_HTML_PREFIX}{run_id}":
             raise ContractError("github_html_url")
-        return {
+        response = {
             "success": True,
             "status": "DISPATCHED",
             "workflow_run_id": run_id,
-            "take_id": inputs["take_id"],
-            "rule_id": "100110",
+            "rule_id": rule_id,
             "event_id_sha256": inputs["event_id_sha256"],
-            "pod_name": inputs["pod_name"],
-            "pod_uid": inputs["pod_uid"],
             "alert_body_sha256": inputs["alert_body_sha256"],
         }
+        if rule_id == "100110":
+            response.update(
+                {
+                    "take_id": inputs["take_id"],
+                    "pod_name": inputs["pod_name"],
+                    "pod_uid": inputs["pod_uid"],
+                }
+            )
+        return response
     except urllib.error.HTTPError as error:
         try:
             return {

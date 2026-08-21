@@ -1,6 +1,6 @@
 app_version: 1.0.0
 name: SOC R110 Isolator
-description: Strictly validates one fresh Rule 100110 workload alert and dispatches only the fixed DVWA quarantine workflow.
+description: Strictly validates one Rule 100110 or Rule 100111 alert and dispatches only its fixed DVWA response workflow.
 tags:
   - SOC
   - GitHub
@@ -22,7 +22,7 @@ authentication:
         type: string
 actions:
   - name: dispatch_rule_100110
-    description: Validates the exact schema v3 allowlist, integrity and three-minute freshness window, then dispatches only soc-contain-dvwa.yml on main.
+    description: Backwards-compatible action that routes exact Rule 100110 schema v3 to soc-contain-dvwa.yml or the approved five-field Rule 100111 payload to soc-harden-dvwa.yml on main.
     parameters:
       - name: input_data
         description: Complete authenticated Wazuh webhook JSON body.

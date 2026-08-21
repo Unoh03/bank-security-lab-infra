@@ -32,6 +32,7 @@ SPEC.loader.exec_module(autocontainment)
 
 TOKEN = "github_pat_" + ("a" * 80)
 NOW = datetime(2026, 8, 21, 9, 7, 20, tzinfo=timezone.utc)
+S3_NOW = datetime(2026, 8, 21, 9, 15, 30, tzinfo=timezone.utc)
 
 
 def valid_payload() -> dict[str, object]:
@@ -67,6 +68,16 @@ def valid_payload() -> dict[str, object]:
         autocontainment._canonical(payload)
     ).hexdigest()
     return payload
+
+
+def valid_rule100111_payload() -> dict[str, object]:
+    return {
+        "rule_id": "100111",
+        "event_time_utc": "2026-08-21T09:07:05.000Z",
+        "wazuh_alert_id": "1787000002.777777",
+        "event_id_sha256": "d" * 64,
+        "raw_message_sha256": "e" * 64,
+    }
 
 
 class FakeResponse:
@@ -130,6 +141,60 @@ class AutoContainmentTests(unittest.TestCase):
         self.assertEqual(
             observed["headers"]["Authorization"], f"Bearer {TOKEN}"
         )
+
+    def test_rule100111_dispatches_only_fixed_hardening_workflow(self):
+        observed = {}
+
+        def opener(request, timeout):
+            observed["url"] = request.full_url
+            observed["timeout"] = timeout
+            observed["body"] = json.loads(request.data.decode("utf-8"))
+            return FakeResponse(
+                {
+                    "workflow_run_id": 32509999999,
+                    "run_url": autocontainment.RUN_API_PREFIX + "32509999999",
+                    "html_url": autocontainment.RUN_HTML_PREFIX + "32509999999",
+                }
+            )
+
+        result = autocontainment.dispatch_rule_100110(
+            TOKEN, valid_rule100111_payload(), opener=opener, now=S3_NOW
+        )
+        self.assertTrue(result["success"])
+        self.assertEqual(result["rule_id"], "100111")
+        self.assertEqual(observed["url"], autocontainment.HARDEN_DISPATCH_URL)
+        self.assertEqual(observed["timeout"], 30)
+        self.assertEqual(
+            set(observed["body"]["inputs"]),
+            {
+                "rule_id",
+                "event_id_sha256",
+                "alert_body_sha256",
+            },
+        )
+        self.assertNotIn("take_id", observed["body"]["inputs"])
+        self.assertNotIn("pod_name", observed["body"]["inputs"])
+        self.assertNotIn(TOKEN, json.dumps(result))
+
+    def test_rule100111_rejects_tampering_and_stale_collection(self):
+        def never(*_args, **_kwargs):
+            self.fail("network must not run for rejected input")
+
+        mutations = (
+            lambda value: value.__setitem__("rule_id", "100110"),
+            lambda value: value.__setitem__(
+                "event_time_utc", "2026-08-21T08:55:29.000Z"
+            ),
+            lambda value: value.__setitem__("aws_account_id", "433048100798"),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                payload = valid_rule100111_payload()
+                mutate(payload)
+                result = autocontainment.dispatch_rule_100110(
+                    TOKEN, payload, opener=never, now=S3_NOW
+                )
+                self.assertFalse(result["success"])
 
     def test_rejects_tampering_wrong_tuple_and_extra_keys_before_network(self):
         def never(*_args, **_kwargs):

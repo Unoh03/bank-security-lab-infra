@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Send only the approved Rule 100104 S3 fields to Shuffle Cloud."""
+"""Send only approved Rule 100110 and Rule 100111 fields to Shuffle Cloud."""
 
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ EXPECTED_RULE_ID = "100104"
 EXPECTED_RULE_LEVEL = 12
 EXPECTED_WORKLOAD_RULE_ID = "100110"
 EXPECTED_WORKLOAD_RULE_LEVEL = 12
+EXPECTED_CONFIRMED_S3_RULE_ID = "100111"
+EXPECTED_CONFIRMED_S3_RULE_LEVEL = 14
 EXPECTED_EVENT_SOURCE = "s3.amazonaws.com"
 EXPECTED_EVENT_NAME = "GetObject"
 EXPECTED_CLOUDTRAIL_SOURCE = "cloudtrail"
@@ -48,6 +50,7 @@ POD_UID_PATTERN = re.compile(
 WORKLOAD_EVENT_ID_PATTERN = re.compile(
     r"^cwl:433048100798:/aws/eks/aws-topology-primary/dvwa:[A-Za-z0-9._/:-]{1,1024}$"
 )
+PRIMARY_BUCKET_PATTERN = re.compile(r"^aws-topology-primary-[0-9a-f]{26}$")
 HEADER_KEY_PATTERN = re.compile(r"^[A-Za-z0-9.*+?-]{24,128}$")
 WEBHOOK_ID_PATTERN = r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
 WEBHOOK_PATH_PATTERNS = (
@@ -319,6 +322,100 @@ def build_sanitized_workload_alert(
     return sanitized
 
 
+def build_sanitized_confirmed_s3_alert(alert: dict[str, Any]) -> dict[str, Any]:
+    """Validate the complete local Rule 100111 tuple, then emit only hashes."""
+    rule = require_object(alert.get("rule"), "rule")
+    data = require_object(alert.get("data"), "data")
+    request_parameters = require_object(
+        data.get("requestParameters"), "data.requestParameters"
+    )
+    user_identity = require_object(data.get("userIdentity"), "data.userIdentity")
+    session_context = require_object(
+        user_identity.get("sessionContext"), "data.userIdentity.sessionContext"
+    )
+    session_issuer = require_object(
+        session_context.get("sessionIssuer"),
+        "data.userIdentity.sessionContext.sessionIssuer",
+    )
+    additional_event_data = require_object(
+        data.get("additionalEventData"), "data.additionalEventData"
+    )
+
+    fixed = (
+        (str(rule.get("id")), EXPECTED_CONFIRMED_S3_RULE_ID, "rule.id"),
+        (rule.get("level"), EXPECTED_CONFIRMED_S3_RULE_LEVEL, "rule.level"),
+        (data.get("eventSource"), EXPECTED_EVENT_SOURCE, "eventSource"),
+        (data.get("eventName"), EXPECTED_EVENT_NAME, "eventName"),
+        (data.get("eventType"), "AwsApiCall", "eventType"),
+        (data.get("eventCategory"), "Data", "eventCategory"),
+        (data.get("recipientAccountId"), EXPECTED_ACCOUNT_ID, "recipientAccountId"),
+        (data.get("awsRegion"), EXPECTED_REGION, "awsRegion"),
+        (user_identity.get("type"), EXPECTED_USER_IDENTITY_TYPE, "userIdentity.type"),
+        (session_issuer.get("userName"), EXPECTED_ROLE_NAME, "principal role"),
+        (request_parameters.get("key"), EXPECTED_OBJECT_KEY, "object key"),
+    )
+    for actual, expected, label in fixed:
+        if type(actual) is not type(expected) or actual != expected:
+            raise ContractError(f"{label} is not allowlisted")
+
+    bucket_name = request_parameters.get("bucketName")
+    if not isinstance(bucket_name, str) or not PRIMARY_BUCKET_PATTERN.fullmatch(
+        bucket_name
+    ):
+        raise ContractError("bucketName is not allowlisted")
+    management_event = data.get("managementEvent")
+    if not (
+        (type(management_event) is bool and management_event is False)
+        or (type(management_event) is str and management_event == "false")
+    ):
+        raise ContractError("managementEvent is not false")
+    read_only = data.get("readOnly")
+    if not (
+        (type(read_only) is bool and read_only is True)
+        or (type(read_only) is str and read_only == "true")
+    ):
+        raise ContractError("readOnly is not true")
+
+    http_status = additional_event_data.get("httpStatusCode")
+    if not (
+        (type(http_status) is int and http_status == 200)
+        or (type(http_status) is str and http_status == EXPECTED_HTTP_STATUS)
+    ):
+        raise ContractError("httpStatusCode is not 200")
+    bytes_out = additional_event_data.get("bytesTransferredOut")
+    if type(bytes_out) is int:
+        bytes_returned = bytes_out > 0
+    elif isinstance(bytes_out, str):
+        bytes_returned = bool(re.fullmatch(r"[1-9][0-9]*", bytes_out))
+    else:
+        bytes_returned = False
+    if not bytes_returned:
+        raise ContractError("bytesTransferredOut is not positive")
+    if data.get("errorCode") not in (None, ""):
+        raise ContractError("errorCode must be absent or empty")
+
+    event_id = data.get("eventID")
+    if not isinstance(event_id, str) or not EVENT_ID_PATTERN.fullmatch(event_id):
+        raise ContractError("eventID is not a UUID")
+    alert_id = alert.get("id")
+    if not isinstance(alert_id, str) or not ALERT_ID_PATTERN.fullmatch(alert_id):
+        raise ContractError("Wazuh alert id is invalid")
+    event_time = parse_utc_timestamp(data.get("eventTime"), "eventTime")
+    _, full_log_bytes = bounded_text(
+        alert.get("full_log"), "alert.full_log", MAX_FULL_LOG_BYTES
+    )
+
+    return {
+        "rule_id": EXPECTED_CONFIRMED_S3_RULE_ID,
+        "event_time_utc": event_time,
+        "wazuh_alert_id": alert_id,
+        "event_id_sha256": hashlib.sha256(
+            event_id.lower().encode("utf-8")
+        ).hexdigest(),
+        "raw_message_sha256": hashlib.sha256(full_log_bytes).hexdigest(),
+    }
+
+
 def validate_webhook_url(value: str) -> tuple[str, str]:
     try:
         parsed = urlsplit(value)
@@ -391,10 +488,13 @@ def main() -> int:
         if not isinstance(alert, dict):
             raise ContractError("Wazuh alert must be an object")
         rule = require_object(alert.get("rule"), "rule")
-        if str(rule.get("id")) == EXPECTED_WORKLOAD_RULE_ID:
+        rule_id = str(rule.get("id"))
+        if rule_id == EXPECTED_WORKLOAD_RULE_ID:
             sanitized = build_sanitized_workload_alert(alert)
+        elif rule_id == EXPECTED_CONFIRMED_S3_RULE_ID:
+            sanitized = build_sanitized_confirmed_s3_alert(alert)
         else:
-            sanitized = build_sanitized_alert(alert)
+            raise ContractError("rule.id is not allowlisted")
         webhook_url = read_runtime_secret(WEBHOOK_URL_PATH)
         header_key = read_runtime_secret(WEBHOOK_HEADER_KEY_PATH)
         send_to_shuffle(sanitized, webhook_url, header_key)

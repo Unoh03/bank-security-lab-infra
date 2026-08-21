@@ -127,6 +127,47 @@ def valid_workload_alert() -> dict[str, object]:
     }
 
 
+def valid_confirmed_s3_alert() -> dict[str, object]:
+    return {
+        "id": "1787000002.777777",
+        "timestamp": "2026-08-21T09:15:27.187+0000",
+        "rule": {
+            "id": "100111",
+            "level": 14,
+            "description": "confirmed S3 object access",
+        },
+        "data": {
+            "eventSource": "s3.amazonaws.com",
+            "eventName": "GetObject",
+            "eventType": "AwsApiCall",
+            "eventCategory": "Data",
+            "managementEvent": False,
+            "readOnly": True,
+            "recipientAccountId": "433048100798",
+            "awsRegion": "ap-northeast-2",
+            "eventID": EVENT_ID,
+            "eventTime": "2026-08-21T09:07:05.000Z",
+            "requestParameters": {
+                "bucketName": "aws-topology-primary-dd991d8a9df5770d282cc66b46",
+                "key": "validation/capital-one-demo.csv",
+            },
+            "userIdentity": {
+                "type": "AssumedRole",
+                "sessionContext": {
+                    "sessionIssuer": {
+                        "userName": "aws-topology-primary-karpenter-node",
+                    }
+                },
+            },
+            "additionalEventData": {
+                "httpStatusCode": "200",
+                "bytesTransferredOut": "420",
+            },
+        },
+        "full_log": FULL_LOG,
+    }
+
+
 class CustomShuffleSocTest(unittest.TestCase):
     def test_builds_exact_rule100110_schema_without_raw_payload(self) -> None:
         result = MODULE.build_sanitized_workload_alert(
@@ -191,6 +232,68 @@ class CustomShuffleSocTest(unittest.TestCase):
                 mutate(alert)
                 with self.assertRaises(MODULE.ContractError):
                     MODULE.build_sanitized_workload_alert(alert)
+
+    def test_builds_minimum_rule100111_schema_after_full_local_validation(self) -> None:
+        result = MODULE.build_sanitized_confirmed_s3_alert(
+            valid_confirmed_s3_alert()
+        )
+
+        self.assertEqual(
+            set(result),
+            {
+                "rule_id",
+                "event_time_utc",
+                "wazuh_alert_id",
+                "event_id_sha256",
+                "raw_message_sha256",
+            },
+        )
+        self.assertEqual(
+            result,
+            {
+                "rule_id": "100111",
+                "event_time_utc": "2026-08-21T09:07:05.000Z",
+                "wazuh_alert_id": "1787000002.777777",
+                "event_id_sha256": hashlib.sha256(
+                    EVENT_ID.encode("utf-8")
+                ).hexdigest(),
+                "raw_message_sha256": hashlib.sha256(
+                    FULL_LOG.encode("utf-8")
+                ).hexdigest(),
+            },
+        )
+        encoded = json.dumps(result, sort_keys=True)
+        for forbidden in (
+            "433048100798",
+            "aws-topology-primary-karpenter-node",
+            "aws-topology-primary-dd991d8a9df5770d282cc66b46",
+            "validation/capital-one-demo.csv",
+            EVENT_ID,
+            "must-not-be-forwarded",
+        ):
+            self.assertNotIn(forbidden, encoded)
+
+    def test_rule100111_rejects_any_wrong_confirmed_compromise_tuple(self) -> None:
+        mutations = (
+            lambda value: value["rule"].__setitem__("level", 13),
+            lambda value: value["data"].__setitem__("eventName", "ListBucket"),
+            lambda value: value["data"].__setitem__("eventCategory", "Management"),
+            lambda value: value["data"].__setitem__("managementEvent", 0),
+            lambda value: value["data"].__setitem__("readOnly", 1),
+            lambda value: value["data"]["requestParameters"].__setitem__(
+                "bucketName", "other-bucket"
+            ),
+            lambda value: value["data"]["additionalEventData"].__setitem__(
+                "bytesTransferredOut", "0"
+            ),
+            lambda value: value["data"].__setitem__("errorCode", "AccessDenied"),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                alert = valid_confirmed_s3_alert()
+                mutate(alert)
+                with self.assertRaises(MODULE.ContractError):
+                    MODULE.build_sanitized_confirmed_s3_alert(alert)
 
     def test_builds_exact_v2_blueprint_without_raw_fields_or_take_id(self) -> None:
         result = MODULE.build_sanitized_alert(
