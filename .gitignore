@@ -20,4 +20,21 @@ crash.log
 crash.*.log
 logs/
 
+# Local Python and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+venv/
+
+# Local Codex, SOC runtime, and protected configuration artifacts
+.codex-tmp/
+aws-topology-evidence/
+soc-runtime/
+*.dpapi.json
+soc-lab.json
+
 /*-before-down-*.yaml
