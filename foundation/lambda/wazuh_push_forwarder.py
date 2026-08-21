@@ -26,6 +26,8 @@ SAFE_PAYLOAD_FIELDS = (
     "request_method",
     "request_path",
     "take_id",
+    "pod_name",
+    "pod_uid",
     "training_marker",
 )
 SAFE_CONTEXT_FIELDS = (

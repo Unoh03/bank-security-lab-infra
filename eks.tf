@@ -44,9 +44,14 @@ module "primary_eks" {
   }
 
   addons = merge({
-    coredns                = {}
-    kube-proxy             = {}
-    vpc-cni                = { before_compute = true }
+    coredns    = {}
+    kube-proxy = {}
+    vpc-cni = {
+      before_compute = true
+      configuration_values = jsonencode({
+        enableNetworkPolicy = "true"
+      })
+    }
     eks-pod-identity-agent = { before_compute = true }
     }, var.enable_efs ? {
     aws-efs-csi-driver = {

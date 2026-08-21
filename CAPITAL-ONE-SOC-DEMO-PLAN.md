@@ -134,17 +134,29 @@ Rule Level은 `12`로 고정한다. Rule Description은 Credential 원문 획득
 Rule 100110
 → 인증·Schema·Allowlist 검증
 → Push event_id Dedupe
-→ 고정 Namespace/Workload의 DVWA Quarantine
+→ Source에서 생성된 고정 Pod name/UID 검증
+→ Argo CD가 정상 Replica를 먼저 확보
+→ 침해 Pod를 ReplicaSet·Service에서 분리하고 deny-all 격리
 ```
 
-격리는 고정 DVWA Workload만 대상으로 하는 사전 승인 정책이다. Rule Payload 값으로
-Namespace, Deployment, Repository, Branch, Command를 선택하지 않는다.
+격리는 Rule `100110`을 발생시킨 기존 Pod 한 개를 살아 있는 상태로 보존하되 ReplicaSet과
+Service Endpoint에서 분리하고, 고정 label `soc.unoh.click/state=quarantined`를 선택하는
+deny-all NetworkPolicy로 Ingress·Egress를 모두 차단하는 사전 승인 정책이다. Argo CD는
+격리 전에 정상 Replica를 먼저 확보하고 ReplicaSet은 새 정상 Pod를 보충한다. 따라서
+`unoh.click`은 정상 Pod로 계속 서비스한다.
+
+Pod name과 UID는 사용자 Header나 자유 Payload가 아니라 Kubernetes Downward API에서
+DVWA Audit Event에 추가한 Source identity만 사용한다. Namespace, Deployment,
+Repository, Branch, Command는 고정값이며 Alert 값으로 선택하지 않는다.
 
 격리 성공은 Resource 생성만으로 판정하지 않는다.
 
-- 정책 UID/Revision이 Read-back된다.
-- DVWA Workload의 금지된 Egress가 실제 실패한다.
-- 관측·Health에 필요한 고정 경로는 유지된다.
+- 침해 Pod의 동일 name·UID·Image·생성 시각이 Argo Web Orphaned Resources에 남는다.
+- 완료된 격리 Job과 deny-all NetworkPolicy가 Argo Resource Tree에 표시된다.
+- 기존 Pod가 Service Endpoint에서 빠지고 새 정상 Pod가 ReplicaSet 아래에 표시된다.
+- Argo Web Terminal에서 격리 전 기존 Pod의 Service 통신이 성공하고, 격리 후 같은 Pod의
+  Egress와 새 정상 Pod에서 기존 Pod IP로 향하는 Ingress가 짧은 timeout으로 실패한다.
+- `unoh.click`이 정상 Pod를 통해 계속 응답한다.
 - 다른 Namespace와 비대상 Workload 영향은 0이다.
 - 동일 Push `event_id` 재전달 시 실제 조치는 총 1회다.
 
@@ -304,14 +316,50 @@ Rule 100111 신규 Alert=0
 
 ### `P2.5` — 자동 대응 경로 사전 학습
 
-`P3`에 진입하기 전에 다음 질문을 해소하기 위한 조사·학습을 먼저 수행한다.
+다음 질문에 대한 저장소·제품 기능 조사를 완료했다.
 
 > 현재 저장소와 실제 제품 기능만으로 `100110 → 고정 DVWA 격리`,
 > `100111 → 고정 low→impossible`을 안전하고 재현 가능하게 만들 수 있는가?
 > 가능하다면 최소 연결 경로·필요 권한·실패 처리·검증 증거는 정확히 무엇인가?
 
-이 단계에서는 구현·Workflow 배포·실제 자동 행동을 수행하지 않는다. 조사 결과로 가능한
-최소 경로를 정한 뒤에만 `P3`에 진입한다.
+결론은 **Argo Web 중심의 실제 Pod 격리·보존 시연이 가능하지만 기존 IMDS-only 설계는
+폐기해야 한다**이다.
+
+- Wazuh는 `100110,100111` JSON Alert를 하나의 고정 Custom Integration으로 전달한다.
+- Shuffle은 Required Header, Rule별 엄격한 Schema·Allowlist, Source Event Dedupe 뒤에만
+  두 고정 GitHub Workflow 중 하나를 Dispatch한다.
+- `100110` Source Event에는 Kubernetes Downward API가 제공한 `pod_name/pod_uid`를 안전한
+  필드로 추가한다. 현재 Event에는 명시적 UID가 없으므로 이 Source 계약 전에는 격리
+  Workflow를 연결하지 않는다.
+- 전용 Argo `AppProject/dvwa`는 `orphanedResources.warn=true`로 고정한다. 침해 Pod는
+  ReplicaSet selector label에서 분리되어 Orphaned Resource로 남고, 고정
+  `dvwa-quarantined-pod-deny-all` NetworkPolicy가 quarantine label을 선택한다.
+- GitHub는 고정 Repository/Branch의 선언형 격리 Request만 갱신한다. Argo는 Sync Wave로
+  정상 Replica를 먼저 확보하고, 제한된 in-cluster Job이 Pod UID와 기존 selector를
+  JSON Patch `test`로 확인한 뒤 label을 원자적으로 변경한다.
+- 새 녹화용 PowerShell/Python 검증 Script는 만들지 않는다. Argo Web에서 Orphan Pod,
+  완료 Job, NetworkPolicy, 새 정상 Pod를 열고 브라우저의 `unoh.click` 정상 응답을 함께
+  보여준다.
+- Argo Web Terminal은 격리된 Lab의 Built-in admin 촬영 경로로만 활성화한다. Kubernetes
+  control-plane을 통한 Terminal 접속 자체는 Pod의 Data Plane 격리와 별개이므로, Terminal
+  안에서 격리 전 성공했던 유한 timeout 통신이 격리 후 실패하는 화면을 실제 차단 증거로
+  사용한다. 별도 촬영 Script는 만들지 않는다.
+- `100111`은 기존 `low → impossible` GitOps 뼈대를 재사용하되 폐기된 Rule ID와 존재하지
+  않는 CloudTrail `take_id` 의존성을 제거하고 `eventID` Dedupe로 교정한다.
+- Dispatcher는 GitHub Actions Write만, GitHub Workflow는 Repository Contents Write만
+  사용한다. Shuffle이나 Wazuh에 Kubernetes 자격증명을 제공하지 않는다.
+- Timeout·Dispatch 수락 불명확·Dedupe 불명확은 자동 재시도 없이 Fail Closed하고 기존
+  Execution/Run/Runtime을 조회한다.
+
+조사 중 확인한 현재 Runtime은 Wazuh Custom Shuffle Integration 0개이며, 기존
+Sanitizer·Validator·Dispatcher는 폐기 Rule `100103/100104`에 고정돼 있다. 잘못 만든
+IMDS-only Workflow·전환 Script는 배포 전에 제거했다. Source에는 전용 AppProject의
+Orphan 표시와 고정 deny-all NetworkPolicy를 반영했으며, Primary EKS VPC CNI
+NetworkPolicy 활성 설정과 Argo Web Terminal 활성 설정은 유지한다. Kubernetes Downward
+API 기반 `pod_name/pod_uid` Audit·Push Source, Rule `100110` 전용 GitHub Request,
+대상 Pod 이름으로 RBAC를 제한하고 Pod·ReplicaSet UID를 원자적으로 검증하는 격리 Job은
+Source 구현과 정적 검증을 완료했다. Wazuh→Shuffle 전달 계약, 배포와 실제 Runtime은 아직
+구현·검증하지 않았다.
 
 ### `P3` — 자동 대응
 
@@ -319,6 +367,9 @@ Rule 100111 신규 Alert=0
 - `100111 → low→impossible`
 - 각 Dedupe와 실패 상태
 - 실제 Runtime Read-back과 Blast Radius
+- 진행 순서: EKS NetworkPolicy·Argo Terminal Apply 승인 → DVWA Source 배포와 Argo
+  Request/Job Runtime → Wazuh→Shuffle `100110` Schema·Dedupe·Dispatch → Write 0 검증 →
+  `contain` Pilot → `100111` 교정
 
 ### `P4` — 조사 화면·WAF·재공격 Runner
 
@@ -354,8 +405,9 @@ Rule 100111 신규 Alert=0
 | Rule `100110` Level 12 | Matrix PASS, Fresh Runtime PASS |
 | Rule `100111` Level 14 직접 탐지 | Matrix PASS, Fresh 예약 수집 Runtime PASS |
 | Rule `100100/100104/100105/100109` | 활성 Rule에서 폐기, Git 이력만 보존 |
-| `100110` 실제 자동 Workload 격리 | 미검증 |
-| `100111 → low → impossible` 자동 연결 | 미구현·`P2.5` 조사 전 동결 |
+| `P2.5` 자동대응 경로 조사 | 재수행 완료, Argo Orphan 기반 실제 Pod 격리·보존 경로 확정 |
+| `100110` 실제 자동 Workload 격리 | Pod identity·AppProject·deny-all·Argo Terminal·UID 검증 Job Source 구현 및 정적 검증 PASS, 미배포·Runtime 미검증 |
+| `100111 → low → impossible` 자동 연결 | 교정 대기, 미배포·미검증 |
 | 전체 Incident Timeline Dashboard | Source·Live Runtime PASS, 자동 행동은 `NOT CONNECTED` |
 | 사람 승인 WAF 차단 | 미구현 |
 | WAF 전용 Reattack Runtime | 미검증 |

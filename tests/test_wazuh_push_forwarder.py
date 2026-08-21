@@ -73,6 +73,8 @@ class WazuhPushForwarderTests(unittest.TestCase):
                                 "result": "succeeded",
                                 "route": "/vulnerabilities/exec/",
                                 "take_id": "capital-one-reattack-20260818T082500Z-c0de1001",
+                                "pod_name": "dvwa-84bf674cb6-h75c2",
+                                "pod_uid": "069248dc-333f-4925-a8af-4f92f2e4e977",
                                 "context": {
                                     "action": "shell_command",
                                     "resource": "ec2_imds",
@@ -118,6 +120,8 @@ class WazuhPushForwarderTests(unittest.TestCase):
                 "result": "succeeded",
                 "route": "/vulnerabilities/exec/",
                 "take_id": "capital-one-reattack-20260818T082500Z-c0de1001",
+                "pod_name": "dvwa-84bf674cb6-h75c2",
+                "pod_uid": "069248dc-333f-4925-a8af-4f92f2e4e977",
                 "context": {
                     "action": "shell_command",
                     "resource": "ec2_imds",

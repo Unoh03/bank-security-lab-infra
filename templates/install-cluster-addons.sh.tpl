@@ -166,6 +166,7 @@ if [ "${enable_argocd}" = "true" ]; then
     --set 'global.nodeSelector.workload=system' \
     --set 'redisSecretInit.nodeSelector.workload=application' \
     --set 'server.service.type=ClusterIP' \
+    --set 'configs.cm.exec\.enabled=true' \
     --set 'configs.params.server\.insecure=false' \
     --wait --timeout 10m
 fi

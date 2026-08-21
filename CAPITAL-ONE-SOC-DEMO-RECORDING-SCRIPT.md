@@ -92,8 +92,9 @@ WAF_RULE_ID=<고정 Rule ID>
 |---|---|
 | DVWA Stage→Push→Rule `100110` | Fresh Runtime PASS |
 | Rule `100111` 직접 탐지 | Matrix PASS, Fresh 예약 수집 Runtime PASS |
-| `100110 → 자동 격리` | 미연결·미검증 |
-| `100111 → low → impossible` | 미연결·미검증, 사전 조사 전 동결 |
+| `P2.5` 자동대응 경로 | 재수행 완료, Argo Orphan 기반 실제 Pod 격리·보존 경로 확정 |
+| `100110 → 자동 격리` | Pod identity·AppProject·deny-all·Argo Terminal·UID 검증 Job Source 구현 및 정적 검증 PASS, 미배포·Runtime 미검증 |
+| `100111 → low → impossible` | 교정 대기, 미배포·미검증 |
 | Timeline Dashboard | Source·Live Runtime PASS, 자동 행동은 `NOT CONNECTED` |
 | WAF 조치·재공격 | 미검증 |
 
@@ -214,22 +215,38 @@ Managed label: EC2MetaDataSSRF_Body
 - 두 번째 Event에만 발생한 Rule `100110`
 - Push `event_id`와 Wazuh Alert
 - 자동 대응 Execution
-- 고정 DVWA Quarantine Policy UID/Revision
-- 실제 금지 Egress 실패와 비대상 영향 0
+- Argo Web의 완료된 격리 Job과 deny-all NetworkPolicy
+- Orphaned Resources에 보존된 기존 Pod와 ReplicaSet 아래 새 정상 Pod
+- Argo Web Terminal에서 확인하는 기존 Pod의 실제 Ingress·Egress 차단
+- 브라우저의 `unoh.click` 정상 응답
 
 ### 운영자 조작
 
 1. 두 Push Event를 시간순으로 펼친다.
 2. `imds_role_discovery`에는 `100110`이 없음을 보여준다.
 3. `imds_credential_fetch + succeeded + output_returned` Event와 `100110`을 연결한다.
-4. 자동 격리 Execution과 Runtime Read-back을 연다.
+4. 격리 전 Argo Web Terminal에서 기존 Pod가 DVWA Service에 통신할 수 있음을 짧은
+   timeout의 HTTP 요청으로 확인한다.
+5. Argo Web에서 `Show Orphaned`를 켜고 기존 Pod의 name·UID·Pod IP·생성 시각·Image·
+   Running 상태를 연다.
+6. 같은 Resource Tree의 완료 Job, deny-all NetworkPolicy, 새 정상 Pod를 차례로 연다.
+7. 기존 Pod Terminal에서 같은 Service 요청이 timeout으로 실패하는 Egress 차단을
+   보여준다. 새 정상 Pod Terminal에서는 기존 Pod IP의 `/login.php` 요청이 timeout으로
+   실패하는 Ingress 차단을 보여준다. 각 요청은 `--connect-timeout 3 --max-time 5`로
+   제한한다.
+8. 브라우저에서 `unoh.click`이 새 정상 Pod로 계속 응답하는 장면을 보여준다.
+
+> Argo Web Terminal은 Kubernetes control-plane의 `pods/exec` 경로이므로 deny-all 적용 뒤에도
+> 열릴 수 있다. 이것은 격리 실패가 아니라 증거 보존·조사를 위한 관리 경로다. 격리 판정은
+> Terminal 접속 여부가 아니라 Pod의 실제 Ingress·Egress 요청 실패로 한다.
 
 ### 내레이션
 
 > 첫 Event는 Role 이름 조회 단계라 자동 격리 Rule이 발생하지 않습니다. 두 번째 Event는
 > DVWA low 화면에서 IMDS Credential endpoint를 대상으로 한 명령이 출력을 반환한
-> 단계입니다. Rule 100110이 이를 조기에 탐지하고, 사전 승인된 고정 DVWA Workload만
-> 자동으로 격리합니다.
+> 단계입니다. Rule 100110이 이를 조기에 탐지하고, 해당 Source Pod의 name과 UID를
+> 검증한 뒤 ReplicaSet과 Service에서 분리해 살아 있는 증거로 보존합니다. deny-all
+> 정책은 이 Pod의 통신을 차단하고, 새 정상 Pod가 서비스를 이어갑니다.
 
 > 이 Alert만으로 Credential 원문이나 S3 접근 성공을 확정하지는 않습니다. 다만 보호
 > Object 접근 직전의 고위험 단계이므로 긴급 Workload 격리를 허용합니다.
@@ -240,6 +257,7 @@ Managed label: EC2MetaDataSSRF_Body
 Early detection — Rule 100110
 Stage: imds_credential_fetch
 Automatic action: fixed DVWA workload quarantine
+Evidence: Argo orphan pod + replacement pod
 ```
 
 ### 필수 Evidence
@@ -247,7 +265,11 @@ Automatic action: fixed DVWA workload quarantine
 - Source `event_id` ↔ Rule `100110` 일대일
 - Event→Alert 지연
 - Alert→Isolation 지연
-- Quarantine 실제 효과
+- Argo Orphan에 기존 Pod name·UID·Image·생성 시각 보존
+- Service에서 분리된 기존 Pod와 새 정상 Pod
+- deny-all NetworkPolicy와 완료된 격리 Job
+- 격리 전 성공한 기존 Pod 통신과 격리 후 Ingress·Egress timeout
+- `unoh.click` 정상 응답
 - 동일 `event_id` 재전달 추가 조치 0
 - 다른 Namespace 영향 0
 
@@ -255,7 +277,9 @@ Automatic action: fixed DVWA workload quarantine
 
 - Role 조회 Event에도 `100110`이 발생함
 - Credential endpoint Event가 두 번 Alert됨
-- Policy가 생성됐지만 실제 격리 효과를 확인하지 못함
+- 기존 Pod가 Orphan으로 남지 않거나 새 정상 Pod가 준비되지 않음
+- deny-all 정책과 quarantine label의 Live 상태가 일치하지 않음
+- 격리 후 기존 Pod의 Ingress 또는 Egress 요청이 성공함
 - 고정 DVWA 이외의 Target이 변경됨
 
 ---
