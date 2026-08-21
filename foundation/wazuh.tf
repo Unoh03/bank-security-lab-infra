@@ -9,6 +9,11 @@ locals {
     local.wazuh_reader_trusted_principal_arn
   ) : "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/wazuh-reader-principal-not-configured"
   wazuh_cloudwatch_log_groups = {
+    cloudtrail = {
+      arn    = aws_cloudwatch_log_group.cloudtrail.arn
+      name   = aws_cloudwatch_log_group.cloudtrail.name
+      region = var.primary_region
+    }
     cloudfront = {
       arn    = aws_cloudwatch_log_group.cloudfront_wazuh.arn
       name   = aws_cloudwatch_log_group.cloudfront_wazuh.name
@@ -130,6 +135,7 @@ data "aws_iam_policy_document" "wazuh_log_reader" {
       resources = [aws_sqs_queue.wazuh_push_primary_dlq[0].arn]
     }
   }
+
 }
 
 resource "aws_iam_role_policy" "wazuh_log_reader" {

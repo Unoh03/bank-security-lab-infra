@@ -3,16 +3,17 @@
 > **촬영 가능 조건:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)의
 > 시연 시작조건을 실제 Runtime으로 모두 통과한 뒤
 >
-> **활성 Rule:** 조기탐지 `100110`, S3 침해확정 상관 Rule `100111`
+> **활성 Rule:** 조기탐지 `100110`, S3 침해확정 직접 탐지 Rule `100111`
 >
-> Rule `100103/100104`는 Legacy Evidence이며 본편 자동화 경로에 사용하지 않는다.
+> Rule `100103`은 일반 IMDS 관측용이며 본편 자동화 경로에 사용하지 않는다.
+> Rule `100100/100104/100105/100109`는 활성 Rule에서 폐기됐다.
 
 ---
 
 ## 1. 영상이 증명할 것
 
 > **공격의 Credential 접근 징후를 조기에 탐지해 Workload를 자동 격리하고, 뒤이어
-> 확인된 보호 S3 Object 접근을 앞선 DVWA 사건과 연결해 자동으로 `low → impossible`을
+> 보호 S3 Object 접근 성공을 별도 Rule로 확정해 자동으로 `low → impossible`을
 > 배포한다. 관제자는 Dashboard에서 전체 공격 흐름을 조사해 최초 HTTP 진입점에 좁은
 > WAF 차단을 적용하고, 같은 Payload의 재공격이 Edge에서 종료되어 신규 조기탐지 Event가
 > 발생하지 않음을 정상·Health 대조군과 함께 확인한다.**
@@ -85,12 +86,28 @@ WAF_RULE_ID=<고정 Rule ID>
 
 ## 4. 장면 요약
 
+### 현재 촬영 준비 상태 — 2026-08-21
+
+| 구간 | 현재 상태 |
+|---|---|
+| DVWA Stage→Push→Rule `100110` | Fresh Runtime PASS |
+| Rule `100111` 직접 탐지 | Matrix PASS, Fresh 예약 수집 Runtime PASS |
+| `100110 → 자동 격리` | 미연결·미검증 |
+| `100111 → low → impossible` | 미연결·미검증, 사전 조사 전 동결 |
+| Timeline Dashboard | Source·Live Runtime PASS, 자동 행동은 `NOT CONNECTED` |
+| WAF 조치·재공격 | 미검증 |
+
+따라서 아래 문장은 현재 완료 보고가 아니라 **최종 촬영 계약**이다. 자동 행동 두 개의
+실제 Runtime Evidence가 생기기 전에는 본편을 촬영하지 않는다.
+
+### 장면 구성
+
 | Scene | 제목 | 핵심 주장 | 계획 단계 |
 |---|---|---|---|
 | `SC-00` | 정상 관제 READY | 수집·대응·정상 상태가 준비됐다 | `P5` |
 | `SC-01` | 최초 공격 진입 | WAF가 공격 요청을 식별하지만 최초에는 `COUNT/ALLOW`한다 | `P5` |
 | `SC-02` | 조기탐지와 자동 격리 | Credential endpoint 단계에서 `100110`이 발생하고 DVWA가 실제 격리된다 | `P2`, `P3` |
-| `SC-03` | S3 침해확정 | 고정 Object 읽기와 앞선 DVWA 사건이 `100111`로 연결된다 | `P2`, `P5` |
+| `SC-03` | S3 침해확정 | 고정 Object의 실제 바이트 반환 성공을 `100111`이 직접 탐지하고 Timeline에 앞선 `100110`과 함께 표시한다 | `P2`, `P5` |
 | `SC-04` | 자동 `low → impossible` | `100111` 사건이 고정 GitOps 변경을 한 번 실행한다 | `P3` |
 | `SC-05` | 사람의 Incident 조사 | Dashboard에서 진입부터 두 자동 대응까지 설명한다 | `P4` |
 | `SC-06` | 사람 승인 WAF 조치 | 관제 근거로 좁은 Edge 차단을 적용한다 | `P4`, `P5` |
@@ -249,25 +266,26 @@ Automatic action: fixed DVWA workload quarantine
 
 - 고정 가짜 Object 읽기 성공을 기록한 Runner Summary
 - CloudTrail 원본 `GetObject`
-- `eventID`, Role, Bucket alias, Key, 성공 상태
-- 앞선 `100110` 활성 Incident
-- Rule `100111` Alert와 상관관계 결과
+- `eventID`, Role, Bucket alias, Key, HTTP 200, `bytesTransferredOut > 0`
+- 같은 시간창의 앞선 Rule `100110` Alert
+- Rule `100111` Alert와 원본 CloudTrail 근거
 
 ### 운영자 조작
 
 1. 보호 Object의 CloudTrail Event를 연다.
 2. 정확한 Role·Object·성공 조건을 보여준다.
-3. 앞선 `100110` Incident가 하나만 활성 상태였음을 보여준다.
+3. Timeline에서 앞선 `100110`과 뒤의 `100111` 순서를 보여준다.
 4. Event 시각과 Wazuh 도착·Alert 시각의 차이를 표시한다.
 
 ### 내레이션
 
 > 이미 획득된 짧은 수명의 임시 Credential로 고정 가짜 S3 Object 읽기가 성공했습니다.
 > CloudTrail Event는 승인 Account, 고정 Role, Bucket과 Object, 성공 상태를 만족합니다.
-> 또한 15분 안에 앞선 Rule 100110 DVWA 사건이 정확히 하나 존재하므로 Rule 100111
-> 침해확정 상관계약이 통과했습니다.
+> Rule 100111은 이 CloudTrail 원본 Event만으로 실제 바이트 반환 성공을 직접 탐지했습니다.
+> 앞선 Rule 100110과 같은 공격 흐름이라는 판단은 두 Rule의 의존조건이 아니라, Timeline의
+> Event 시각과 식별자를 함께 본 관제자의 조사 결과입니다.
 
-> 자동 대응은 S3 API 호출 순간이 아니라 이 CloudTrail Event가 Wazuh에 도착해 상관 Rule이
+> 자동 대응은 S3 API 호출 순간이 아니라 이 CloudTrail Event가 Wazuh에 도착해 Rule이
 > 발생한 뒤 시작됩니다.
 
 ### 자막
@@ -275,20 +293,20 @@ Automatic action: fixed DVWA workload quarantine
 ```text
 Confirmed incident — Rule 100111
 Protected GetObject: SUCCESS
-Correlation: one active Rule 100110 incident
+Timeline: Rule 100110 → Rule 100111
 ```
 
 ### 필수 Evidence
 
 - CloudTrail 원본 `eventID` ↔ Rule `100111` 일대일
-- `100110` Event 시각 이후 15분 이내
-- 활성 Incident 정확히 1개
+- 예약 10분 수집으로 들어온 실제 CloudTrail Event와 Alert 시각
+- 같은 TAKE의 앞선 `100110`을 Timeline에 함께 표시
 - 정상 Principal·다른 Object·실패 요청은 `100111` 0
 
 ### 중단조건
 
-- 단순 `GetObject`만으로 `100111`이 발생함
-- 활성 `100110` Incident가 없거나 여러 개인데 자동 행동이 허용됨
+- 다른 Role·Object·실패 요청에 `100111`이 발생함
+- 서로 다른 TAKE를 하나의 공격 흐름으로 설명함
 - 원본 `eventID`와 Alert를 연결하지 못함
 
 ---
@@ -298,7 +316,7 @@ Correlation: one active Rule 100110 incident
 ### 보여줄 화면
 
 - Rule `100111`의 자동 대응 Execution
-- Validator·상관관계·Dedupe PASS
+- 고정 Target·Schema·Dedupe Validator PASS
 - 고정 GitHub Workflow Run
 - `DEFAULT_SECURITY_LEVEL: low → impossible` 단일 Diff
 - Commit SHA
@@ -555,7 +573,7 @@ Push health: PASS
 ### 내레이션
 
 > 이번 시연은 DVWA의 Credential 접근 징후를 조기에 탐지해 Workload를 자동 격리했고,
-> 보호 S3 Object 접근을 앞선 사건과 연결해 애플리케이션을 자동으로 impossible로
+> 보호 S3 Object 접근 성공을 별도 Rule로 확정해 애플리케이션을 자동으로 impossible로
 > 변경했습니다. 이후 관제자가 전체 흐름을 조사해 좁은 WAF 차단을 승인했고, 같은 공격은
 > Edge에서 차단됐습니다. 정상 기능과 수집 경로는 유지됐습니다.
 
@@ -567,7 +585,7 @@ Push health: PASS
 ```text
 Early detection: PASS
 Automatic workload isolation: PASS
-Confirmed S3 incident correlation: PASS
+Confirmed S3 object access: PASS
 Automatic low → impossible: PASS
 Human-approved WAF mitigation: PASS
 Same-payload reattack blocked at Edge: PASS
@@ -590,9 +608,9 @@ Normal function / telemetry health: PASS
 ## 7. 공개 전 최종 검수
 
 - [ ] Rule `100110/100111`만 활성 v2 Rule로 설명한다.
-- [ ] Rule `100103/100104` 과거 Event가 본편 Timeline에 섞이지 않는다.
+- [ ] Rule `100103/100100/100104/100105/100109` 과거 Event가 본편 Timeline에 섞이지 않는다.
 - [ ] `100110`을 Credential 원문 탈취 확정으로 과장하지 않는다.
-- [ ] `100111` 단독이 아니라 앞선 Incident와의 상관계약을 설명한다.
+- [ ] `100111`은 S3 성공을 직접 탐지하고, 앞선 `100110`과의 흐름은 Timeline에서 사람이 조사한다고 설명한다.
 - [ ] 자동 Workload 격리와 자동 `low → impossible`을 구분한다.
 - [ ] 사람의 WAF 조치를 Root Cause 패치로 표현하지 않는다.
 - [ ] 재공격은 실제 악성 POST를 보냈으며 WAF terminating Rule을 확인한다.

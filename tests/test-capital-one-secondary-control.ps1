@@ -40,8 +40,19 @@ Assert-Contains $storage 'capital_one_secondary_control_enabled\s*=\s*local\.cap
 if ([regex]::Matches($storage, 'count\s*=\s*local\.capital_one_secondary_control_enabled\s*\?\s*1\s*:\s*0').Count -ne 5) {
     throw 'Every secondary and other-prefix control component must use the single minimal + capital-one-lab condition.'
 }
-Assert-Contains $storage 'bucket_prefix\s*=\s*"\$\{local\.name\}-capital-one-secondary-control-"' `
+Assert-Contains $storage 'bucket_prefix\s*=\s*"\$\{local\.name\}-cap1-secondary-"' `
     'The secondary control bucket does not use the fixed project prefix.'
+$secondaryPrefixMatch = [regex]::Match(
+    $storage,
+    'bucket_prefix\s*=\s*"\$\{local\.name\}-(?<Suffix>[^"]+)"'
+)
+if (-not $secondaryPrefixMatch.Success) {
+    throw 'The secondary control bucket prefix could not be parsed.'
+}
+$resolvedSecondaryPrefix = 'aws-topology-' + $secondaryPrefixMatch.Groups['Suffix'].Value
+if ($resolvedSecondaryPrefix.Length -gt 37) {
+    throw "The secondary control bucket prefix exceeds the AWS provider limit: $($resolvedSecondaryPrefix.Length) > 37."
+}
 Assert-Contains $storage 'resource\s+"aws_s3_bucket"\s+"capital_one_secondary_control"[\s\S]*?force_destroy\s*=\s*false' `
     'The secondary control bucket must fail closed on unexpected objects during teardown.'
 Assert-Contains $storage 'resource\s+"aws_s3_bucket_server_side_encryption_configuration"\s+"capital_one_secondary_control"[\s\S]*?sse_algorithm\s*=\s*"AES256"' `
@@ -166,9 +177,9 @@ if ($negativePolicy -match 'ListBucket|PutObject|DeleteObject|aws_s3_bucket\.cap
 Assert-Contains $outputs 'output\s+"capital_one_negative_control_role_arn"[\s\S]*?value\s*=\s*local\.capital_one_secondary_control_enabled\s*\?\s*aws_iam_role\.capital_one_negative_control\[0\]\.arn\s*:\s*null' `
     'The negative-control role output is not null outside minimal + capital-one-lab.'
 
-Assert-Contains $foundation 'capital-one-secondary-control-' `
+Assert-Contains $foundation 'cap1-secondary-' `
     'CloudTrail S3 data-event selector does not capture the secondary control bucket prefix.'
-Assert-Contains $foundation 's3:::\$\{local\.name\}-primary-[\s\S]*?capital-one-secondary-control-' `
+Assert-Contains $foundation 's3:::\$\{local\.name\}-primary-[\s\S]*?cap1-secondary-' `
     'CloudTrail selector no longer retains the primary prefix alongside the secondary control prefix.'
 if ($storage -match 'aws_s3_bucket_versioning"\s+"capital_one_other_prefix_control|aws_s3_bucket_lifecycle_configuration"\s+"capital_one_other_prefix_control') {
     throw 'The managed other-prefix object must not add a separate versioning or lifecycle resource.'

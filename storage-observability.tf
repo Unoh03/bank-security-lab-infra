@@ -25,7 +25,7 @@ locals {
 resource "aws_s3_bucket" "capital_one_secondary_control" {
   count         = local.capital_one_secondary_control_enabled ? 1 : 0
   provider      = aws.primary
-  bucket_prefix = "${local.name}-capital-one-secondary-control-"
+  bucket_prefix = "${local.name}-cap1-secondary-"
   # Do not force-delete unexpected objects during Daily teardown.  The
   # managed fixture object is removed by Terraform; an untracked object makes
   # teardown fail closed instead of silently deleting data.

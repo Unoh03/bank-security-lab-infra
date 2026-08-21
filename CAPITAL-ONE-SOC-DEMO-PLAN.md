@@ -1,6 +1,6 @@
 # Capital One 기반 SOC 시연 활성 계획 v2
 
-> **상태:** ACTIVE PLAN — 구현·Runtime 검증 전
+> **상태:** ACTIVE PLAN — Event·Rule·Timeline Dashboard Runtime 검증 완료, 자동 행동 미연결
 >
 > **기준점:** `4ec4b8e3ac1e44f8c2dd4dd39aef4c73d891f20b`
 >
@@ -14,7 +14,7 @@
 이 시연은 다음 한 문장을 실제 Runtime Evidence로 증명한다.
 
 > **DVWA를 통한 IMDS Credential 접근을 저지연으로 탐지해 Workload를 자동 격리하고,
-> 뒤이어 확인된 보호 S3 Object 접근을 앞선 DVWA 사건과 연결해 애플리케이션을 자동으로
+> 뒤이어 보호 S3 Object 접근 성공을 별도 Rule로 확정해 애플리케이션을 자동으로
 > `low → impossible`로 변경한 뒤, 관제자가 전체 Timeline을 조사해 WAF에 좁은 차단을
 > 적용하고 같은 공격 Payload가 Edge에서 차단되어 조기탐지 Event조차 다시 발생하지
 > 않음을 정상 대조군과 함께 확인한다.**
@@ -59,7 +59,7 @@
 | `S2 CREDENTIAL RISK` | DVWA가 IMDS Credential endpoint 대상 명령의 출력 반환을 Audit | 안전한 Stage, Push `event_id` |
 | `S3 AUTO ISOLATION` | Rule `100110`이 발생하고 고정 DVWA Workload를 자동 격리 | Alert ID, Execution ID, Policy UID/Revision, 실제 격리 효과 |
 | `S4 S3 CONFIRMED` | 이미 획득된 임시 Credential로 고정 S3 Object 읽기 성공 후 CloudTrail 도착 | CloudTrail `eventID`, Principal, Object, 성공 상태 |
-| `S5 AUTO HARDENING` | Rule `100111`과 앞선 사건의 상관관계가 통과해 자동 `low → impossible` | Execution ID, Commit SHA, Argo Revision, 새 Pod 상태 |
+| `S5 AUTO HARDENING` | Rule `100111`이 발생해 자동 `low → impossible` | Execution ID, Commit SHA, Argo Revision, 새 Pod 상태 |
 | `S6 INVESTIGATION` | 사람이 Incident Timeline Dashboard에서 진입부터 대응까지 설명 | 동일 시간창의 WAF·DVWA·Rule·CloudTrail·대응 |
 | `S7 WAF MITIGATION` | 사람이 좁은 WAF 차단을 승인·적용 | Rule Diff, 적용 시각, WAF Read-back |
 | `S8 REATTACK` | 같은 공격 Payload를 다시 보내 WAF `BLOCK/403` 확인 | WAF terminating Rule, downstream 0 |
@@ -81,16 +81,16 @@
 
 ## 4. Rule v2 계약
 
-### 4.1 Legacy Rule
+### 4.1 Legacy·Retired Rule
 
 | Rule | 보존 이유 | 활성 자동화 |
 |---|---|---|
-| `100103` | 기존 DVWA Push Runtime Evidence와 과거 Dashboard 보존 | 없음 |
-| `100104` | 기존 고정 S3 `GetObject` Runtime Evidence 보존 | 없음 |
-| `100105` | 기존 `100104` 오류 억제 계약 보존 | 없음 |
+| `100103` | 일반 IMDS 대상 Push 탐지와 과거 Dashboard 보존 | 없음 |
+| `100100` | 이전 보호 Object 탐지 계약은 Git 이력에만 보존하고 활성 Rule에서 폐기 | 없음 |
+| `100104/100105/100109` | 이전 Push·S3 탐지 계약은 Git 이력에만 보존하고 활성 Rule에서 폐기 | 없음 |
 
-기존 Rule을 삭제하거나 의미를 덮어쓰지 않는다. 신규 Workflow·Dashboard는 v2 Rule ID만
-활성 계약으로 사용한다.
+신규 Workflow·Dashboard의 자동화 후보는 `100110/100111`만 사용한다. `100103`은 일반
+IMDS 관측용으로 남고, `100100/100104/100105/100109`는 활성 Rule에 없다.
 
 ### 4.2 Rule `100110` — Credential 접근 조기탐지
 
@@ -148,7 +148,7 @@ Namespace, Deployment, Repository, Branch, Command를 선택하지 않는다.
 - 다른 Namespace와 비대상 Workload 영향은 0이다.
 - 동일 Push `event_id` 재전달 시 실제 조치는 총 1회다.
 
-### 4.3 Rule `100111` — S3 침해확정 상관 Rule
+### 4.3 Rule `100111` — S3 침해확정 직접 탐지 Rule
 
 #### 현재 Event 조건
 
@@ -156,39 +156,42 @@ Namespace, Deployment, Repository, Branch, Command를 선택하지 않는다.
 CloudTrail
 eventSource=s3.amazonaws.com
 eventName=GetObject
+eventType=AwsApiCall
+eventCategory=Data
+managementEvent=false
+readOnly=true
 recipientAccountId=<승인 Account exact>
 awsRegion=ap-northeast-2
 userIdentity.type=AssumedRole
 sessionIssuer.userName=<고정 Primary Node Role exact>
-bucketName=<현재 승인 Primary Bucket exact>
+bucketName=aws-topology-primary-<26 hex>
 key=validation/capital-one-demo.csv
 httpStatusCode=200
-errorCode 없음
+bytesTransferredOut>0
 eventID=UUID
 ```
 
-#### 선행 사건 상관조건
+#### 판정·조사 경계
 
-`100111`은 단순 `GetObject` Rule이 아니다. 다음 조건을 모두 만족해야 활성 v2 사건으로
-판정한다.
-
-- Rule `100110`으로 생성된 미종료 Incident가 있다.
-- `100110` Event 시각 이후 15분 안의 CloudTrail Event다.
-- 활성 Incident가 정확히 1개다. 0개 또는 2개 이상이면 자동 행동을 거부한다.
-- Scenario, Account alias, 고정 Role, Bucket, Object 계약이 모두 일치한다.
-- 공격 Runner Evidence가 같은 실행에서 생성된 CloudTrail `eventID`를 보존한다.
-
-Wazuh의 상관 Rule과 SOAR Incident State가 이 계약을 함께 검증한다. 어느 한쪽이라도
-불완전하면 Alert/Evidence만 남기고 `low → impossible`은 실행하지 않는다.
+- Rule `100111`은 위 고정 Account·Region·Role·Bucket·Object의 실제 바이트 반환 성공을
+  CloudTrail 원본 Event만으로 직접 판정한다.
+- 성공 Event에는 일반적으로 `errorCode`가 없지만, 선택 필드의 부재를 Wazuh Rule 조건으로
+  요구하지 않는다. 성공 판정은 `httpStatusCode=200`과 `bytesTransferredOut>0`으로 고정한다.
+- Rule `100110`과 `100111`은 서로 독립적으로 발생한다. Wazuh의 선행 Rule 기반 네이티브
+  시간창 상관을 사용하거나 주장하지 않는다.
+- 관제자는 Timeline에서 Event 시각, Push `take_id/event_id`, CloudTrail `eventID`를 함께
+  보고 두 탐지가 같은 공격 흐름인지 조사한다.
+- 자동 행동 Validator는 고정 Target Allowlist, 입력 Schema, Event Dedupe, 실패 처리를
+  검증해야 한다. 이 경로는 `P2.5` 조사 전에는 구현하지 않는다.
 
 Rule Level은 `14`로 고정한다. Description은 다음 의미로 제한한다.
 
-> `CAPITAL-ONE: Protected S3 object read followed an active DVWA IMDS credential incident.`
+> `CAPITAL-ONE: Protected S3 object bytes were returned through the compromised node role.`
 
 #### 자동 행동
 
 ```text
-Rule 100111 + correlation PASS
+Rule 100111
 → CloudTrail eventID Dedupe
 → 고정 GitHub Workflow/Repository/Branch
 → DEFAULT_SECURITY_LEVEL: low → impossible
@@ -208,8 +211,9 @@ Rule 100111 + correlation PASS
 
 ### 5.1 Incident Timeline Dashboard
 
-현재 `SOC 실시간 보안관제`의 Push 표만으로 전체 인과관계를 설명했다고 주장하지 않는다.
-신규 Rule 필드가 확정된 뒤 별도 `Capital One Incident Timeline v2` Dashboard를 만든다.
+`SOC 실시간 보안관제`의 Push 표만으로 전체 인과관계를 설명했다고 주장하지 않는다.
+별도 `Capital One Incident Timeline v2` Dashboard를 만들었고, `100110/100111` Fresh Runtime과
+각 Source 근거가 실제 화면에 표시되는 것을 2026-08-21 확인했다.
 
 최소 표시 항목:
 
@@ -291,22 +295,36 @@ Rule 100111 신규 Alert=0
 
 ### `P2` — Event·Rule
 
-- DVWA 안전 Stage 분류와 Test
-- Push Forwarder 허용 필드와 Test
-- Rule `100110/100111` Source
-- Positive·Negative·중복 Matrix
-- Wazuh `analysisd -t`와 `wazuh-logtest`
+- 완료: DVWA 안전 Stage 분류와 실제 Push 전달
+- 완료: Push Forwarder `stage` Allowlist 배포와 실제 Event 확인
+- 완료: Rule `100110` Source, Positive·Negative·중복 Matrix, Fresh Runtime
+- 완료: Rule `100111` 직접 탐지 Source, Positive 1·Negative 15·중복 0 Matrix
+- 완료: Fresh CloudTrail의 예약 10분 수집 후 Rule `100111` Runtime 확인
+- 완료: Wazuh `analysisd -t`와 `wazuh-logtest`
+
+### `P2.5` — 자동 대응 경로 사전 학습
+
+`P3`에 진입하기 전에 다음 질문을 해소하기 위한 조사·학습을 먼저 수행한다.
+
+> 현재 저장소와 실제 제품 기능만으로 `100110 → 고정 DVWA 격리`,
+> `100111 → 고정 low→impossible`을 안전하고 재현 가능하게 만들 수 있는가?
+> 가능하다면 최소 연결 경로·필요 권한·실패 처리·검증 증거는 정확히 무엇인가?
+
+이 단계에서는 구현·Workflow 배포·실제 자동 행동을 수행하지 않는다. 조사 결과로 가능한
+최소 경로를 정한 뒤에만 `P3`에 진입한다.
 
 ### `P3` — 자동 대응
 
 - `100110 → fixed DVWA Quarantine`
-- `100111 + correlation → low→impossible`
+- `100111 → low→impossible`
 - 각 Dedupe와 실패 상태
 - 실제 Runtime Read-back과 Blast Radius
 
 ### `P4` — 조사 화면·WAF·재공격 Runner
 
-- 신규 필드가 확정된 뒤 Timeline Dashboard 작성
+- `Capital One Incident Timeline v2` NDJSON Source와 Live Dashboard 구성 완료
+- Rule `100110/100111` Fresh Runtime과 각 Source 근거의 실제 화면 표시 확인 완료
+- 자동 행동은 아직 연결되지 않아 대응 결과 필드는 `NOT CONNECTED` 상태로 유지
 - 좁은 WAF 변경과 Rollback 계약
 - 같은 Payload Reattack Runner
 
@@ -330,17 +348,24 @@ Rule 100111 신규 Alert=0
 | 항목 | 현재 판정 |
 |---|---|
 | 기존 공격 Runner로 IMDS Credential·고정 가짜 S3 읽기 | Runtime 확인 |
-| Push Bridge와 Rule `100103` Alert | Runtime 확인, Legacy 전환 대상 |
-| Rule `100104` 고정 S3 Positive | Runtime 확인, Legacy 전환 대상 |
-| Rule `100110/100111` | 미구현 |
-| DVWA `context.stage` | 미구현 |
+| DVWA Image→Pod 동일 Digest와 Stage Source | Runtime 확인 |
+| Push Lambda `stage` 전달 | 2026-08-21 Targeted 배포 후 Runtime 확인 |
+| Push Bridge와 `imds_role_discovery/imds_credential_fetch` | Fresh Runtime 확인 |
+| Rule `100110` Level 12 | Matrix PASS, Fresh Runtime PASS |
+| Rule `100111` Level 14 직접 탐지 | Matrix PASS, Fresh 예약 수집 Runtime PASS |
+| Rule `100100/100104/100105/100109` | 활성 Rule에서 폐기, Git 이력만 보존 |
 | `100110` 실제 자동 Workload 격리 | 미검증 |
-| `100111` 상관관계와 자동 `low → impossible` | 미검증 |
-| 전체 Incident Timeline Dashboard | 미구현 |
+| `100111 → low → impossible` 자동 연결 | 미구현·`P2.5` 조사 전 동결 |
+| 전체 Incident Timeline Dashboard | Source·Live Runtime PASS, 자동 행동은 `NOT CONNECTED` |
 | 사람 승인 WAF 차단 | 미구현 |
 | WAF 전용 Reattack Runtime | 미검증 |
 
-과거 Source·Test·Runtime Evidence를 새 v2 완료 증거로 확대하지 않는다.
+Fresh Runtime 기준은 TAKE `capital-one-20260821T070639Z-5d32099e`다. 공격은
+`2026-08-21T07:06:54.0828064Z`에 시작해 `07:07:04.8869155Z`에 끝났고, Rule `100110`은
+`16:07:10.092+09:00`에 발생했다. 고정 Object `GetObject`의 CloudTrail `eventID`는
+`069248dc-333f-4925-a8af-4f92f2e4e977`, Event 시각은 `07:07:05Z`이며, 다음 예약 수집 뒤
+Rule `100111`이 `16:15:27.187+09:00`에 발생했다. Dashboard에서 두 Alert와 각 Source 근거를
+같은 시간창에 표시했다. 과거 Source·Test·Runtime Evidence를 이 완료 증거로 대체하지 않는다.
 
 ---
 
@@ -349,7 +374,7 @@ Rule 100111 신규 Alert=0
 아래가 모두 실제 Runtime으로 확인되기 전에는 녹화 대본을 실행하지 않는다.
 
 - Rule `100110` Positive와 모든 Negative Control
-- Rule `100111` Positive·상관 실패·Negative Control
+- Rule `100111` Positive·Negative Control·중복 0
 - 자동 Quarantine 1회와 실제 효과
 - 자동 `low → impossible` 1회와 실제 배포
 - 중복 Event 재전달 시 추가 조치 0
@@ -380,7 +405,8 @@ Dashboard가 자동으로 공격 인과관계를 추론했다.
 
 ```text
 Rule 100110은 DVWA의 IMDS Credential endpoint 대상 명령 출력 반환을 조기에 탐지했다.
-고정 S3 접근과 앞선 활성 DVWA 사건의 상관계약이 통과해 Rule 100111 사건으로 확정됐다.
+Rule 100111은 고정 S3 Object의 실제 바이트 반환 성공을 직접 탐지했고, 관제자는 Timeline에서
+앞선 Rule 100110과 같은 공격 흐름으로 조사했다.
 사전 승인된 두 자동 대응은 각각 Workload 격리와 DVWA low→impossible을 수행했다.
 관제자는 Timeline을 조사해 좁은 WAF 차단을 승인했다.
 재공격은 WAF에서 차단됐고 downstream 0, 정상 기능, 수집 Health를 함께 확인했다.
