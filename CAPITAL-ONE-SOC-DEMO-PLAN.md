@@ -1,972 +1,387 @@
-# Capital One 기반 SOC 시연 구축·검증 계획
+# Capital One 기반 SOC 시연 활성 계획 v2
 
-> **상태:** CURRENT PLAN — 완성형 촬영 대본을 실현하기 위한 요구사항·작업·Gate 정본  
-> **촬영 대본:** [`CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md`](./CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md)  
-> **공격·대응 의미:** [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](./CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md)
-
-이 문서는 촬영 장면의 내레이션을 반복하지 않는다. 무엇을 구현·검증해야 해당 장면을 사실대로 촬영할 수 있는지 관리한다.
+> **상태:** ACTIVE PLAN — 구현·Runtime 검증 전
+>
+> **기준점:** `4ec4b8e3ac1e44f8c2dd4dd39aef4c73d891f20b`
+>
+> 기존 `GT-00~GT-11` 장문 계획과 Rule `100103/100104`의 과거 의미는 위 Git 이력에
+> 보존한다. 이 문서는 지금부터 사용할 단일 활성 계획이다.
 
 ---
 
-## 0. 확정한 시연 설계
+## 1. 시연이 증명할 것
 
-### 0.1 주인공
+이 시연은 다음 한 문장을 실제 Runtime Evidence로 증명한다.
 
-주인공은 처음부터 끝까지 **Wazuh·Shuffle을 중심으로 한 관제 시스템**이다.
+> **DVWA를 통한 IMDS Credential 접근을 저지연으로 탐지해 Workload를 자동 격리하고,
+> 뒤이어 확인된 보호 S3 Object 접근을 앞선 DVWA 사건과 연결해 애플리케이션을 자동으로
+> `low → impossible`로 변경한 뒤, 관제자가 전체 Timeline을 조사해 WAF에 좁은 차단을
+> 적용하고 같은 공격 Payload가 Edge에서 차단되어 조기탐지 Event조차 다시 발생하지
+> 않음을 정상 대조군과 함께 확인한다.**
 
-```text
-평소 로그 중앙화
-→ 조기 이상 징후 탐지
-→ 보호 대상 S3 접근 성공 고신뢰 탐지
-→ Shuffle 자동 격리
-→ Alert 중심 관련 로그 조사
-→ 관제자의 후속 조치 결정
-→ Remediation·Recovery
-→ 동일 공격·정상 기능 재검증
-```
-
-### 0.2 탐지 Rule 역할
+영상의 주인공은 공격 도구가 아니라 다음 관제 흐름이다.
 
 ```text
-Rule 100103
-= command.execution + ec2_imds + succeeded
-= 조기 이상 징후
-= Credential 탈취·S3 접근 가능성
-= 자동 격리 Trigger 아님
-
-Rule 100104
-= 보호 대상 고정 Object `validation/capital-one-demo.csv` GetObject 성공
-+ 승인 Account
-+ 공격 시나리오 Principal/Role Session
-+ errorCode 없음
-+ 정상 Allowlist 제외
-= 고신뢰 침해 확인 Alert
-= Shuffle 자동 격리 Trigger
-```
-
-Rule `100104`를 고신뢰 자동 조치용 설계 ID로 확정한다. 현재는 `Pre-Runtime` 상태이며,
-`GT-03` PASS 전에는 Runtime 검증된 탐지 Rule로, `GT-04` PASS 전에는 실제
-Wazuh Alert→Shuffle Trigger로, `GT-05` PASS 전에는 승인된 Containment Action이 실제
-실행되는 자동 Containment 경로로 표현하지 않는다.
-
-기존 Rule `100100`의 과거 양성 Runtime은 역사적 Evidence로 보존하되 자동 조치용으로
-재사용하지 않는다.
-
-### 0.3 고신뢰의 의미
-
-`GetObject`라는 API 이름 하나만으로는 고신뢰가 아니다. 이 Lab에서 다음 불변조건을 함께 만족해야 한다.
-
-- 정상 DVWA 동작은 `validation/*`를 읽지 않는다.
-- 정상 운영 Principal은 자동 조치 Rule에서 제외된다.
-- 공격 시나리오에서 예상한 Node Role 또는 상관 가능한 Role Session이다.
-- Object 읽기가 실제 성공했다.
-- Account·Region·Bucket·Prefix가 사전 승인 범위다.
-
-이 조건과 정상 대조군을 Runtime으로 검증한 뒤에만 자동 Write를 허용한다.
-
-### 0.4 자동 조치 시점
-
-현재 핵심안은 CloudTrail S3 Data Event가 기존 S3→Wazuh 수집 경로로 도착하는 방식을 유지한다.
-
-```text
-실제 S3 GetObject
-→ CloudTrail Event 생성·전달
-→ S3 Archive
-→ Wazuh 수집
-→ 고신뢰 Rule Alert
-→ Shuffle 자동 격리
-```
-
-따라서 목표는:
-
-> **S3 침해 Evidence가 Wazuh에 탐지되는 즉시 자동 격리**
-
-이다. `S3 API 호출 순간 즉시 격리`라고 표현하지 않는다. 촬영에서는 실제 Event→Alert 지연과 Alert→Action 지연을 따로 표시한다.
-
-CloudTrail의 별도 저지연 Route 전환은 촬영 필수 조건이 아니다. 구현 부담과 재검증 비용이 낮을 때만 후속 개선으로 다룬다.
-
-### 0.5 사건 조사 방식
-
-완전 자동 거미줄·AI Incident Graph는 필수 조건이 아니다.
-
-촬영 필수안:
-
-```text
-고신뢰 S3 Alert
-→ Event Time·Principal·Bucket/Key·Source IP 추출
-→ 미리 만든 Wazuh Saved View/Dashboard
-→ 같은 시간창의 관련 CloudFront·WAF·ALB·DVWA·CloudTrail 표시
-→ 자동 조치 결과·관측 공백·다음 조치 Runbook 표시
-```
-
-즉 **Alert 중심의 안내형 Incident Investigation View**를 만든다. 검색 문법을 모르는 팀원도 3분 안에 사건·영향·근거·다음 조치를 설명할 수 있어야 한다.
-
-### 0.6 자동화와 사람 판단의 경계
-
-```text
-자동
-- Alert 인증·Schema·Allowlist 검증
-- 중복 조치 차단
-- 좁고 가역적인 Workload 격리
-- validation/* 추가 접근 제한
-- Evidence·Execution 기록
-
-사람 판단 또는 명시적 승인
-- Credential/Session 영향 범위 확정
-- IAM 최소 권한 변경
-- IMDSv2·Hop Limit·Node 복구
-- 애플리케이션 Remediation
-- 격리 해제와 Incident 종료
+탐지
+→ 자동 긴급 대응
+→ 침해 확인과 자동 애플리케이션 완화
+→ 사람의 사건 조사
+→ 사람 승인 Edge 차단
+→ 재공격과 정상 대조군
 ```
 
 ---
 
-## 1. 문서 역할과 변경 경계
+## 2. 주장 범위
 
-| 문서 | 역할 |
-|---|---|
-| `CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md` | 공격·Containment·Remediation·Recovery의 의미 |
-| `CAPITAL-ONE-SOC-DEMO-PLAN.md` | 촬영을 위한 요구사항·남은 작업·Gate·현재 상태 |
-| `CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md` | 완성된 시스템을 실제로 찍는 화면·조작·내레이션·자막 |
-| `CAPITAL-ONE-SOC-E2E-BLUEPRINT.md` | Hop별 Interface·Schema·실패 계약 |
-| `OBSERVABILITY-CURRENT-STATUS.md` | 실제 최신 Runtime 상태 |
-
-이번 설계로 기존 Blueprint·Scenario의 `Rule 100103 → Containment` 표현이 충돌하면,
-구현 전에 해당 정본을 보정한다. 두 촬영 문서를 기준으로 활성 지원 문서도 같은 계약으로
-정렬하되, 과거 Runtime Evidence와 Git 이력은 삭제하지 않는다.
-
----
-
-## 2. 촬영 완료 정의
-
-다음이 모두 실제 Runtime Evidence로 확인돼야 최종 촬영을 시작한다.
-
-- [ ] 통제된 공격 한 TAKE에서 Command Injection→IMDS→보호 대상 S3 접근 성공을 재현
-- [ ] Rule `100103` 실제 조기 Alert와 정상 대조군 0
-- [ ] 보호 대상 S3 성공 접근 고신뢰 Rule과 정상 대조군 0
-- [ ] CloudTrail 원본 `eventID`와 고신뢰 Wazuh Alert 일대일 연결
-- [ ] 실제 고신뢰 Wazuh Alert와 Shuffle Execution 일대일 연결
-- [ ] 같은 CloudTrail `eventID` 재수집·중복 Alert가 조치를 반복하지 않음
-- [ ] Workload·Resource/Permission 격리가 승인 범위에 실제 적용
-- [ ] 추가 `validation/*` 접근 실패
-- [ ] 비대상 Namespace·정상 서비스 영향 0
-- [ ] Alert 중심 사건 조사 View에서 관련 로그·관측 공백·자동 조치·Runbook 확인
-- [ ] 다른 팀원의 3분 무검색 사용성 Test 통과
-- [ ] 사람이 선택한 고정 `low → impossible` Remediation이 승인된 Diff로 적용
-- [ ] 동일 공격 실패, 정상 기능 성공, 새 보호 대상 S3 성공 Alert 0
-- [ ] 모든 장면의 TAKE·UTC·Event ID·Execution ID·Commit SHA가 대조 가능
-- [ ] Secret·Credential·실제 개인정보가 Evidence와 영상에 없음
+- 실제 Capital One 사고의 SSRF를 그대로 재현하지 않는다.
+- 교육용 DVWA Command Injection을 최초 진입점으로 사용한다.
+- 공격 대상은 승인된 Lab의 고정 가짜 Object
+  `validation/capital-one-demo.csv`로 제한한다.
+- Credential 원문, Session Token, Cookie, Webhook Secret, PAT, 공격 응답 본문은
+  로그·Evidence·영상에 저장하지 않는다.
+- `GetObject` 성공은 고정 가짜 Object 읽기 성공이다. 대규모 외부 반출 전체를
+  증명했다고 표현하지 않는다.
+- `low → impossible`은 DVWA 애플리케이션 완화다. 이미 발급된 AWS Credential을
+  폐기하거나 Node Role 권한을 제거하는 조치라고 표현하지 않는다.
+- WAF 차단은 최초 HTTP 진입점의 가상 패치·추가 방어다. 애플리케이션 Root Cause 자체를
+  수정했다고 표현하지 않는다.
+- Source 존재, Rule Source, 정적 Test, 과거 Runtime, 현재 Runtime을 구분한다.
 
 ---
 
-## 3. 현재 Baseline — 2026-08-20 기준
+## 3. 고정 시나리오
 
-아래 상태는 Source 존재와 Runtime 검증을 구분한다.
-
-| 영역 | 현재 확인된 Evidence | 현재 판정 | 새 시연에서 남은 핵심 |
-|---|---|---|---|
-| 공격 Baseline | Node Role 임시 자격증명으로 고정 Object `validation/capital-one-demo.csv` 읽기 성공·CloudTrail Event 존재 | Runtime 확인 | 새 TAKE 반복성·촬영용 공개본 |
-| 5-Source 수집 | CloudFront·WAF·ALB·DVWA·CloudTrail의 Wazuh Raw/Index 연결 | Source별 Runtime 확인 | 동일 TAKE Timeline |
-| Rule `100100` | 보호 대상 S3 `GetObject` Alert와 CloudTrail `eventID` 연결 | 과거 양성 Runtime 확인 | 역사적 Evidence로만 보존·자동 조치 제외 |
-| Rule `100104` | 고신뢰 Source 계약·Level 12·합성 Positive/Negative Matrix | `PRE-RUNTIME PASS`, `GT-03` 미통과 | 실제 공격·정상 대조군·원본 `eventID` 일대일·지연 |
-| Rule `100103` | Rule·Push·Integrator 설정 G3 strict PASS, 무해 Rule `100102` N=3 | 부분 확인 | 실제 공격 Event→Rule `100103` Alert·정상 대조군 |
-| Shuffle G0 | Private Workflow·Webhook·Header·Shape Snapshot | PASS | 최종 Rule/Action 계약 갱신 |
-| Shuffle G1 | `repeat_back_to_me`가 `$exec`를 읽는 구조 Read-back | PASS | 실제 Containment Workflow로 교체 |
-| Shuffle G2 | 정상 Header 1 Execution FINISHED, wrong/missing Header 신규 Execution 0 | PASS | 실제 Wazuh Alert Payload 검증 |
-| Wazuh/Shuffle G3 | Integrator·Rule `100103`·Secret Mount·Daemon strict Runtime | PASS | 최종 Trigger를 S3 고신뢰 Rule로 전환·재검증 |
-| 실제 Alert→Execution | G3 범위 밖 | 미완료 | 고신뢰 S3 Alert G4 |
-| 자동 Containment | Source·Test 후보 존재 | 미완료 | 실제 적용·효과·Rollback·Blast Radius |
-| 관제 Dashboard | 한글 Dashboard·Saved View·Drill-down 존재 | 부분 확인 | Seed Alert 중심 View·동일 TAKE·3분 Test |
-| Remediation·Recovery | `low → impossible`, Terraform 보안 Profile Source 후보 | 미완료 | 승인 Workflow·Runtime·재공격·정상 기능 |
-
-위 Shuffle G0~G2 PASS는 기존 `CAPITAL-ONE-SOC-CONTAINMENT-v1` Legacy
-Transport Scaffold의 과거 검증이다. v1은 `CAPITAL-ONE-SOC-CONTAINMENT-v2`가
-생성·저장·Runtime 검증될 때까지 수정·삭제하지 않고 Rollback 용도로 보존한다.
-v2는 Validator·Dedupe·Containment 계약을 별도로 구축하는 현재 Target이며,
-v1의 PASS를 v2 Runtime PASS로 확대하지 않는다.
-
-### 현재 Evidence를 잘못 확대하지 않는다
-
-- G2 합성 Payload 왕복은 실제 Wazuh Alert E2E가 아니다.
-- G3 strict PASS는 실제 Rule Alert→Shuffle Execution 증거가 아니다.
-- Rule `100100` 양성 1건은 자동 차단 안전성 전체를 증명하지 않는다.
-- 보존된 여러 날짜의 5-Source Event는 동일 Incident Timeline이 아니다.
-- Dashboard 존재는 다른 사람이 쉽게 읽을 수 있다는 증거가 아니다.
-
----
-
-## 4. Requirement ID
-
-| ID | 촬영 필수 능력 | Recording Scene |
+| 상태 | 발생·행동 | 반드시 남길 Evidence |
 |---|---|---|
-| `RQ-ATTACK` | 통제된 공격과 가짜 S3 Object 접근 재현 | `SC-01`, `SC-02` |
-| `RQ-INGEST` | 5개 Source를 Wazuh에 보존·검색 | `SC-00`, `SC-07` |
-| `RQ-EARLY` | Rule `100103` 조기 이상 징후 | `SC-03` |
-| `RQ-S3-HC` | 보호 대상 S3 성공 접근 고신뢰 Rule | `SC-04` |
-| `RQ-SOAR` | 실제 고신뢰 Alert→Shuffle Execution | `SC-05` |
-| `RQ-CONTAIN` | 좁고 가역적인 자동 격리 | `SC-05`, `SC-06` |
-| `RQ-INVESTIGATE` | Alert 중심 Incident Investigation View | `SC-07` |
-| `RQ-RUNBOOK` | 현재 사실·자동 조치·다음 조치 안내 | `SC-07`, `SC-08` |
-| `RQ-REMEDIATE` | 사람 승인 후 Remediation·Recovery | `SC-08` |
-| `RQ-RETEST` | 동일 공격 실패·정상 기능 성공 | `SC-09` |
-| `RQ-EVIDENCE` | TAKE·UTC·ID·SHA·마스킹·재촬영 | 전 Scene |
+| `S0 READY` | Wazuh·Push Bridge·Dashboard·대응 경로 정상 | READY 시각, Health Event |
+| `S1 ENTRY` | WAF가 `POST /vulnerabilities/exec/`을 검사하지만 최초 공격은 `COUNT/ALLOW` | WAF Action·Label·Request 시각 |
+| `S2 CREDENTIAL RISK` | DVWA가 IMDS Credential endpoint 대상 명령의 출력 반환을 Audit | 안전한 Stage, Push `event_id` |
+| `S3 AUTO ISOLATION` | Rule `100110`이 발생하고 고정 DVWA Workload를 자동 격리 | Alert ID, Execution ID, Policy UID/Revision, 실제 격리 효과 |
+| `S4 S3 CONFIRMED` | 이미 획득된 임시 Credential로 고정 S3 Object 읽기 성공 후 CloudTrail 도착 | CloudTrail `eventID`, Principal, Object, 성공 상태 |
+| `S5 AUTO HARDENING` | Rule `100111`과 앞선 사건의 상관관계가 통과해 자동 `low → impossible` | Execution ID, Commit SHA, Argo Revision, 새 Pod 상태 |
+| `S6 INVESTIGATION` | 사람이 Incident Timeline Dashboard에서 진입부터 대응까지 설명 | 동일 시간창의 WAF·DVWA·Rule·CloudTrail·대응 |
+| `S7 WAF MITIGATION` | 사람이 좁은 WAF 차단을 승인·적용 | Rule Diff, 적용 시각, WAF Read-back |
+| `S8 REATTACK` | 같은 공격 Payload를 다시 보내 WAF `BLOCK/403` 확인 | WAF terminating Rule, downstream 0 |
+| `S9 CLOSE` | 정상 기능과 탐지 파이프라인 Health를 확인 | 정상 요청 성공, Health Event 성공, 신규 공격 Alert 0 |
+
+### 순서 불변조건
+
+- Rule `100110`은 역할 이름 조회가 아니라 **Credential endpoint 조회 단계**에서만 발생한다.
+- 자동 Workload 격리는 두 번째 IMDS 요청 뒤 시작하므로 최초 TAKE의 Credential 획득
+  단계와 충돌하지 않는다.
+- 고정 S3 읽기는 공격 Runner가 메모리에 보관한 짧은 수명의 임시 Credential로 수행한다.
+  따라서 DVWA Workload 격리 뒤에도 이미 시작된 S3 접근 Evidence가 도착할 수 있다.
+- Rule `100111`과 CloudTrail은 전송 지연이 있을 수 있으므로 실제 Event 시각과
+  Wazuh Alert 시각을 별도로 표시한다.
+- 재공격 성공 판정은 Alert 0 하나로 하지 않는다. WAF `BLOCK`과 downstream 0,
+  정상 요청 성공, 탐지 Health 성공을 함께 요구한다.
 
 ---
 
-# 5. Gate
+## 4. Rule v2 계약
 
-## 공통 검증 기록 원칙
+### 4.1 Legacy Rule
 
-- 기본 완료 기록은 각 Gate의 체크박스와 짧은 Runtime 결과다. 모든 Gate마다 별도 Bundle·Manifest·
-  SHA 파일을 만들지는 않는다.
-- Durable JSON은 `GT04 alert-execution`, `GT05~06 containment`, `GT09~10 recovery-retest`
-  세 묶음만 만든다. 그 밖의 Gate는 짧은 Secret-safe Runtime 결과로 충분하다.
-- 합성 Test·Preflight·Catch-up/Drain은 `TEST`, `PRE-RUNTIME`, `PRECONDITION`으로 구분하며
-  뒤 Gate의 PASS를 대신하지 않는다. Stale backlog는 개별 메시지를 Evidence 목적으로 보존하지 않는다.
-- 기록을 남길 때도 실제 Credential·Token·Cookie·Webhook URI·원문 Secret은 저장하지 않는다.
-
-### 현재 핵심 Evidence 참고 — 2026-08-20
-
-| Gate | 현재 판정 | 정본 Evidence |
+| Rule | 보존 이유 | 활성 자동화 |
 |---|---|---|
-| `GT-00` | `PASS` | `C:\Users\Unoh\Documents\aws-topology-evidence\gt00\gt00-three-take-index-20260820T102636Z.json` / `b4b0bf0df457d454e59370b0b2bc274e53a16adcd0504f05c39c23c29b6512ee` |
-| `GT-01` | `PASS` | `C:\Users\Unoh\Documents\aws-topology-evidence\capital-one-20260820T092407Z-a5bca9cd\gt01-wazuh-timeline.json` / `fc7c7ec3991002d529f25c153c9038d9a5935866b32e1eb6c7d8b256497e8a98` |
-| `GT-02` | `NOT RUN` | 없음. Stale backlog Drain은 별도 `PRECONDITION` Evidence로만 보존한다. |
-| `GT-03` | `PRE-RUNTIME PASS`, Gate 미통과 | `C:\Users\Unoh\Documents\aws-topology-evidence\gt03-pre-runtime\gt03-wazuh-rule-matrix-20260820T102542Z.json` / `81e4caf545cd25906abc313fcf3a4d1961225aadc1da87f4afcec35860a7d365` |
-| `GT-04`~`GT-10`, `GT-11A`, `GT-11B` | `NOT RUN` | 없음 |
+| `100103` | 기존 DVWA Push Runtime Evidence와 과거 Dashboard 보존 | 없음 |
+| `100104` | 기존 고정 S3 `GetObject` Runtime Evidence 보존 | 없음 |
+| `100105` | 기존 `100104` 오류 억제 계약 보존 | 없음 |
 
-## GT-00 — 공격·Lab Scope·공개본
+기존 Rule을 삭제하거나 의미를 덮어쓰지 않는다. 신규 Workflow·Dashboard는 v2 Rule ID만
+활성 계약으로 사용한다.
 
-### 목적
+### 4.2 Rule `100110` — Credential 접근 조기탐지
 
-공격을 동일 조건으로 반복하고 공개 가능한 Evidence를 만든다.
+#### Source Event 계약
 
-### 해야 할 일
-
-- [x] 촬영용 새 `TAKE_ID` 발급 계약 고정
-- [x] Account·Region·Bucket·고정 Object `validation/capital-one-demo.csv` 고정
-- [x] 가짜 Object 내용·Hash 고정
-- [x] 실제 Credential 원문 비저장 확인
-- [x] 공격 Runner 3회 Rehearsal
-- [x] 실패 시 Credential 제거·환경 원복
-- [x] 공개 화면용 마스킹 Profile 확정
-
-### PASS Evidence
-
-- 3회 중 3회 같은 공격 단계 재현
-- 실제 데이터 0
-- Credential 노출 0
-- 시작·종료 UTC·Object Hash·TAKE 기록
-
-### Runtime Result — 2026-08-20
-
-- 독립 TAKE 3개에서 IMDS Role 발견→임시 Credential Memory 사용→고정 가짜
-  `validation/capital-one-demo.csv` 읽기 3/3 성공
-- 고정 가짜 Object SHA-256:
-  `625dad237e31a1ba4c6de1b0bf0153c2f62e56f5b6a18d97242d4c41665a4d9e`
-- TAKE:
-  - `capital-one-20260820T092251Z-238b87c3`
-  - `capital-one-20260820T092331Z-93e0af3c`
-  - `capital-one-20260820T092407Z-a5bca9cd`
-- 세 Evidence 모두 임시 Credential 환경 제거와 Credential 원문 비저장을 기록
-- 세 TAKE Evidence와 현재 변경 파일 Secret Scan: 0 findings
-- 공개 마스킹 계약:
-  `observability/scenarios/capital-one-public-masking.json`
-- 3-TAKE Evidence Index:
-  `C:\Users\Unoh\Documents\aws-topology-evidence\gt00\gt00-three-take-index-20260820T102636Z.json`
-- Evidence SHA-256:
-  `b4b0bf0df457d454e59370b0b2bc274e53a16adcd0504f05c39c23c29b6512ee`
-- 첫 두 TAKE는 원본 `capital-one-baseline.json`만 보존됐고 전체 Manifest Bundle은 없다.
-  Index는 세 원본 파일을 SHA-256으로 결속하지만 당시 수집되지 않은 파일을 복구하지는 않는다.
-
----
-
-## GT-01 — Wazuh 로그 Coverage와 동일 TAKE Timeline
-
-### 목적
-
-평소 축적된 로그가 실제 사건 조사에 사용 가능한지 확인한다.
-
-### 필수 Source
+DVWA Audit는 원문 Command·URL·Role 이름·응답·Credential을 저장하지 않고 다음 안전
+분류값만 추가한다.
 
 ```text
-CloudFront
-WAF
-ALB
-DVWA 안전 Audit
-CloudTrail S3 Data Event
+context.stage = imds_role_discovery | imds_credential_fetch | other
 ```
 
-### 해야 할 일
+- `/latest/meta-data/iam/security-credentials/` 조회는 `imds_role_discovery`다.
+- 그 아래 한 Role의 Credential endpoint 조회는 `imds_credential_fetch`다.
+- 분류는 서버 측 Audit 함수가 요청 Target을 검사해 생성한다.
+- Client가 보낸 Stage Header나 자유 문자열을 신뢰해 Rule을 발생시키지 않는다.
 
-- [x] 새 공격 TAKE에서 5개 Source 수집
-- [x] 각 Source Event Time·필드·Index 확인
-- [x] 동일 TAKE와 다른 날짜 보존 Event 분리
-- [x] Source별 관측 의미와 한계 기록
-- [x] Pod→IMDS 네트워크 직접 관측 공백 표시
-- [x] 모든 Source를 관통하는 공통 ID가 없음을 Evidence에 표시
-
-### PASS Evidence
-
-한 TAKE의 연속 시간창에서 각 Source가 실제로 검색되고, 다음 상관 기준을 설명할 수 있다.
-
-| 연결 | 기준 |
-|---|---|
-| CloudFront ↔ WAF | Edge Request ID 또는 시간·Method·Path |
-| WAF ↔ ALB ↔ DVWA | 시간·Method·Path·Client/Target 문맥 |
-| DVWA ↔ CloudTrail | 시간·Role·Bucket/Key·공격 단계 |
-
-### Runtime Result — 2026-08-20
-
-- TAKE: `capital-one-20260820T092407Z-a5bca9cd`
-- Wazuh archive와 `wazuh-archives-4.x-2026.08.20` Index에서 같은 사건 시간창 확인
-  - CloudFront `2`, WAF `2`, ALB `2`, DVWA 안전 Audit `2`, CloudTrail S3 Data Event `1`
-- CloudFront↔WAF: Edge Request ID `2/2` exact match
-- ALB↔DVWA: ALB Trace ID와 DVWA Request ID `2/2` exact match
-- WAF↔ALB: 같은 Method·Path와 요청 시작 시각 차이 `3ms`, `4ms`
-- 마지막 DVWA Event에서 보호 대상 CloudTrail `GetObject`까지 `4초`
-- 공통 전역 ID가 없으며 Pod→IMDS 네트워크를 직접 관측하지 않는다는 한계를 보존
-- Evidence:
-  `C:\Users\Unoh\Documents\aws-topology-evidence\capital-one-20260820T092407Z-a5bca9cd\gt01-wazuh-timeline.json`
-- Evidence SHA-256:
-  `fc7c7ec3991002d529f25c153c9038d9a5935866b32e1eb6c7d8b256497e8a98`
-
----
-
-## GT-02 — Rule 100103 조기 이상 징후
-
-### 목적
-
-S3 침해 확정 전 조기 징후를 실제 Push Alert로 보여준다.
-
-### 해야 할 일
-
-- [ ] 실제 공격 독립 `TAKE` 3회
-- [ ] 각 TAKE에서 실제 발생한 `command.execution` Event N→Rule `100103` Alert N 일대일
-- [ ] `event_id`, Event Time, Alert Time 보존
-- [ ] 정상 Route·Resource·Result 대조군 Alert 0
-- [ ] Offline Catch-up과 동일 `event_id` 중복 Alert 0
-- [ ] Rule `100103`을 자동 격리 Trigger에서 제거하거나 observe-only로 고정
-
-### Runtime 경계
-
-GT-02·GT-03은 `scope=detection_only` 세션에서 실행한다. 이 구간에는
-`custom-shuffle-soc` Integration을 활성화하지 않으며 Shuffle Containment Write를
-실행하지 않는다. GT-03 Runtime PASS 후에만 최종 고신뢰 Rule의 Integration을 GT-04에서
-연결한다.
-
-### PASS Evidence
+#### Match 계약
 
 ```text
-독립 공격 TAKE 3
-실제 공격 Event N
-Rule 100103 Alert N
-누락 0
-동일 event_id 중복 0
-정상 대조군 Alert 0
+transport=push
+source=dvwa
+payload.event_type=command.execution
+payload.result=succeeded
+payload.route=/vulnerabilities/exec/
+payload.context.action=shell_command
+payload.context.resource=ec2_imds
+payload.context.security_level=low
+payload.context.stage=imds_credential_fetch
+payload.context.status=output_returned
 ```
 
-`N`은 공격 Runner가 실제로 만든 승인 Event 수로 정한다. 한 공격이 여러 IMDS 단계
-Event를 만들 수 있으므로 TAKE당 1건이나 총 3건으로 하드코딩하지 않는다.
+Rule Level은 `12`로 고정한다. Rule Description은 Credential 원문 획득을 확정했다고
+과장하지 않고 다음 의미를 전달한다.
 
----
+> `AWS-SOC: DVWA command returned output from the EC2 IMDS credential endpoint.`
 
-## GT-03 — 보호 대상 S3 고신뢰 Rule
-
-### 목적
-
-자동 조치에 사용할 수 있는 엄격한 S3 침해 확인 Alert를 만든다.
-
-### 최소 의미 조건
+#### 자동 행동
 
 ```text
-eventSource = s3.amazonaws.com
-eventName = GetObject
-recipientAccountId = 승인 Account
-requestParameters.bucketName = 승인 Bucket
-requestParameters.key starts with validation/
+Rule 100110
+→ 인증·Schema·Allowlist 검증
+→ Push event_id Dedupe
+→ 고정 Namespace/Workload의 DVWA Quarantine
+```
+
+격리는 고정 DVWA Workload만 대상으로 하는 사전 승인 정책이다. Rule Payload 값으로
+Namespace, Deployment, Repository, Branch, Command를 선택하지 않는다.
+
+격리 성공은 Resource 생성만으로 판정하지 않는다.
+
+- 정책 UID/Revision이 Read-back된다.
+- DVWA Workload의 금지된 Egress가 실제 실패한다.
+- 관측·Health에 필요한 고정 경로는 유지된다.
+- 다른 Namespace와 비대상 Workload 영향은 0이다.
+- 동일 Push `event_id` 재전달 시 실제 조치는 총 1회다.
+
+### 4.3 Rule `100111` — S3 침해확정 상관 Rule
+
+#### 현재 Event 조건
+
+```text
+CloudTrail
+eventSource=s3.amazonaws.com
+eventName=GetObject
+recipientAccountId=<승인 Account exact>
+awsRegion=ap-northeast-2
+userIdentity.type=AssumedRole
+sessionIssuer.userName=<고정 Primary Node Role exact>
+bucketName=<현재 승인 Primary Bucket exact>
+key=validation/capital-one-demo.csv
+httpStatusCode=200
 errorCode 없음
-Principal/Role Session = 공격 시나리오 승인 대상
-정상 Allowlist 불일치
+eventID=UUID
 ```
 
-### 해야 할 일
+#### 선행 사건 상관조건
 
-- [ ] `runtime_profile=minimal`, `security_scenario_profile=capital-one-lab` 확인
-- [ ] Terraform-managed secondary control Bucket과 managed negative-control Role의
-      출력이 존재하고 대상이 고정됨을 확인한다. 출력이 없거나 모호하면 임의 Bucket·Principal을
-      사용하지 않고 fail closed한다.
-- [x] 현재 Rule `100100`의 실제 Decoded Field·조건 재검토
-- [x] 부족하면 새 Rule ID 생성
-- [x] Rule Level·Group·Description 확정
-- [ ] Alert에 CloudTrail `eventID`, Principal, Bucket/Key, 성공 여부 포함
-- [ ] 공격 Positive 3회
-- [ ] 정상 `terra-user` Negative Control 3회
-- [ ] Terraform-managed secondary control Bucket Positive 1회
-- [ ] Terraform-managed Primary의 고정 harmless control Object를 Node Role로 성공 조회하는
-      다른 Prefix Control 1회(정본 Object Key는 구현 시 고정)
-- [ ] Terraform-managed negative-control Principal의 승인 Primary Object 접근 1회
-- [ ] 동일 Node Role·동일 Primary Bucket/Key에 wrong `If-Match`를 사용한 실패 Control 1회
-- [ ] 재수집 동일 `eventID` 중복 처리 확인
-- [ ] Event→Wazuh Alert 실제 지연 측정
+`100111`은 단순 `GetObject` Rule이 아니다. 다음 조건을 모두 만족해야 활성 v2 사건으로
+판정한다.
 
-### PASS 기준
+- Rule `100110`으로 생성된 미종료 Incident가 있다.
+- `100110` Event 시각 이후 15분 안의 CloudTrail Event다.
+- 활성 Incident가 정확히 1개다. 0개 또는 2개 이상이면 자동 행동을 거부한다.
+- Scenario, Account alias, 고정 Role, Bucket, Object 계약이 모두 일치한다.
+- 공격 Runner Evidence가 같은 실행에서 생성된 CloudTrail `eventID`를 보존한다.
+
+Wazuh의 상관 Rule과 SOAR Incident State가 이 계약을 함께 검증한다. 어느 한쪽이라도
+불완전하면 Alert/Evidence만 남기고 `low → impossible`은 실행하지 않는다.
+
+Rule Level은 `14`로 고정한다. Description은 다음 의미로 제한한다.
+
+> `CAPITAL-ONE: Protected S3 object read followed an active DVWA IMDS credential incident.`
+
+#### 자동 행동
 
 ```text
-공격 Positive 3/3 Alert
-normal_operator 3회 → 0 Alert
-other_bucket 1회 → 0 Alert
-other_prefix 1회 → 0 Alert
-other_principal 1회 → 0 Alert
-failure 1회 → 0 Alert
-원본 eventID ↔ Alert 1:1
+Rule 100111 + correlation PASS
+→ CloudTrail eventID Dedupe
+→ 고정 GitHub Workflow/Repository/Branch
+→ DEFAULT_SECURITY_LEVEL: low → impossible
+→ Argo CD exact revision 배포
 ```
 
-Rule이 이 기준을 통과하기 전에는 Shuffle Write를 연결하지 않는다.
-
-### 2026-08-20 Pre-Runtime 결과
-
-- 기존 Rule `100100`은 정상 성공 Event를 탐지하지만, 합성
-  `errorCode=AccessDenied + HTTP 200`도 탐지해 자동 조치용 fail-closed 계약에는 부족하다.
-- 신규 고신뢰 Source 계약은 Rule `100104` Level 12로 고정했다. 현재 Wazuh `4.14.7`의
-  `aws-eventnames` CDB에는 `GetObject`가 없으므로 부모는 `80202`가 아니라 `80200`을 사용한다.
-- Rule `100104`는 Account·Region·`AssumedRole`·Node Role·현재 승인 Bucket·고정 Object Key·
-  HTTP 200·UUID `eventID`를 모두 exact 조건으로 확인한다.
-- Rule `100105` Level 0 child는 `errorCode`가 존재하는 모순 Event를 억제한다.
-- `wazuh-analysisd -t`와 합성 `wazuh-logtest` Matrix는 통과했다. Positive는 `100104/12`,
-  `errorCode + HTTP 200`은 `100105/0`, 나머지 비대상·누락 조건은 `100104`가 발생하지 않았다.
-- Pre-Runtime Evidence:
-  `C:\Users\Unoh\Documents\aws-topology-evidence\gt03-pre-runtime\gt03-wazuh-rule-matrix-20260820T102542Z.json`
-- Evidence SHA-256:
-  `81e4caf545cd25906abc313fcf3a4d1961225aadc1da87f4afcec35860a7d365`
-- 이는 Source/Rule 단위 Test이며 GT-03 Runtime PASS가 아니다. Manager 적용 후 실제 공격 Positive
-  3회, 정상·비대상 Negative, 원본 `eventID` 일대일, 실제 지연은 아직 남아 있다.
+- 사람 승인을 기다리지 않는 사전 승인 자동 대응이다.
+- 변경 대상은 고정 DVWA 보안 설정 하나다.
+- 동일 CloudTrail `eventID` 재수집 시 GitHub Commit·Argo Rollout은 총 1회다.
+- 예상하지 않은 Diff, Branch, Repository, 보안 수준이면 실행을 거부한다.
+- 성공은 GitHub Run, Commit SHA, Argo exact Revision, 새 Pod, 새 Session의
+  `security=impossible` Read-back으로 판정한다.
 
 ---
 
-## GT-04 — 고신뢰 Wazuh Alert → Shuffle 실제 E2E
+## 5. 사람의 조사와 WAF 조치
 
-### 목적
+### 5.1 Incident Timeline Dashboard
 
-멘토가 요구한 `어떤 Rule → Shuffle이 어떤 행위`를 실제 Runtime으로 증명한다.
+현재 `SOC 실시간 보안관제`의 Push 표만으로 전체 인과관계를 설명했다고 주장하지 않는다.
+신규 Rule 필드가 확정된 뒤 별도 `Capital One Incident Timeline v2` Dashboard를 만든다.
 
-### 해야 할 일
+최소 표시 항목:
 
-- [ ] `<integration>` 대상 Rule을 최종 고신뢰 S3 Rule로 변경 또는 별도 등록
-- [ ] `custom-shuffle-soc`가 CloudTrail Alert 필드를 Sanitizer에 포함
-- [ ] Secret·원본 Credential·불필요한 Request 원문 제거
-- [ ] Schema v2 Payload에 `TAKE_ID`를 넣지 않고 원본 CloudTrail `eventID`를 상관·Dedupe에 사용
-- [ ] Webhook Header exact match 유지
-- [ ] 정상 실제 Alert→신규 Execution 1개
-- [ ] wrong/missing Header→Execution 0
-- [ ] 미등록 Rule·Account·Prefix→Write 0
-- [ ] 검증 경로의 외부 Side Effect 0
-- [ ] Wazuh Alert·CloudTrail eventID·Shuffle Execution ID 연결
-- [ ] Retry·Timeout·오류 로그 확인
+- WAF `COUNT/ALLOW`, Managed Label, Method, Path
+- DVWA `stage=imds_role_discovery`
+- DVWA `stage=imds_credential_fetch`
+- Rule `100110`과 자동 Quarantine 결과
+- CloudTrail `GetObject`와 Rule `100111`
+- 자동 `low → impossible` Execution·Commit·Argo Revision
+- 사람의 WAF 조치 시각
+- 재공격 WAF `BLOCK`
+- downstream 신규 Event 0과 정상/Health 대조군
 
-### Dedupe Key
+Dashboard는 자동 인과 추론을 주장하지 않는다. 고정 시간창·Rule ID·`event_id`·
+CloudTrail `eventID`·Execution ID로 사건을 좁혀 보여준다.
 
-CloudTrail 확인 Event는 재수집 때 달라질 수 있는 Wazuh Alert ID가 아니라 원본 `eventID`를 사용한다.
+### 5.2 WAF 조치 계약
 
-### PASS Evidence
+관제자는 Dashboard에서 최초 악성 HTTP 진입점을 확인한 뒤 사전 준비된 좁은 WAF 변경을
+검토하고 사람 승인으로 적용한다.
 
 ```text
-Actual Wazuh Rule Alert: 1
-New Shuffle Execution: 1
-Execution terminal: FINISHED/SUCCESS
-Wazuh Alert UTC: <UTC>
-Shuffle Execution UTC: <UTC>
-Alert → Execution latency: <seconds>
-Wrong/missing header execution: 0
-Unexpected action: 0
-External side effect: 0
+AWS Managed Common Rule의 EC2MetaDataSSRF_Body Label
+AND Method=POST
+AND URI=/vulnerabilities/exec/
+→ BLOCK
 ```
+
+- 전체 `AWSManagedRulesCommonRuleSet`을 일괄 BLOCK으로 바꾸지 않는다.
+- Source IP 하나에 영구 의존하지 않는다.
+- 정상 Numeric IP Ping은 차단하지 않는다.
+- Console 임시 수정이 아니라 재현·Rollback 가능한 IaC/Runbook 경로를 사용한다.
+- 적용 완료는 WAF Rule Read-back과 새 요청의 terminating Rule로 확인한다.
 
 ---
 
-## GT-05 — 자동 Containment
+## 6. 재공격 계약
 
-### 목적
+기존 Baseline Runner는 DVWA가 `low`가 아니면 공격 전에 중단하므로 최종 재공격 증명에
+그대로 사용하지 않는다. 동일 Payload를 전송하는 전용 Reattack Runner를 사용한다.
 
-사전 승인된 좁은 범위의 대응만 자동 실행한다.
+### 공격 대조
 
-### 필수 자동 조치
+- 현재 DVWA가 `impossible`이어도 CSRF Token을 획득한다.
+- 최초 공격과 같은 IMDS role-discovery Payload를 `POST /vulnerabilities/exec/`로 보낸다.
+- 새 `REATTACK_ID`와 시작 UTC를 기록한다.
+- HTTP `403` 하나만으로 WAF 차단을 확정하지 않는다.
+
+### PASS
 
 ```text
-1. DVWA Workload Quarantine
-2. validation/* 추가 접근 제한
-   또는 사전 승인된 전용 Principal 제한
+WAF action=BLOCK
+WAF terminating rule=<사람이 적용한 고정 Rule>
+HTTP status=403
+ALB 신규 공격 요청=0
+DVWA 신규 command.execution=0
+Push 신규 공격 Event=0
+Rule 100110 신규 Alert=0
+CloudTrail 보호 Object 신규 GetObject=0
+Rule 100111 신규 Alert=0
+추가 자동 대응=0
 ```
 
-GT-05는 고정된 임시 DVWA Quarantine과 `validation/*` 제한만 실행한다. GT-06은
-이 두 제한의 실제 효과와 비대상 영향만 별도로 검증한다.
+### 정상·Health 대조
 
-### 금지
-
-- 공유 Karpenter Node Role 전체 `DenyAll`
-- 임의 Namespace·Selector·CIDR·Repository 입력
-- Alert 원문을 그대로 Shell/Workflow Input에 사용
-- 관제자가 확인하지 않은 광범위 IAM 변경
-
-### 해야 할 일
-
-- [ ] 고정 Target·Allowlist 계약
-- [ ] NetworkPolicy enforcement 실제 확인
-- [ ] Resource/Permission Deny 대상 고정
-- [ ] Workflow Idempotency
-- [ ] 같은 CloudTrail eventID 10회 Dedupe Stress를 side-effect-free 경로에서 수행해 Action 1회를 증명
-- [ ] 위 결과가 PASS한 뒤 exact dispatch만 실제 Containment으로 승격
-- [ ] 실패 시 DLQ/오류 상태 또는 명시적 승인 대기
-- [ ] Rollback Workflow·사람 승인 경계
-- [ ] 다른 Namespace·Object Prefix 영향 Test
-
-### PASS Evidence
-
-- Shuffle 검증·Containment Outcome
-- NetworkPolicy UID/Commit/Revision
-- Resource/Permission 제한 Diff (고정 Allowlist 범위, 광범위 IAM 변경 없음)
-- Action 1회·중복 0
-- 비대상 영향 0
-- Rollback 성공
+- 정상 로그인·홈 화면이 성공한다.
+- 안전한 Numeric IP Ping이 성공한다.
+- 별도 Push Health Event가 Wazuh에 도착한다.
+- 따라서 Alert 0의 원인이 WAF 선차단이지 수집 장애가 아님을 증명한다.
 
 ---
 
-## GT-06 — Containment 효과와 Blast Radius
+## 7. 실행 단계
 
-### 목적
+### `P1` — 문서·계약
 
-차단이 실제로 공격 경로를 끊었고 정상 범위를 보존했는지 검증한다.
+- 이 계획과 녹화 대본을 동일 Rule·행동·장면으로 고정한다.
+- Legacy Rule과 v2 Rule의 의미를 분리한다.
 
-### 해야 할 일
+### `P2` — Event·Rule
 
-- [ ] 동일 Credential/Session의 `validation/*` 추가 접근 실패
-- [ ] DVWA Workload의 공격용 Egress 실패
-- [ ] 정상 Health/관측 경로 유지
-- [ ] 다른 Namespace 정상
-- [ ] 비대상 S3 Object/서비스 영향 확인
-- [ ] 실패 원인이 Containment임을 구분
+- DVWA 안전 Stage 분류와 Test
+- Push Forwarder 허용 필드와 Test
+- Rule `100110/100111` Source
+- Positive·Negative·중복 Matrix
+- Wazuh `analysisd -t`와 `wazuh-logtest`
 
-### PASS Evidence
+### `P3` — 자동 대응
 
-```text
-공격 경로: DENIED
-비대상 Namespace: PASS
-정상 서비스: PASS
-예상하지 않은 영향: 0
-```
+- `100110 → fixed DVWA Quarantine`
+- `100111 + correlation → low→impossible`
+- 각 Dedupe와 실패 상태
+- 실제 Runtime Read-back과 Blast Radius
 
----
+### `P4` — 조사 화면·WAF·재공격 Runner
 
-## GT-07 — Alert 중심 Incident Investigation View
+- 신규 필드가 확정된 뒤 Timeline Dashboard 작성
+- 좁은 WAF 변경과 Rollback 계약
+- 같은 Payload Reattack Runner
 
-### 목적
+### `P5` — Fresh E2E
 
-완전 자동 Graph 없이도 최초 Alert에서 관련 로그를 쉽게 읽게 한다.
+- 새 TAKE 한 번으로 `S0~S5` 실제 실행
+- 사람이 Dashboard를 조사하고 WAF 적용
+- 새 REATTACK으로 `S8~S9` 검증
+- 실패하면 같은 TAKE의 일부 단계만 재사용하지 않고 원인을 수정한 뒤 새 TAKE를 사용
 
-### 필수 화면 영역
+### `P6` — Rehearsal·Recording
 
-1. **Incident Summary**
-   - Rule·위험도·Event Time
-   - Principal/Role Session
-   - Bucket/Key
-   - 자동 조치 결과
-2. **Detection Rationale**
-   - 왜 고신뢰인지
-   - 어떤 조건이 일치했는지
-3. **Evidence Timeline**
-   - CloudFront·WAF·ALB·DVWA·CloudTrail
-4. **Observed Gaps**
-   - 공통 ID 부재
-   - Pod→IMDS 직접 네트워크 로그 부재
-5. **Actions Taken**
-   - Shuffle Execution·Containment
-6. **Next Actions**
-   - Rule별 Runbook
-7. **Raw Drill-down**
-   - 원본 Event·Alert 상세
-
-### 구현 최소안
-
-- 기존 Wazuh Dashboard/Saved Search를 재사용한다.
-- Seed Alert에서 다음 필드를 읽어 미리 만든 View에 적용한다.
-
-```text
-Event Time window
-CloudTrail eventID
-Principal / Role Session
-Source IP
-Bucket / Key
-URI / Method
-Rule ID
-```
-
-- 1-click Deep Link가 어려우면 2단계 절차를 허용한다.
-  1. Alert 상세에서 필드 확인
-  2. `Capital One Incident Investigation` Saved View 열기
-- 별도 자동 Graph Engine은 만들지 않는다.
-
-### 해야 할 일
-
-- [ ] 기존 `SOC-LIVE-OVERVIEW.ndjson`·Saved Objects 재검토
-- [ ] 기존 `security-log-investigation.json`에서 재사용 가능한 Query 확인
-- [ ] 새 TAKE 5-Source Timeline으로 Dashboard 갱신
-- [ ] Rule `100104` Seed View 고정
-- [ ] 자동 조치 결과 표시
-- [ ] 관측 공백 표시
-- [ ] 공개본 마스킹 View 분리
-- [ ] Raw Drill-down 링크 확인
-
-### HUMAN CHECKPOINT — 사용성 Test
-
-검색 문법을 모르는 팀원이 3분 안에 다음을 설명해야 한다. 이 평가는 사람만 수행하며
-Codex가 임의로 PASS 처리하지 않는다.
-View 구현은 GT-08에서 준비하되, 실제 사용성 판정은 GT-11A Rehearsal과 함께 마지막
-통합 사용자 Checkpoint에서 수행한다.
-
-```text
-무슨 일이 발생했는가
-왜 고신뢰 Alert인가
-어떤 자산과 Principal이 관련됐는가
-무엇이 자동으로 차단됐는가
-어떤 Evidence가 공격 경로를 지지하는가
-무엇은 아직 보이지 않는가
-다음에 무엇을 확인·조치해야 하는가
-```
+- 다른 팀원이 Dashboard만 보고 3분 안에 흐름과 조치를 설명
+- 전체 장면 2회 무중단 Rehearsal
+- Secret-safe 최종 촬영
 
 ---
 
-## GT-08 — Rule별 Runbook·의사결정 지원
+## 8. 현재 상태 — 2026-08-21
 
-### 목적
+| 항목 | 현재 판정 |
+|---|---|
+| 기존 공격 Runner로 IMDS Credential·고정 가짜 S3 읽기 | Runtime 확인 |
+| Push Bridge와 Rule `100103` Alert | Runtime 확인, Legacy 전환 대상 |
+| Rule `100104` 고정 S3 Positive | Runtime 확인, Legacy 전환 대상 |
+| Rule `100110/100111` | 미구현 |
+| DVWA `context.stage` | 미구현 |
+| `100110` 실제 자동 Workload 격리 | 미검증 |
+| `100111` 상관관계와 자동 `low → impossible` | 미검증 |
+| 전체 Incident Timeline Dashboard | 미구현 |
+| 사람 승인 WAF 차단 | 미구현 |
+| WAF 전용 Reattack Runtime | 미검증 |
 
-관제자가 로그를 읽고 다음 조치를 쉽게 구상하도록 한다.
-
-### 필수 내용
-
-```text
-확인된 사실
-추정 또는 미확정
-이미 수행한 자동 조치
-영향 자산
-관측 공백
-추가 조사 항목
-후속 대응 후보
-승인 필요 조치
-```
-
-### S3 고신뢰 Rule Runbook 후보
-
-1. 같은 Principal/Role Session의 다른 S3 접근 확인
-2. 다른 AWS API·Resource 접근 확인
-3. Credential/Session 재사용 여부 확인
-4. 최초 침투 Workload와 URI 확인
-5. IAM 최소 권한 검토
-6. DVWA 취약 설정 패치
-7. IMDSv2·Hop Limit·Node 영향 검토
-8. 임시 격리 유지·해제 조건 확인
-
-### 구현 방법
-
-- Dashboard Markdown/Description 또는 별도 Saved View
-- Rule ID별 고정 Runbook 링크
-- 필요하면 Shuffle 결과에 다음 조치 요약 포함
-- LLM이 새로운 대응을 생성하는 기능은 필수 아님
-
-### PASS 기준
-
-다른 팀원이 Dashboard만 보고 승인해야 할 다음 조치와 자동으로 이미 끝난 조치를 구분한다.
+과거 Source·Test·Runtime Evidence를 새 v2 완료 증거로 확대하지 않는다.
 
 ---
 
-## GT-09 — Remediation·Recovery
+## 9. 시연 시작조건
 
-### 목적
+아래가 모두 실제 Runtime으로 확인되기 전에는 녹화 대본을 실행하지 않는다.
 
-자동 격리 뒤 사람이 근본 대응을 결정·승인한다.
+- Rule `100110` Positive와 모든 Negative Control
+- Rule `100111` Positive·상관 실패·Negative Control
+- 자동 Quarantine 1회와 실제 효과
+- 자동 `low → impossible` 1회와 실제 배포
+- 중복 Event 재전달 시 추가 조치 0
+- Timeline Dashboard에서 한 Incident 설명 가능
+- 사람 승인 WAF 적용과 Read-back
+- 동일 Payload WAF 차단과 downstream 0
+- 정상 기능과 Push Health 성공
+- Secret 노출 0
 
-### 최소 촬영 대응
-
-```text
-DVWA defaultSecurityLevel: low → impossible
-```
-
-이는 애플리케이션 보안 설정 패치다.
-
-### 제외된 Future Work 후보
-
-- IAM 최소 권한
-- `validation/*` 실습 권한 제거 또는 축소
-- IMDSv2 강제
-- Hop Limit 검토·보강
-- 필요 시 Node 교체
-
-위 항목은 이 촬영 Goal에서 Apply·Runtime 검증하지 않는다. 임시 Quarantine과
-`validation/*` 제한 해제는 촬영 Reset 운영 절차에서만 다룬다.
-
-### 해야 할 일
-
-- [ ] Containment와 Remediation Workflow 분리
-- [ ] 허용 파일·값 1개 계약
-- [ ] GitHub `workflow_dispatch` 고정
-- [ ] 예상하지 않은 Diff 0
-- [ ] Argo exact Commit SHA 배포
-- [ ] 새 Pod·새 세션에서 `impossible`
-- [ ] 격리 해제 순서·주체·UTC 기록
-- [ ] IAM·IMDS·Node Apply를 실행하거나 적용 완료로 주장하지 않음
-
-### PASS Evidence
-
-- 승인 기록
-- GitHub Run·Commit SHA
-- Argo Revision·Healthy
-- 고정 `low → impossible` Remediation Runtime
-- 임시 조치 해제 Evidence
+Evidence는 TAKE별 핵심 ID·UTC·Outcome을 담은 단일 Sanitized Summary와 촬영용 화면만
+보존한다. 작은 검증마다 새 Gate·Bundle을 만들지 않는다.
 
 ---
 
-## GT-10 — 동일 공격·정상 기능 재검증
-
-### 목적
-
-서비스 중단이 아니라 공격 경로 제거를 증명한다.
-
-### 해야 할 일
-
-- [ ] 동일 Payload 재실행
-- [ ] 애플리케이션 계층 실패 확인
-- [ ] 기존 Credential/Session의 보호 대상 접근 실패
-- [ ] 정상 로그인 성공
-- [ ] 승인 기능 성공
-- [ ] 새 Rule `100104` 고신뢰 S3 성공 Alert 증가 없음
-- [ ] Rule `100103` 조기 경보는 관찰값으로 기록하되 GT-10 PASS를 위해 0으로 만들도록
-  요구하지 않음
-- [ ] 관찰 시간창 고정
-
-### PASS 기준
+## 10. 금지 표현
 
 ```text
-동일 공격: FAIL
-보호 대상 S3 추가 접근: DENIED
-정상 기능: PASS
-새 고신뢰 S3 성공 Alert: 0
+Rule 100110이 Credential 원문 탈취를 직접 증명했다.
+Rule 100111 단독으로 DVWA가 원인임을 증명했다.
+S3 API 호출 순간 Wazuh가 즉시 격리했다.
+low → impossible이 기존 AWS Credential을 폐기했다.
+WAF가 애플리케이션 Root Cause를 수정했다.
+Alert가 0이므로 WAF 차단이 증명됐다.
+Dashboard가 자동으로 공격 인과관계를 추론했다.
 ```
 
----
-
-## GT-11A — 촬영 전 준비·Rehearsal·Final Recording Baseline (HUMAN CHECKPOINT)
-
-GT-08 사용성 Test와 GT-11A Rehearsal은 마지막 통합 사용자 Checkpoint다. 두 결과를
-사람이 확인하기 전에는 촬영 가능 상태로 표시하지 않는다.
-
-### 해야 할 일
-
-- [ ] `GT-00~GT-10`의 체크박스·짧은 Runtime 결과 확인
-- [ ] Secret Scan
-- [ ] 공개 마스킹 확인
-- [ ] 화면 배치·브라우저 탭·폰트 크기 고정
-- [ ] UTC·TAKE·Rule·Event·Execution·SHA 표시 확인
-- [ ] 실제 대기시간 측정
-- [ ] 편집 자막 Template 준비
-- [ ] 실패 TAKE 처리·수동 Reset Rehearsal
-- [ ] 팀원별 내레이션 담당 확정
-- [ ] 본편 전체 2회 무중단 Rehearsal — 사람이 확인하고 PASS를 기록
-
-### FINAL RECORDING BASELINE
-
-- [ ] DVWA가 촬영용 취약 Baseline인 `defaultSecurityLevel=low`
-- [ ] 이전 DVWA Quarantine 해제
-- [ ] 이전 `validation/*` 임시 Deny·추가 접근 제한 해제
-- [ ] Wazuh Manager·Indexer·Dashboard와 최종 `CAPITAL-ONE-SOC-CONTAINMENT-v2`
-      Workflow/개별 Webhook READY. v1은 rollback-only이며 최종 경로가 아님
-- [ ] Baseline Git SHA 고정, Argo CD가 같은 Revision으로 `Synced + Healthy`, 새 Pod Ready
-- [ ] Terraform Runtime이 `minimal + capital-one-lab`
-- [ ] 이전 임시 Credential 잔존 0
-- [ ] 새 `FINAL_TAKE_ID`와 `START_UTC` 기록
-- [ ] DLQ `0`
-- [ ] Bridge heartbeat가 fresh이고 상태가 `READY` 또는 `RUNNING`
-- [ ] Primary queue in-flight (`queue_not_visible`) `0`
-- [ ] Primary queue oldest age `<=120`초
-- [ ] stale Event와 새 TAKE를 명확히 구분 가능
-- [ ] 이전 Event가 새 자동 조치를 오발하지 않음
-
-별도 대형 Evidence Bundle은 만들지 않는다. 다음 수준의 짧은 Secret-safe Preflight 결과면 충분하다.
+정확한 표현:
 
 ```text
-FINAL RECORDING BASELINE: PASS
-DVWA vulnerable baseline: READY
-Previous containment: RELEASED
-Wazuh / Shuffle v2: READY (`CAPITAL-ONE-SOC-CONTAINMENT-v2`)
-Shuffle v1: rollback-only / final path inactive
-Argo CD: Synced + Healthy / revision <SHA>
-Terraform Runtime: minimal + capital-one-lab
-Previous temporary credential: 0
-DLQ: 0
-Bridge heartbeat: fresh / READY
-Primary in-flight: 0
-Primary oldest age: <=120s
-Stale event / new TAKE separation: PASS
-FINAL_TAKE_ID: <ID>
-START_UTC: <UTC>
+Rule 100110은 DVWA의 IMDS Credential endpoint 대상 명령 출력 반환을 조기에 탐지했다.
+고정 S3 접근과 앞선 활성 DVWA 사건의 상관계약이 통과해 Rule 100111 사건으로 확정됐다.
+사전 승인된 두 자동 대응은 각각 Workload 격리와 DVWA low→impossible을 수행했다.
+관제자는 Timeline을 조사해 좁은 WAF 차단을 승인했다.
+재공격은 WAF에서 차단됐고 downstream 0, 정상 기능, 수집 Health를 함께 확인했다.
 ```
-
-Queue 전체 Purge나 과거 Event의 Evidence 목적 재보존은 요구하지 않는다. Reset은 Incident Recovery가 아니라
-촬영·재촬영을 위해 취약 Lab을 초기 상태로 되돌리는 별도 운영 절차다.
-
-### 촬영 시작 조건
-
-`GT-00~GT-10`이 각 Gate의 PASS 기준을 만족하고, 사람이 확인한 `GT-11A HUMAN CHECKPOINT`
-가 PASS여야 한다. Plan-only나 합성 Payload 성공으로 대체하지 않는다.
-
----
-
-## GT-11B — 촬영 후 파일·공개본 검수
-
-- [ ] [`CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md`](./CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md)의
-  `공개 전 최종 검수` 전체 PASS(최종 파일의 처음부터 끝까지 정상 재생 포함)
-
-`GT-11B`까지 PASS해야 최종 시연 완료다.
-
----
-
-# 6. 구현 Workstream과 순서
-
-## WS-1 — Rule 계약 확정
-
-1. Rule `100100` 과거 Runtime 보존·자동 조치 제외 확인
-2. Rule `100104` Alert Field·Description·Level 계약 확인
-3. 정상·비대상 대조군 추가
-4. GT-03 Runtime
-
-## WS-2 — Wazuh→Shuffle Trigger 전환
-
-1. 기존 Rule `100103` Integration을 early-warning/observe-only로 정리
-2. 고신뢰 S3 Rule용 Integration 추가
-3. CloudTrail Sanitizer Schema 확장
-4. `eventID` Dedupe
-5. 실제 Alert→Execution GT-04
-
-## WS-3 — Containment
-
-1. Workload Quarantine Target 고정
-2. `validation/*` Resource/Permission 제한 방식 결정
-3. Validator·고정 Containment Action Allowlist
-4. Side-effect-free Dedupe Stress
-5. 실제 Apply·Rollback
-6. GT-05·GT-06
-
-## WS-4 — Incident Investigation View
-
-1. 동일 TAKE 5-Source 수집
-2. Seed Alert Field 선정
-3. Saved View·Dashboard 구성
-4. Runbook·관측 공백·자동 조치 표시
-5. Raw Drill-down
-6. 3분 사용성 Test
-7. GT-07·GT-08
-
-## WS-5 — Remediation·Recovery
-
-1. `low → impossible` 별도 Workflow
-2. GitHub/Argo Runtime
-3. IAM·IMDS·Node 대응은 Future Work로 기록만 하고 실행하지 않음
-4. 동일 공격·정상 기능 Test
-5. GT-09·GT-10
-
-## WS-6 — 촬영
-
-1. 공개본·Masking
-2. Scene별 Evidence 배치
-3. 대기시간·자막 확정
-4. Rehearsal 2회
-5. `GT-11A` Final Recording Baseline
-6. 최종 촬영
-7. `GT-11B` 파일·공개본 검수
-
-### 권장 의존 순서
-
-```text
-GT-00
-→ GT-01
-→ GT-02
-→ GT-03
-→ GT-04
-→ GT-05
-→ GT-06
-→ GT-07·GT-08
-→ GT-09
-→ GT-10
-→ GT-11A
-→ Recording Script 실행
-→ GT-11B
-→ 최종 완료
-```
-
-뒤 Gate의 성공으로 앞 Gate를 대체하지 않는다.
-
----
-
-# 7. 촬영 필수에서 제외한 것
-
-다음은 구현되면 좋지만 촬영 완료 조건은 아니다.
-
-- 모든 AWS Source의 저지연 Push 전환
-- CloudTrail S3 Route를 새 Streaming Route로 교체
-- 완전 자동 Incident Graph
-- 모든 Source를 관통하는 공통 Trace ID
-- LLM 자동 분석·자동 보고서
-- 두 번째 공격 시나리오
-- GuardDuty Finding 강제 생성
-- 24시간 HA SOC
-- 여러 SIEM 동시 구축
-
-기존 S3 Archive·Poll Route는 실패 구조가 아니다. 이번 시연에서는 고신뢰 S3 Event의 탐지 Source와 평소 축적 로그의 조사 경로로 사용한다.
-
----
-
-# 8. 금지 표현
-
-```text
-Rule 100103으로 S3 침해를 확정했다.
-S3 API 호출과 동시에 격리했다.
-GetObject 하나만 보고 무조건 공격으로 판정했다.
-Wazuh가 모든 로그의 인과관계를 자동으로 완벽히 분석했다.
-Wazuh가 AI처럼 정답 조치를 새로 만들어줬다.
-공유 Node Role 전체를 안전하게 자동 폐기했다.
-low → impossible이 Credential을 폐기했다.
-보존된 다른 날짜의 로그가 같은 Incident다.
-합성 Webhook Test로 실제 Wazuh→Shuffle E2E를 완료했다.
-```
-
-권장 표현:
-
-```text
-Rule 100103은 조기 이상 징후다.
-엄격한 보호 대상 S3 성공 접근 Rule을 고신뢰 자동 조치 Trigger로 사용했다.
-CloudTrail Event가 Wazuh에 탐지된 직후 사전 승인된 격리를 자동 실행했다.
-Alert의 시간·Principal·Bucket/Key를 중심으로 저장된 관련 로그를 좁혀 조사했다.
-Wazuh는 근거·관측 공백·Runbook을 보여주고, 관제자가 근본 대응을 승인했다.
-```
-
----
-
-# 9. 촬영 시작·최종 완료 Stop Condition
-
-촬영 시작과 최종 완료를 분리한다.
-
-```text
-촬영 시작: GT-00~GT-10 PASS + GT-11A HUMAN CHECKPOINT PASS
-촬영 실행: Recording Script
-최종 완료: 촬영 + GT-11B PASS
-정상 대조군 오탐 = 0
-실제 Alert↔Execution 미연결 = 0
-중복 자동 조치 = 0
-비대상 영향 = 0
-같은 TAKE에서 빠진 필수 Evidence = 0
-Secret 노출 = 0
-설명되지 않은 필수 Evidence 공백 = 0
-```
-
-공통 ID 부재나 Pod→IMDS 직접 네트워크 로그 부재처럼 이미 확인·문서화한 관측 공백은
-촬영에서 숨기지 않고 설명하면 허용한다.
-
-그 이후의 개선점은 촬영 완료를 막지 않고 Future Work로 이동한다.

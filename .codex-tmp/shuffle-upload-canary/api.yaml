@@ -1,0 +1,42 @@
+app_version: 0.0.3
+name: SOC Validator Module Canary
+description: Disposable two-action canary validating an additional local Python module without project logic.
+tags:
+  - SOC
+  - Validation
+categories:
+  - Security
+contact_info:
+  name: aws-topology project
+  url: https://github.com/Unoh03/Uns-DVWA
+  email: no-reply@example.invalid
+actions:
+  - name: validate_sanitized_alert
+    description: Returns a fixed harmless scalar result.
+    parameters:
+      - name: input_data
+        description: Harmless canary input.
+        required: true
+        multiline: true
+        schema:
+          type: string
+    returns:
+      schema:
+        type: string
+  - name: classify_dedupe_claim
+    description: Returns a fixed harmless scalar classifier result.
+    parameters:
+      - name: claim_result
+        description: Harmless canary claim input.
+        required: true
+        multiline: true
+        schema:
+          type: string
+      - name: expected_key
+        description: Harmless canary key input.
+        required: true
+        schema:
+          type: string
+    returns:
+      schema:
+        type: string
