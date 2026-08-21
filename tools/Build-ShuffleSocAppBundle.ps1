@@ -41,7 +41,7 @@ if ($IncludeLegacyGt09Dispatcher) {
 $rule100110AutoContainmentApp = [pscustomobject]@{
     name='SOC R110 Isolator'
     slug='aws-topology-soc-rule100110-auto-containment'
-    version='1.0.0'
+    version='1.0.1'
     contract_role='rule100110-auto-containment'
     current_v2=$false
     test='tests.test_soc_rule100110_auto_containment'
@@ -68,8 +68,8 @@ $manifestPath = Join-Path $resolvedOutput "shuffle-soc-app-bundle-$stamp.json"
 
 Write-Host 'Shuffle SOC private App bundle preview'
 if ($Rule100110AutoContainmentOnly) {
-    Write-Host 'Apps: Rule 100110 Auto Containment 1.0.0 only'
-    Write-Host 'Role: fresh Rule 100110 validation and fixed DVWA quarantine Workflow dispatch.'
+    Write-Host 'Apps: Rule 100110/100111 Auto Response 1.0.1 only'
+    Write-Host 'Role: fixed Rule 100110 quarantine or Rule 100111 low-to-impossible Workflow dispatch.'
 } elseif ($IncludeLegacyGt09Dispatcher) {
     Write-Host 'Apps: current v2 Validator 1.0.0 + explicitly opted-in legacy GT09 remediation Dispatcher 1.0.0'
     Write-Host 'Dispatcher role: legacy-gt09-remediation-dispatcher; EXCLUDED from current v2/100104 GT03-GT06.'
@@ -200,7 +200,7 @@ $manifest = [ordered]@{
     schema_version=1
     artifact_kind='shuffle-soc-private-app-bundle'
     current_contract=$(if ($Rule100110AutoContainmentOnly) {
-        'rule100110-auto-containment/v1'
+        'rule100110-auto-containment/v1.0.1'
     } else {
         'v2/100104'
     })

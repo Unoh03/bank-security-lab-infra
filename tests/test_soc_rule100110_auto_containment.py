@@ -18,7 +18,7 @@ MODULE_PATH = (
     / "shuffle"
     / "apps"
     / "aws-topology-soc-rule100110-auto-containment"
-    / "1.0.0"
+    / "1.0.1"
     / "src"
     / "autocontainment.py"
 )

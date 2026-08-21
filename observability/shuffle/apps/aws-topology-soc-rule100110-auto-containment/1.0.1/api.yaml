@@ -1,0 +1,35 @@
+app_version: 1.0.1
+name: SOC R110 Isolator
+description: Strictly validates one Rule 100110 or Rule 100111 alert and dispatches only its fixed DVWA response workflow.
+tags:
+  - SOC
+  - GitHub
+  - Containment
+categories:
+  - Security
+contact_info:
+  name: aws-topology project
+  url: https://github.com/Unoh03/Uns-DVWA
+  email: no-reply@example.invalid
+authentication:
+  required: true
+  parameters:
+    - name: github_token
+      description: Fine-grained GitHub token restricted to Actions write on Unoh03/Uns-DVWA.
+      example: "*****"
+      required: true
+      schema:
+        type: string
+actions:
+  - name: dispatch_rule_100110
+    description: Backwards-compatible action that routes exact Rule 100110 schema v3 to soc-contain-dvwa.yml or the approved five-field Rule 100111 payload to soc-harden-dvwa.yml on main.
+    parameters:
+      - name: input_data
+        description: Complete authenticated Wazuh webhook JSON body.
+        required: true
+        multiline: true
+        schema:
+          type: string
+    returns:
+      schema:
+        type: string

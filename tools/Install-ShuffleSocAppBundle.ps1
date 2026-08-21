@@ -656,13 +656,13 @@ $contractProperty = $manifest.PSObject.Properties['current_contract']
 $legacyIncludedProperty = $manifest.PSObject.Properties['legacy_dispatcher_included']
 if ($null -eq $contractProperty -or
     [string]$contractProperty.Value -cnotin @(
-        'v2/100104', 'rule100110-auto-containment/v1'
+        'v2/100104', 'rule100110-auto-containment/v1.0.1'
     ) -or
     $null -eq $legacyIncludedProperty) {
     throw 'The Shuffle SOC App bundle contract or legacy inclusion state is invalid.'
 }
 $isRule100110Bundle = (
-    [string]$contractProperty.Value -ceq 'rule100110-auto-containment/v1'
+    [string]$contractProperty.Value -ceq 'rule100110-auto-containment/v1.0.1'
 )
 $expectedApps = @{
     'AWS Topology SOC Validator' = [pscustomobject]@{
@@ -719,7 +719,12 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $verifiedApps = [Collections.Generic.List[object]]::new()
 foreach ($app in $manifestApps) {
     $definition = $expectedApps[[string]$app.name]
-    if ([string]$app.version -cne '1.0.0' -or
+    $expectedVersion = if ([string]$app.name -ceq 'SOC R110 Isolator') {
+        '1.0.1'
+    } else {
+        '1.0.0'
+    }
+    if ([string]$app.version -cne $expectedVersion -or
         [string]$app.slug -cne [string]$definition.slug -or
         [string]$app.contract_role -cne [string]$definition.contract_role -or
         [bool]$app.current_v2 -ne [bool]$definition.current_v2 -or
@@ -805,7 +810,7 @@ if (-not $ConsoleOnly.IsPresent) {
     Write-Host 'Shuffle SOC private App bundle upload preview'
     Write-Host 'Target: configured Shuffle Cloud organization'
     if ($isRule100110Bundle) {
-        Write-Host 'Apps: Rule 100110 Auto Containment 1.0.0 only'
+        Write-Host 'Apps: Rule 100110/100111 Auto Response 1.0.1 only'
         Write-Host 'No GitHub credential is read or uploaded by this invocation.'
     } elseif ($legacyDispatcherApps.Count -gt 0) {
         Write-Host 'Apps: current v2 Validator 1.0.0 + explicitly opted-in legacy GT09 remediation Dispatcher 1.0.0'
