@@ -188,7 +188,7 @@ $integrationFragment = @"
   <integration>
     <name>custom-shuffle-soc</name>
     <level>12</level>
-    <rule_id>100104</rule_id>
+    <rule_id>100104,100110</rule_id>
     <alert_format>json</alert_format>
     <timeout>10</timeout>
     <retries>1</retries>
@@ -200,7 +200,7 @@ $managerWithIntegration = Add-WazuhManagerSocIntegrationText `
     -IntegrationXml $integrationFragment
 if ([regex]::Matches($managerWithIntegration, 'custom-shuffle-soc').Count -ne 1 -or
     $managerWithIntegration -notmatch '<level>12</level>' -or
-    $managerWithIntegration -notmatch '<rule_id>100104</rule_id>') {
+    $managerWithIntegration -notmatch '<rule_id>100104,100110</rule_id>') {
     throw 'The Wazuh Manager integration fragment was not added exactly once.'
 }
 $managerIdempotent = Add-WazuhManagerSocIntegrationText `
@@ -210,7 +210,7 @@ if ($managerIdempotent -cne $managerWithIntegration) {
     throw 'The Wazuh Manager integration transform is not idempotent.'
 }
 
-$badIntegration = $integrationFragment -replace '<rule_id>100104</rule_id>', '<rule_id>100103</rule_id>'
+$badIntegration = $integrationFragment -replace '<rule_id>100104,100110</rule_id>', '<rule_id>100103</rule_id>'
 $badIntegrationRejected = $false
 try {
     [void](Add-WazuhManagerSocIntegrationText `

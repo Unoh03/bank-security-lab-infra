@@ -39,13 +39,13 @@ if ($IncludeLegacyGt09Dispatcher) {
     $apps += $legacyDispatcherApp
 }
 $rule100110AutoContainmentApp = [pscustomobject]@{
-    name='SOC Rule110 Auto Contain'
+    name='SOC R110 Isolator'
     slug='aws-topology-soc-rule100110-auto-containment'
     version='1.0.0'
     contract_role='rule100110-auto-containment'
     current_v2=$false
     test='tests.test_soc_rule100110_auto_containment'
-    files=@('api.yaml','Dockerfile','requirements.txt','src\app.py','src\autocontainment.py')
+    files=@('api.yaml','Dockerfile','requirements.txt','src\app.py')
     source_files=@('api.yaml','Dockerfile','requirements.txt','src\app.py','src\autocontainment.py')
 }
 if ($Rule100110AutoContainmentOnly) {
@@ -130,6 +130,31 @@ foreach ($app in $apps) {
                     if ($LASTEXITCODE -ne 0) {
                         throw 'The generated Validator src/app.py failed Python AST parsing.'
                     }
+                }
+            } elseif (
+                [string]$app.slug -ceq 'aws-topology-soc-rule100110-auto-containment' -and
+                [string]$relativePath -ceq 'src\app.py'
+            ) {
+                $implementation = Get-Content -LiteralPath (
+                    Join-Path $appRoot 'src\autocontainment.py'
+                ) -Raw
+                $adapter = Get-Content -LiteralPath (
+                    Join-Path $appRoot 'src\app.py'
+                ) -Raw
+                $implementation = $implementation -replace '(?m)^from __future__ import annotations\r?\n', ''
+                $adapter = $adapter -replace '(?m)^from shuffle_sdk import AppBase\r?\n', ''
+                $adapter = $adapter -replace '(?m)^from autocontainment import dispatch_rule_100110\r?\n', ''
+                [IO.File]::WriteAllText(
+                    $destination,
+                    ("from shuffle_sdk import AppBase`n`n" +
+                        $implementation.Trim() + "`n`n" + $adapter.Trim()),
+                    [Text.UTF8Encoding]::new($false)
+                )
+                & python -B -c `
+                    'import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"), filename=sys.argv[1])' `
+                    $destination
+                if ($LASTEXITCODE -ne 0) {
+                    throw 'The generated Rule 100110 src/app.py failed Python AST parsing.'
                 }
             } else {
                 Copy-Item -LiteralPath (Join-Path $appRoot $relativePath) `

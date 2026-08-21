@@ -307,7 +307,7 @@ function New-SocShuffleUploadContractFailure {
     $suffix = if ($AppName -in @(
         'AWS Topology SOC Validator',
         'AWS Topology SOC GitHub Dispatcher',
-        'SOC Rule110 Auto Contain'
+        'SOC R110 Isolator'
     )) { "; app=$AppName" } else { '' }
     $statusSuffix = if ($HttpStatus -ge 100) { "; http_status=$HttpStatus" } else { '' }
     $detailSuffix = if ($SafeDetail -match '^[\x20-\x7E]{1,320}$') {
@@ -677,11 +677,11 @@ $expectedApps = @{
         current_v2=$false
         entries=@('Dockerfile','api.yaml','requirements.txt','src/app.py','src/dispatcher.py')
     }
-    'SOC Rule110 Auto Contain' = [pscustomobject]@{
+    'SOC R110 Isolator' = [pscustomobject]@{
         slug='aws-topology-soc-rule100110-auto-containment'
         contract_role='rule100110-auto-containment'
         current_v2=$false
-        entries=@('Dockerfile','api.yaml','requirements.txt','src/app.py','src/autocontainment.py')
+        entries=@('Dockerfile','api.yaml','requirements.txt','src/app.py')
     }
 }
 $manifestApps = @($manifest.apps)
@@ -696,7 +696,7 @@ $legacyDispatcherApps = @($manifestApps | Where-Object {
     [string]$_.name -ceq 'AWS Topology SOC GitHub Dispatcher'
 })
 $rule100110Apps = @($manifestApps | Where-Object {
-    [string]$_.name -ceq 'SOC Rule110 Auto Contain'
+    [string]$_.name -ceq 'SOC R110 Isolator'
 })
 if ($isRule100110Bundle) {
     if ($manifestApps.Count -ne 1 -or $rule100110Apps.Count -ne 1 -or

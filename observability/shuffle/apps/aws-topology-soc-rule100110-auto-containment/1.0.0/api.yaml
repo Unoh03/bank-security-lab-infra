@@ -1,5 +1,5 @@
 app_version: 1.0.0
-name: SOC Rule110 Auto Contain
+name: SOC R110 Isolator
 description: Strictly validates one fresh Rule 100110 workload alert and dispatches only the fixed DVWA quarantine workflow.
 tags:
   - SOC
