@@ -2,7 +2,7 @@
   <integration>
     <name>custom-shuffle-soc</name>
     <level>12</level>
-    <rule_id>100104</rule_id>
+    <rule_id>100104,100110</rule_id>
     <alert_format>json</alert_format>
     <timeout>10</timeout>
     <retries>1</retries>

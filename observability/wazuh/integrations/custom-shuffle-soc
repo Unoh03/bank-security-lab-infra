@@ -18,6 +18,8 @@ EXPECTED_ACCOUNT_ID = "433048100798"
 EXPECTED_REGION = "ap-northeast-2"
 EXPECTED_RULE_ID = "100104"
 EXPECTED_RULE_LEVEL = 12
+EXPECTED_WORKLOAD_RULE_ID = "100110"
+EXPECTED_WORKLOAD_RULE_LEVEL = 12
 EXPECTED_EVENT_SOURCE = "s3.amazonaws.com"
 EXPECTED_EVENT_NAME = "GetObject"
 EXPECTED_CLOUDTRAIL_SOURCE = "cloudtrail"
@@ -28,12 +30,23 @@ EXPECTED_OBJECT_KEY = "validation/capital-one-demo.csv"
 EXPECTED_BUCKET_ALIAS = "primary-application-data"
 EXPECTED_HTTP_STATUS = "200"
 ROLE_METADATA = "high_confidence_s3_access"
+WORKLOAD_ROLE_METADATA = "imds_credential_access"
 MAX_PRINCIPAL_ID_BYTES = 512
 MAX_FULL_LOG_BYTES = 262144
 ALERT_ID_PATTERN = re.compile(r"^[0-9]+\.[0-9]+$")
 EVENT_ID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     re.IGNORECASE,
+)
+TAKE_ID_PATTERN = re.compile(
+    r"^capital-one-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}$"
+)
+POD_NAME_PATTERN = re.compile(r"^dvwa-[a-z0-9]{8,16}-[a-z0-9]{5}$")
+POD_UID_PATTERN = re.compile(
+    r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+)
+WORKLOAD_EVENT_ID_PATTERN = re.compile(
+    r"^cwl:433048100798:/aws/eks/aws-topology-primary/dvwa:[A-Za-z0-9._/:-]{1,1024}$"
 )
 HEADER_KEY_PATTERN = re.compile(r"^[A-Za-z0-9.*+?-]{24,128}$")
 WEBHOOK_ID_PATTERN = r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
@@ -208,6 +221,104 @@ def build_sanitized_alert(alert: dict[str, Any], now: datetime | None = None) ->
     return sanitized
 
 
+def build_sanitized_workload_alert(
+    alert: dict[str, Any], now: datetime | None = None
+) -> dict[str, Any]:
+    rule = require_object(alert.get("rule"), "rule")
+    data = require_object(alert.get("data"), "data")
+    payload = require_object(data.get("payload"), "data.payload")
+    context = require_object(payload.get("context"), "data.payload.context")
+
+    if str(rule.get("id")) != EXPECTED_WORKLOAD_RULE_ID:
+        raise ContractError("rule.id is not the workload allowlist")
+    if rule.get("level") != EXPECTED_WORKLOAD_RULE_LEVEL:
+        raise ContractError("rule.level is not the workload allowlist")
+    if data.get("source") != "dvwa":
+        raise ContractError("data.source is not dvwa")
+    if data.get("aws_account_id") != EXPECTED_ACCOUNT_ID:
+        raise ContractError("data.aws_account_id is not allowlisted")
+    if data.get("aws_region") != EXPECTED_REGION:
+        raise ContractError("data.aws_region is not allowlisted")
+    if data.get("transport") != "push":
+        raise ContractError("data.transport is not push")
+
+    fixed_payload = (
+        (payload.get("event_type"), "command.execution", "event_type"),
+        (payload.get("result"), "succeeded", "result"),
+        (payload.get("route"), "/vulnerabilities/exec/", "route"),
+        (context.get("action"), "shell_command", "context.action"),
+        (context.get("resource"), "ec2_imds", "context.resource"),
+        (context.get("security_level"), "low", "context.security_level"),
+        (context.get("stage"), "imds_credential_fetch", "context.stage"),
+        (context.get("status"), "output_returned", "context.status"),
+    )
+    for actual, expected, label in fixed_payload:
+        if actual != expected:
+            raise ContractError(f"{label} is not allowlisted")
+
+    take_id = payload.get("take_id")
+    pod_name = payload.get("pod_name")
+    pod_uid = payload.get("pod_uid")
+    event_id = data.get("event_id")
+    if not isinstance(take_id, str) or not TAKE_ID_PATTERN.fullmatch(take_id):
+        raise ContractError("payload.take_id is invalid")
+    if not isinstance(pod_name, str) or not POD_NAME_PATTERN.fullmatch(pod_name):
+        raise ContractError("payload.pod_name is invalid")
+    if not isinstance(pod_uid, str) or not POD_UID_PATTERN.fullmatch(pod_uid):
+        raise ContractError("payload.pod_uid is invalid")
+    if not isinstance(event_id, str) or not WORKLOAD_EVENT_ID_PATTERN.fullmatch(event_id):
+        raise ContractError("data.event_id is invalid")
+
+    alert_id = alert.get("id")
+    if not isinstance(alert_id, str) or not ALERT_ID_PATTERN.fullmatch(alert_id):
+        raise ContractError("Wazuh alert id is invalid")
+    event_time = parse_utc_timestamp(data.get("event_time"), "data.event_time")
+    _, full_log_bytes = bounded_text(
+        alert.get("full_log"), "alert.full_log", MAX_FULL_LOG_BYTES
+    )
+    raw_sha256 = hashlib.sha256(full_log_bytes).hexdigest()
+    event_id_sha256 = hashlib.sha256(event_id.encode("utf-8")).hexdigest()
+
+    sent_at = now or datetime.now(timezone.utc)
+    if sent_at.tzinfo is None or sent_at.utcoffset() is None:
+        raise ContractError("sent_at source must be timezone-aware")
+
+    sanitized: dict[str, Any] = {
+        "schema_version": 3,
+        "source_system": "wazuh",
+        "sent_at_utc": sent_at.astimezone(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z"),
+        "account_alias": "primary-lab",
+        "aws_account_id": EXPECTED_ACCOUNT_ID,
+        "aws_region": EXPECTED_REGION,
+        "scenario_id": "CAPITAL-ONE",
+        "rule": {
+            "id": EXPECTED_WORKLOAD_RULE_ID,
+            "level": EXPECTED_WORKLOAD_RULE_LEVEL,
+            "role": WORKLOAD_ROLE_METADATA,
+        },
+        "incident": {
+            "wazuh_alert_id": alert_id,
+            "event_time_utc": event_time,
+            "event_id_sha256": event_id_sha256,
+            "take_id": take_id,
+            "pod_name": pod_name,
+            "pod_uid": pod_uid,
+            "event_type": "command.execution",
+            "stage": "imds_credential_fetch",
+            "status": "output_returned",
+            "route": "/vulnerabilities/exec/",
+            "result": "succeeded",
+        },
+        "integrity": {"raw_message_sha256": raw_sha256},
+    }
+    sanitized["integrity"]["body_sha256"] = hashlib.sha256(
+        canonical_json(sanitized)
+    ).hexdigest()
+    return sanitized
+
+
 def validate_webhook_url(value: str) -> tuple[str, str]:
     try:
         parsed = urlsplit(value)
@@ -279,7 +390,11 @@ def main() -> int:
             alert = json.load(handle)
         if not isinstance(alert, dict):
             raise ContractError("Wazuh alert must be an object")
-        sanitized = build_sanitized_alert(alert)
+        rule = require_object(alert.get("rule"), "rule")
+        if str(rule.get("id")) == EXPECTED_WORKLOAD_RULE_ID:
+            sanitized = build_sanitized_workload_alert(alert)
+        else:
+            sanitized = build_sanitized_alert(alert)
         webhook_url = read_runtime_secret(WEBHOOK_URL_PATH)
         header_key = read_runtime_secret(WEBHOOK_HEADER_KEY_PATH)
         send_to_shuffle(sanitized, webhook_url, header_key)
@@ -291,7 +406,7 @@ def main() -> int:
         return 1
 
     print(
-        "custom-shuffle-soc: sanitized Rule 100104 alert delivered",
+        f"custom-shuffle-soc: sanitized Rule {sanitized['rule']['id']} alert delivered",
         file=sys.stderr,
     )
     return 0

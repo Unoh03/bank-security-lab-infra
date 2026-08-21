@@ -44,6 +44,12 @@ VALIDATOR_SPEC.loader.exec_module(VALIDATOR)
 FULL_LOG = '{"eventName":"GetObject","sensitive":"must-not-be-forwarded"}'
 EVENT_ID = "123e4567-e89b-12d3-a456-426614174000"
 PRINCIPAL_ID = "AROAEXAMPLE:capital-one-demo-session"
+WORKLOAD_EVENT_ID = (
+    "cwl:433048100798:/aws/eks/aws-topology-primary/dvwa:"
+    "dvwa-kube.var.log.containers.dvwa-86759c6f4d-jhl7x_dvwa_dvwa-"
+    "390dd796-a52c-4f00-8767-944f4916d396.log:123456789"
+)
+WORKLOAD_FULL_LOG = '{"payload":{"secret":"must-not-be-forwarded"}}'
 
 
 def valid_alert() -> dict[str, object]:
@@ -85,7 +91,107 @@ def valid_alert() -> dict[str, object]:
     }
 
 
+def valid_workload_alert() -> dict[str, object]:
+    return {
+        "id": "1787000001.654321",
+        "timestamp": "2026-08-21T09:07:10.092+0000",
+        "rule": {
+            "id": "100110",
+            "level": 12,
+            "description": "DVWA command returned output from EC2 IMDS",
+        },
+        "data": {
+            "source": "dvwa",
+            "aws_account_id": "433048100798",
+            "aws_region": "ap-northeast-2",
+            "transport": "push",
+            "event_time": "2026-08-21T09:07:02.418Z",
+            "event_id": WORKLOAD_EVENT_ID,
+            "payload": {
+                "event_type": "command.execution",
+                "result": "succeeded",
+                "route": "/vulnerabilities/exec/",
+                "take_id": "capital-one-20260821T090624Z-55904626",
+                "pod_name": "dvwa-86759c6f4d-jhl7x",
+                "pod_uid": "390dd796-a52c-4f00-8767-944f4916d396",
+                "context": {
+                    "action": "shell_command",
+                    "resource": "ec2_imds",
+                    "security_level": "low",
+                    "stage": "imds_credential_fetch",
+                    "status": "output_returned",
+                },
+            },
+        },
+        "full_log": WORKLOAD_FULL_LOG,
+    }
+
+
 class CustomShuffleSocTest(unittest.TestCase):
+    def test_builds_exact_rule100110_schema_without_raw_payload(self) -> None:
+        result = MODULE.build_sanitized_workload_alert(
+            valid_workload_alert(),
+            now=datetime(2026, 8, 21, 9, 7, 20, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(result["schema_version"], 3)
+        self.assertEqual(
+            result["rule"],
+            {"id": "100110", "level": 12, "role": "imds_credential_access"},
+        )
+        self.assertEqual(
+            result["incident"],
+            {
+                "wazuh_alert_id": "1787000001.654321",
+                "event_time_utc": "2026-08-21T09:07:02.418Z",
+                "event_id_sha256": hashlib.sha256(
+                    WORKLOAD_EVENT_ID.encode("utf-8")
+                ).hexdigest(),
+                "take_id": "capital-one-20260821T090624Z-55904626",
+                "pod_name": "dvwa-86759c6f4d-jhl7x",
+                "pod_uid": "390dd796-a52c-4f00-8767-944f4916d396",
+                "event_type": "command.execution",
+                "stage": "imds_credential_fetch",
+                "status": "output_returned",
+                "route": "/vulnerabilities/exec/",
+                "result": "succeeded",
+            },
+        )
+        covered = dict(result)
+        covered["integrity"] = dict(result["integrity"])
+        body_hash = covered["integrity"].pop("body_sha256")
+        self.assertEqual(
+            body_hash, hashlib.sha256(MODULE.canonical_json(covered)).hexdigest()
+        )
+        encoded = json.dumps(result, sort_keys=True)
+        self.assertNotIn("must-not-be-forwarded", encoded)
+        self.assertNotIn(WORKLOAD_EVENT_ID, encoded)
+
+    def test_rule100110_rejects_any_wrong_detection_tuple(self) -> None:
+        mutations = (
+            lambda value: value["rule"].__setitem__("level", 11),
+            lambda value: value["data"].__setitem__("source", "other"),
+            lambda value: value["data"].__setitem__("transport", "scheduled"),
+            lambda value: value["data"]["payload"].__setitem__(
+                "route", "/health"
+            ),
+            lambda value: value["data"]["payload"].__setitem__(
+                "result", "failed"
+            ),
+            lambda value: value["data"]["payload"]["context"].__setitem__(
+                "stage", "imds_role_discovery"
+            ),
+            lambda value: value["data"]["payload"].__setitem__(
+                "pod_uid", "not-a-uid"
+            ),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                alert = valid_workload_alert()
+                mutate(alert)
+                with self.assertRaises(MODULE.ContractError):
+                    MODULE.build_sanitized_workload_alert(alert)
+
     def test_builds_exact_v2_blueprint_without_raw_fields_or_take_id(self) -> None:
         result = MODULE.build_sanitized_alert(
             valid_alert(),

@@ -299,14 +299,21 @@ function New-SocShuffleUploadContractFailure {
             'readback_duplicate','readback_identity','readback_timeout',
             'cleanup_failed'
         )][string]$Category,
-        [string]$AppName = ''
+        [string]$AppName = '',
+        [ValidateRange(0,599)][int]$HttpStatus = 0,
+        [string]$SafeDetail = ''
     )
 
     $suffix = if ($AppName -in @(
         'AWS Topology SOC Validator',
-        'AWS Topology SOC GitHub Dispatcher'
+        'AWS Topology SOC GitHub Dispatcher',
+        'SOC Rule110 Auto Contain'
     )) { "; app=$AppName" } else { '' }
-    return "Shuffle App upload failed [$Category$suffix]. Raw response, error, URI, Header, and credential details were withheld."
+    $statusSuffix = if ($HttpStatus -ge 100) { "; http_status=$HttpStatus" } else { '' }
+    $detailSuffix = if ($SafeDetail -match '^[\x20-\x7E]{1,320}$') {
+        "; $SafeDetail"
+    } else { '' }
+    return "Shuffle App upload failed [$Category$suffix$statusSuffix$detailSuffix]. Raw response, URI, Header, and credential details were withheld."
 }
 
 function New-SocShuffleAppPackageContent {
@@ -404,7 +411,8 @@ function Invoke-SocShuffleMultipartSubmission {
             else { $kind = 'http_other' }
             return [pscustomobject][ordered]@{
                 kind=$kind;candidate_id='';candidate_present=$false;
-                candidate_valid=$true
+                candidate_valid=$true;http_status=$status;
+                safe_detail=(Get-SafeShuffleUploadFailureDetail -ResponseText $responseText)
             }
         } finally {
             $response.Dispose()
@@ -524,9 +532,12 @@ function Invoke-SocShuffleAppUploadTransaction {
             $candidateId = [string](Get-SocShuffleUploadProperty -Object $submission -Name 'candidate_id')
             $candidatePresent = Get-SocShuffleUploadProperty -Object $submission -Name 'candidate_present'
             $candidateValid = Get-SocShuffleUploadProperty -Object $submission -Name 'candidate_valid'
+            $httpStatus = [int](Get-SocShuffleUploadProperty -Object $submission -Name 'http_status')
+            $safeDetail = [string](Get-SocShuffleUploadProperty -Object $submission -Name 'safe_detail')
             if ($kind -ceq 'http_4xx') {
                 throw (New-SocShuffleUploadContractFailure -Category 'client_rejected' `
-                    -AppName ([string]$app.Name))
+                    -AppName ([string]$app.Name) -HttpStatus $httpStatus `
+                    -SafeDetail $safeDetail)
             }
             if ($kind -notin @('http_2xx','http_502','http_5xx','timeout','transport')) {
                 throw (New-SocShuffleUploadContractFailure -Category 'unexpected_status' `
@@ -540,6 +551,7 @@ function Invoke-SocShuffleAppUploadTransaction {
                 (-not [bool]$candidateValid -or $candidateId -cnotmatch '^[a-f0-9]{32}$'))
             $deadline = ([datetimeoffset](& $UtcNow)).AddSeconds($PollTimeoutSeconds)
             $cleanupRecord = $null
+            $lastReadbackState = 'state=not_visible'
             while ($true) {
                 try {
                     $readback = & $ListApps
@@ -581,6 +593,7 @@ function Invoke-SocShuffleAppUploadTransaction {
                         (Test-SocShuffleUploadExactBoolean -Object $exact[0] -Name 'activated' -Expected $true) -and
                         (Test-SocShuffleUploadExactBoolean -Object $exact[0] -Name 'is_valid' -Expected $true) -and
                         (Test-SocShuffleUploadExactBoolean -Object $exact[0] -Name 'invalid' -Expected $false)
+                    $lastReadbackState = "state=visible; activated=$([string](Get-SocShuffleUploadProperty -Object $exact[0] -Name 'activated')); is_valid=$([string](Get-SocShuffleUploadProperty -Object $exact[0] -Name 'is_valid')); invalid=$([string](Get-SocShuffleUploadProperty -Object $exact[0] -Name 'invalid'))"
                     if ($ready) {
                         $outcome = switch ($kind) {
                             'http_2xx' { 'confirmed_2xx' }
@@ -601,7 +614,7 @@ function Invoke-SocShuffleAppUploadTransaction {
                 }
                 if ([datetimeoffset](& $UtcNow) -ge $deadline) {
                     throw (New-SocShuffleUploadContractFailure -Category 'readback_timeout' `
-                        -AppName ([string]$app.Name))
+                        -AppName ([string]$app.Name) -SafeDetail $lastReadbackState)
                 }
                 & $Sleep $PollIntervalSeconds
             }
@@ -642,10 +655,15 @@ if ([int]$manifest.schema_version -ne 1 -or
 $contractProperty = $manifest.PSObject.Properties['current_contract']
 $legacyIncludedProperty = $manifest.PSObject.Properties['legacy_dispatcher_included']
 if ($null -eq $contractProperty -or
-    [string]$contractProperty.Value -cne 'v2/100104' -or
+    [string]$contractProperty.Value -cnotin @(
+        'v2/100104', 'rule100110-auto-containment/v1'
+    ) -or
     $null -eq $legacyIncludedProperty) {
-    throw 'The Shuffle SOC App bundle must declare the current v2/100104 contract and legacy inclusion state.'
+    throw 'The Shuffle SOC App bundle contract or legacy inclusion state is invalid.'
 }
+$isRule100110Bundle = (
+    [string]$contractProperty.Value -ceq 'rule100110-auto-containment/v1'
+)
 $expectedApps = @{
     'AWS Topology SOC Validator' = [pscustomobject]@{
         slug='aws-topology-soc-validator'
@@ -659,6 +677,12 @@ $expectedApps = @{
         current_v2=$false
         entries=@('Dockerfile','api.yaml','requirements.txt','src/app.py','src/dispatcher.py')
     }
+    'SOC Rule110 Auto Contain' = [pscustomobject]@{
+        slug='aws-topology-soc-rule100110-auto-containment'
+        contract_role='rule100110-auto-containment'
+        current_v2=$false
+        entries=@('Dockerfile','api.yaml','requirements.txt','src/app.py','src/autocontainment.py')
+    }
 }
 $manifestApps = @($manifest.apps)
 if ($manifestApps.Count -lt 1 -or
@@ -671,7 +695,16 @@ $validatorApps = @($manifestApps | Where-Object {
 $legacyDispatcherApps = @($manifestApps | Where-Object {
     [string]$_.name -ceq 'AWS Topology SOC GitHub Dispatcher'
 })
-if ($validatorApps.Count -ne 1 -or $legacyDispatcherApps.Count -gt 1) {
+$rule100110Apps = @($manifestApps | Where-Object {
+    [string]$_.name -ceq 'SOC Rule110 Auto Contain'
+})
+if ($isRule100110Bundle) {
+    if ($manifestApps.Count -ne 1 -or $rule100110Apps.Count -ne 1 -or
+        $validatorApps.Count -ne 0 -or $legacyDispatcherApps.Count -ne 0) {
+        throw 'The Rule 100110 bundle must contain only its Auto Containment App.'
+    }
+} elseif ($validatorApps.Count -ne 1 -or $legacyDispatcherApps.Count -gt 1 -or
+    $rule100110Apps.Count -ne 0) {
     throw 'The bundle must contain exactly one current v2 Validator and at most one legacy Dispatcher.'
 }
 $declaredLegacyIncluded = [bool]$legacyIncludedProperty.Value
@@ -718,37 +751,38 @@ foreach ($app in $manifestApps) {
             throw 'The Validator package snapshot proof hash is inconsistent.'
         }
     } else {
-        $legacyBounds = @{
+        $packageBounds = @{
             'api.yaml'=64KB; 'Dockerfile'=16KB; 'requirements.txt'=16KB;
-            'src/app.py'=64KB; 'src/dispatcher.py'=256KB
+            'src/app.py'=64KB; 'src/dispatcher.py'=256KB;
+            'src/autocontainment.py'=256KB
         }
-        $legacyStream = [IO.MemoryStream]::new($packageBytes, $false)
-        $legacyArchive = $null
+        $packageStream = [IO.MemoryStream]::new($packageBytes, $false)
+        $packageArchive = $null
         try {
-            $legacyArchive = [IO.Compression.ZipArchive]::new(
-                $legacyStream,
+            $packageArchive = [IO.Compression.ZipArchive]::new(
+                $packageStream,
                 [IO.Compression.ZipArchiveMode]::Read,
                 $false
             )
-            $legacySeen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-            foreach ($entry in $legacyArchive.Entries) {
+            $packageSeen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach ($entry in $packageArchive.Entries) {
                 $entryName = [string]$entry.FullName
                 if ($entryName -cnotin @($definition.entries) -or
-                    -not $legacySeen.Add($entryName) -or
+                    -not $packageSeen.Add($entryName) -or
                     [string]::IsNullOrEmpty([string]$entry.Name) -or
                     $entry.Length -lt 0 -or
-                    $entry.Length -gt [long]$legacyBounds[$entryName]) {
-                    throw 'The legacy App ZIP path or central-directory length is invalid.'
+                    $entry.Length -gt [long]$packageBounds[$entryName]) {
+                    throw 'The App ZIP path or central-directory length is invalid.'
                 }
             }
-            if ($legacySeen.Count -ne @($definition.entries).Count) {
-                throw 'The legacy App ZIP contains an unexpected or missing file.'
+            if ($packageSeen.Count -ne @($definition.entries).Count) {
+                throw 'The App ZIP contains an unexpected or missing file.'
             }
         } catch [IO.InvalidDataException] {
-            throw 'The legacy App ZIP snapshot is structurally invalid.'
+            throw 'The App ZIP snapshot is structurally invalid.'
         } finally {
-            if ($legacyArchive) { $legacyArchive.Dispose() }
-            $legacyStream.Dispose()
+            if ($packageArchive) { $packageArchive.Dispose() }
+            $packageStream.Dispose()
         }
     }
     $verifiedApps.Add([pscustomobject]@{
@@ -770,7 +804,10 @@ $uploadUri = [uri]::new($baseUri, '/api/v1/apps/upload')
 if (-not $ConsoleOnly.IsPresent) {
     Write-Host 'Shuffle SOC private App bundle upload preview'
     Write-Host 'Target: configured Shuffle Cloud organization'
-    if ($legacyDispatcherApps.Count -gt 0) {
+    if ($isRule100110Bundle) {
+        Write-Host 'Apps: Rule 100110 Auto Containment 1.0.0 only'
+        Write-Host 'No GitHub credential is read or uploaded by this invocation.'
+    } elseif ($legacyDispatcherApps.Count -gt 0) {
         Write-Host 'Apps: current v2 Validator 1.0.0 + explicitly opted-in legacy GT09 remediation Dispatcher 1.0.0'
         Write-Host 'Dispatcher upload role: legacy-gt09-remediation-dispatcher; EXCLUDED from current v2/100104 GT03-GT06.'
     } else {
@@ -846,7 +883,7 @@ $evidencePath = Join-Path $evidenceDirectory 'soc-private-app-bundle-upload.json
 $evidence = [ordered]@{
     schema_version=1
     artifact_kind='shuffle-soc-private-app-bundle-upload'
-    current_contract='v2/100104'
+    current_contract=[string]$contractProperty.Value
     legacy_dispatcher_included=[bool]$declaredLegacyIncluded
     legacy_dispatcher_excluded_from_current_v2=$true
     organization_id=[string]$configuration.shuffle_org_id

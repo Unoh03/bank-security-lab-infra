@@ -1,0 +1,35 @@
+app_version: 1.0.0
+name: SOC Rule110 Auto Contain
+description: Strictly validates one fresh Rule 100110 workload alert and dispatches only the fixed DVWA quarantine workflow.
+tags:
+  - SOC
+  - GitHub
+  - Containment
+categories:
+  - Security
+contact_info:
+  name: aws-topology project
+  url: https://github.com/Unoh03/Uns-DVWA
+  email: no-reply@example.invalid
+authentication:
+  required: true
+  parameters:
+    - name: github_token
+      description: Fine-grained GitHub token restricted to Actions write on Unoh03/Uns-DVWA.
+      example: "*****"
+      required: true
+      schema:
+        type: string
+actions:
+  - name: dispatch_rule_100110
+    description: Validates the exact schema v3 allowlist, integrity and three-minute freshness window, then dispatches only soc-contain-dvwa.yml on main.
+    parameters:
+      - name: input_data
+        description: Complete authenticated Wazuh webhook JSON body.
+        required: true
+        multiline: true
+        schema:
+          type: string
+    returns:
+      schema:
+        type: string

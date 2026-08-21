@@ -3,7 +3,8 @@
 param(
     [string]$OutputDirectory = '',
     [string]$ConfirmBuild = '',
-    [switch]$IncludeLegacyGt09Dispatcher
+    [switch]$IncludeLegacyGt09Dispatcher,
+    [switch]$Rule100110AutoContainmentOnly
 )
 
 Set-StrictMode -Version Latest
@@ -37,6 +38,22 @@ $legacyDispatcherApp = [pscustomobject]@{
 if ($IncludeLegacyGt09Dispatcher) {
     $apps += $legacyDispatcherApp
 }
+$rule100110AutoContainmentApp = [pscustomobject]@{
+    name='SOC Rule110 Auto Contain'
+    slug='aws-topology-soc-rule100110-auto-containment'
+    version='1.0.0'
+    contract_role='rule100110-auto-containment'
+    current_v2=$false
+    test='tests.test_soc_rule100110_auto_containment'
+    files=@('api.yaml','Dockerfile','requirements.txt','src\app.py','src\autocontainment.py')
+    source_files=@('api.yaml','Dockerfile','requirements.txt','src\app.py','src\autocontainment.py')
+}
+if ($Rule100110AutoContainmentOnly) {
+    if ($IncludeLegacyGt09Dispatcher) {
+        throw '-Rule100110AutoContainmentOnly cannot be combined with -IncludeLegacyGt09Dispatcher.'
+    }
+    $apps = @($rule100110AutoContainmentApp)
+}
 
 if (-not $OutputDirectory) {
     if (-not $env:USERPROFILE) {
@@ -50,7 +67,10 @@ $stamp = [datetimeoffset]::UtcNow.ToString('yyyyMMddTHHmmssZ')
 $manifestPath = Join-Path $resolvedOutput "shuffle-soc-app-bundle-$stamp.json"
 
 Write-Host 'Shuffle SOC private App bundle preview'
-if ($IncludeLegacyGt09Dispatcher) {
+if ($Rule100110AutoContainmentOnly) {
+    Write-Host 'Apps: Rule 100110 Auto Containment 1.0.0 only'
+    Write-Host 'Role: fresh Rule 100110 validation and fixed DVWA quarantine Workflow dispatch.'
+} elseif ($IncludeLegacyGt09Dispatcher) {
     Write-Host 'Apps: current v2 Validator 1.0.0 + explicitly opted-in legacy GT09 remediation Dispatcher 1.0.0'
     Write-Host 'Dispatcher role: legacy-gt09-remediation-dispatcher; EXCLUDED from current v2/100104 GT03-GT06.'
 } else {
@@ -154,7 +174,11 @@ foreach ($app in $apps) {
 $manifest = [ordered]@{
     schema_version=1
     artifact_kind='shuffle-soc-private-app-bundle'
-    current_contract='v2/100104'
+    current_contract=$(if ($Rule100110AutoContainmentOnly) {
+        'rule100110-auto-containment/v1'
+    } else {
+        'v2/100104'
+    })
     legacy_dispatcher_included=[bool]$IncludeLegacyGt09Dispatcher
     legacy_dispatcher_excluded_from_current_v2=$true
     created_at_utc=[datetimeoffset]::UtcNow.ToString('o')
