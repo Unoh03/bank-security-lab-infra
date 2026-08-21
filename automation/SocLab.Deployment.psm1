@@ -204,7 +204,20 @@ function Assert-SocGitHubTransitionResult {
     if ($TakeId -cnotmatch $script:TakeIdPattern) {
         throw 'The transition TAKE ID is invalid.'
     }
-    $targetLevel = if ($Operation -ceq 'contain') { 'impossible' } else { 'low' }
+    $resetMode = ''
+    if ($Operation -ceq 'reset' -and $null -ne $Result.PSObject.Properties['reset_mode']) {
+        $resetMode = [string]$Result.reset_mode
+    }
+    if ($Operation -ceq 'reset' -and $resetMode -notin @('', 'prepare_retake', 'release_quarantine')) {
+        throw 'The GitHub reset Artifact has an unsupported reset mode.'
+    }
+    $targetLevel = if ($Operation -ceq 'contain') {
+        'impossible'
+    } elseif ($resetMode -ceq 'release_quarantine') {
+        'unchanged'
+    } else {
+        'low'
+    }
     if ($Operation -ceq 'contain' -and
         ($ExpectedAlertBodySha256 -cnotmatch '^[a-f0-9]{64}$' -or
          [string]$Result.alert_body_sha256 -cne $ExpectedAlertBodySha256)) {

@@ -235,6 +235,9 @@ Plan을 확인한 뒤:
 - DVWA Pod가 선언된 Image로 Ready
 - CloudFront URL의 HTTP 응답 성공
 
+`daily-up.ps1`은 여기서 종료하며 `Start-SocLab.ps1`을 호출하지 않는다. Wazuh/SOC
+기동은 필요한 실험에서 별도로 수행한다.
+
 ### Runtime Profile
 
 | Profile | 평상시 용도 | Primary Node | Primary RDS | DR Runtime |
@@ -294,9 +297,9 @@ Deadline과 Sanitized Session Log는 남지만 자동 Down Scheduled Task는 생
 - 6시간: Hard Deadline. Goal 진행보다 `daily-down.ps1`을 우선한다.
 - Hard Deadline에 Terraform Process나 State Lock이 있으면 Kill·강제 해제하지
   않고 15분 간격으로 최대 2시간만 재확인한다.
-- Watchdog은 Fresh Destroy Plan, Foundation 보호 검사, Evidence 수집,
-  Karpenter NodePool·NodeClaim 선행 정리, 잔존 Runtime 검사까지 기존
-  `daily-down.ps1`에 위임한다.
+- Watchdog은 Fresh Destroy Plan, Foundation 보호 검사, Karpenter
+  NodePool·NodeClaim 선행 정리, 잔존 Runtime 검사까지 기존
+  `daily-down.ps1`에 위임한다. 자동 Down은 Evidence를 수집하지 않는다.
 - 정상적인 조기 Down과 Watchdog Down이 성공하면 예약 작업과 활성 Session
   상태가 제거된다. Sanitized Lifecycle Log와 Down 시도별 진단 Log는 로컬에
   남는다.
@@ -412,15 +415,17 @@ Athena는 Glue Catalog를 변경하고 Scan 비용을 발생시키므로 Daily D
 Scan Byte·최대 1,000행 결과는 같은 `ExperimentId`의 Local Evidence에 저장하고,
 이후 Collector가 Manifest와 SHA-256을 생성한다.
 
-일반 `daily-down.ps1 -ConfirmDestroy 'DESTROY DAILY'`도 Destroy 전·후
-Bundle을 자동 생성한다. 일반 모드에서는 수집 실패를 경고와 Manifest에
-남기고 비용 Runtime 제거를 계속한다.
+일반 `daily-down.ps1 -ConfirmDestroy 'DESTROY DAILY'`는 Evidence를 수집하지
+않는다. Destroy 전·후 Bundle이 필요한 경우에만 `-CollectEvidence`를 추가한다.
+이 모드에서는 수집 실패를 경고와 Manifest에 남기고 비용 Runtime 제거를
+계속한다.
 
 보안 실험 종료 때는 필수 Source를 명시해 Strict Mode로 실행한다.
 필수 Source가 누락되면 Destroy 전에 중단한다.
 
 ```powershell
 .\daily-down.ps1 `
+  -CollectEvidence `
   -ExperimentId 'login-failure-after' `
   -ScenarioId 'bank-login-failure' `
   -RequireEvidence `

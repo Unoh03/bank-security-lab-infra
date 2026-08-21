@@ -32,9 +32,11 @@ entry-point scripts.
   configured retention period. Destroy may continue, and collection can be
   retried within that period.
 
-`daily-down.ps1` collects before destroy and once again after Terraform state
-becomes empty. The first pass protects disappearing Daily evidence; the second
-copies persistent CloudTrail objects delivered during the long teardown.
+Routine `daily-down.ps1` runs skip evidence collection. Pass `-CollectEvidence`
+to collect before destroy and once again after Terraform state becomes empty.
+The first pass protects disappearing Daily evidence; the second copies
+persistent CloudTrail objects delivered during the long teardown. Use
+`-EvidenceOnly` to collect without changing Terraform state.
 
 Raw evidence stays outside the Terraform source tree. GitHub receives only
 sanitized reports, not raw CloudTrail or application logs.

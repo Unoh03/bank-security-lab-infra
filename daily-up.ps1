@@ -27,8 +27,7 @@ param(
     [string]$WatchdogMode = 'On',
     [switch]$EnableValkey,
     [switch]$EnableEfs,
-    [switch]$AllowHttp,
-    [switch]$SkipSocLab
+    [switch]$AllowHttp
 )
 
 Set-StrictMode -Version Latest
@@ -656,25 +655,6 @@ kubectl -n __NAMESPACE__ get pod,service
         throw "Application '$ApplicationName' did not return a successful HTTP response: $applicationUrl"
     }
 
-    $socLabStarted = $false
-    if ($SecurityScenarioProfile -ceq 'capital-one-lab' -and -not $SkipSocLab.IsPresent) {
-        $socStartScript = Join-Path $PSScriptRoot 'tools\Start-SocLab.ps1'
-        try {
-            Invoke-NativePassthrough -FilePath 'pwsh' -ArgumentList @(
-                '-NoProfile','-File',$socStartScript,
-                '-Scope','detection_only',
-                '-ResponseMode','observe_only',
-                '-ConfirmStart','START SOC LAB'
-            ) -FailureMessage 'SOC Detection-only startup failed.'
-            $socLabStarted = $true
-        } catch {
-            Write-Warning 'Daily Runtime is ready, but SOC Detection-only startup failed. AWS Runtime and Watchdog remain active.'
-            Write-Host 'DAILY_RUNTIME_READY=yes'
-            Write-Host 'SOC_LAB_READY=no'
-            throw
-        }
-    }
-
     $elapsed = (Get-Date) - $startedAt
     Write-Host ''
     Write-Host 'Daily up completed.'
@@ -684,13 +664,6 @@ kubectl -n __NAMESPACE__ get pod,service
     Write-Host "Argo CD: Synced / Healthy / revision $expectedGitOpsRevision"
     Write-Host "Application '$ApplicationName': Ready"
     Write-Host "URL: $applicationUrl"
-    if ($SecurityScenarioProfile -ceq 'capital-one-lab') {
-        if ($SkipSocLab.IsPresent) {
-            Write-Host 'SOC lab: skipped (-SkipSocLab)'
-        } elseif ($socLabStarted) {
-            Write-Host 'SOC lab: Ready (detection_only)'
-        }
-    }
     Write-Host "Elapsed: $([math]::Round($elapsed.TotalMinutes, 1)) minutes"
 } finally {
     if ($tempRoot -and (Test-Path -LiteralPath $tempRoot)) {

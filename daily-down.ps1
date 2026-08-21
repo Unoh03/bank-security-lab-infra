@@ -13,6 +13,7 @@ param(
     [string]$SshHost = 'bas',
     [string]$AutomationConfigPath = '',
     [string]$EvidenceRoot = '',
+    [switch]$CollectEvidence,
     [switch]$EvidenceOnly,
     [string]$ExperimentId = '',
     [string]$ScenarioId = 'daily-lifecycle',
@@ -58,6 +59,7 @@ $socStopStatus = 'not-running'
 $sessionMutex = $null
 $hasEvidenceStart = $PSBoundParameters.ContainsKey('EvidenceStartUtc')
 $hasEvidenceEnd = $PSBoundParameters.ContainsKey('EvidenceEndUtc')
+$collectEvidenceRequested = $CollectEvidence.IsPresent -or $EvidenceOnly.IsPresent
 
 if (-not $ExperimentId) {
     $ExperimentId = 'daily-' +
@@ -458,13 +460,17 @@ try {
         exit 2
     }
 
-    $evidence = Invoke-ConfiguredEvidenceCollection `
-        -Phase 'pre-destroy' `
-        -UsePhaseSuffix
-    foreach ($result in @($evidence.Results)) {
-        Write-Host "Evidence: $($result.Name) [$($result.Status)] $($result.Detail)"
+    if ($collectEvidenceRequested) {
+        $evidence = Invoke-ConfiguredEvidenceCollection `
+            -Phase 'pre-destroy' `
+            -UsePhaseSuffix
+        foreach ($result in @($evidence.Results)) {
+            Write-Host "Evidence: $($result.Name) [$($result.Status)] $($result.Detail)"
+        }
+        Write-Host "Evidence manifest: $($evidence.ManifestPath)"
+    } else {
+        Write-Host 'Evidence collection: skipped (use -CollectEvidence to enable pre/post-destroy capture)'
     }
-    Write-Host "Evidence manifest: $($evidence.ManifestPath)"
 
     $socStopStatus = Stop-ActiveDailySocLab
 
@@ -511,16 +517,18 @@ try {
         throw "Daily Terraform state is not empty after destroy: $($remainingState.Count) addresses remain."
     }
 
-    # The destroy itself generates audit events. Sync the persistent archive
-    # again after the long teardown; the removed legacy Daily bucket now skips.
-    $postDestroyEvidence = Invoke-ConfiguredEvidenceCollection `
-        -Phase 'post-destroy' `
-        -UsePhaseSuffix
-    $evidence = $postDestroyEvidence
-    foreach ($result in @($postDestroyEvidence.Results)) {
-        Write-Host "Post-destroy evidence: $($result.Name) [$($result.Status)] $($result.Detail)"
+    if ($collectEvidenceRequested) {
+        # The destroy itself generates audit events. Sync the persistent archive
+        # again after the long teardown; the removed legacy Daily bucket now skips.
+        $postDestroyEvidence = Invoke-ConfiguredEvidenceCollection `
+            -Phase 'post-destroy' `
+            -UsePhaseSuffix
+        $evidence = $postDestroyEvidence
+        foreach ($result in @($postDestroyEvidence.Results)) {
+            Write-Host "Post-destroy evidence: $($result.Name) [$($result.Status)] $($result.Detail)"
+        }
+        Write-Host "Post-destroy evidence manifest: $($postDestroyEvidence.ManifestPath)"
     }
-    Write-Host "Post-destroy evidence manifest: $($postDestroyEvidence.ManifestPath)"
 
     $residue = New-Object System.Collections.Generic.List[object]
     foreach ($resource in $trackedResources) {

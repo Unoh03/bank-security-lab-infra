@@ -10,7 +10,7 @@ Schema를 Runtime에서 확인한 뒤 각 파일의 `Runtime verification` 항�
 갱신한다.
 
 Collector는 Query Pack을 Evidence Bundle의 `queries/`에 복사한다.
-`daily-down.ps1 -RunEvidenceQueries`를 사용하면 Scenario에 매핑된
+`daily-down.ps1 -CollectEvidence -RunEvidenceQueries`를 사용하면 Scenario에 매핑된
 CloudWatch Logs Insights Query를 시간창 안에서 실행하고 결과를 함께
 보존한다. Athena Query는 아직 자동 실행하지 않지만,
 `athena/00_create_security_log_tables.sql`에 현재 Foundation S3 Prefix와

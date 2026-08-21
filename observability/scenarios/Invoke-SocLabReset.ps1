@@ -9,6 +9,7 @@ param(
     [ValidateRange(10,60)][int]$RequestTimeoutSeconds = 30,
     [ValidateRange(60,1200)][int]$AlarmCycleTimeoutSeconds = 900,
     [string]$ConfirmRetryUndispatched = '',
+    [switch]$PrepareRetake,
     [string]$ConfirmReset = ''
 )
 
@@ -24,12 +25,53 @@ Import-Module (Join-Path $moduleRoot 'SocLab.Configuration.psm1') -Force
 Import-Module (Join-Path $moduleRoot 'SocLab.Shuffle.psm1') -Force
 Import-Module (Join-Path $moduleRoot 'SocLab.Deployment.psm1') -Force
 
+if (-not $PrepareRetake.IsPresent) {
+    Write-Host 'SOC quarantine release preview'
+    Write-Host 'Action: clear only the stale DVWA GitOps quarantine request.'
+    Write-Host 'Preserved runtime Pods and the current DVWA security level are unchanged.'
+    Write-Host 'Use -PrepareRetake for the complete recording reset.'
+    if ($ConfirmReset -cne 'RESET DVWA QUARANTINE') {
+        throw "Preview only. Re-run with -ConfirmReset 'RESET DVWA QUARANTINE'."
+    }
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        throw 'The gh command is unavailable.'
+    }
+
+    $releaseTakeId = 'capital-one-' + [datetimeoffset]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '-' +
+        [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $releaseRequestedAt = [datetimeoffset]::UtcNow
+    $releaseOutput = @(& gh workflow run 'soc-reset-dvwa.yml' `
+        -R 'Unoh03/Uns-DVWA' --ref 'main' `
+        -f "take_id=$releaseTakeId" -f 'confirm=RESET DVWA QUARANTINE' `
+        -f 'prepare_retake=false' 2>&1)
+    $releaseExitCode = $LASTEXITCODE
+    $releaseOutput = $null
+    if ($releaseExitCode -ne 0) {
+        throw 'The fixed quarantine release Workflow dispatch was rejected.'
+    }
+    $releaseRun = Wait-SocGitHubWorkflowRun -TakeId $releaseTakeId -Operation reset `
+        -NotBeforeUtc $releaseRequestedAt -TimeoutSeconds $GitHubTimeoutSeconds
+    $releaseResult = Get-SocGitHubTransitionArtifact -RunId ([int64]$releaseRun.run_id) `
+        -TakeId $releaseTakeId -Operation reset
+    if ([string]$releaseResult.reset_mode -cne 'release_quarantine' -or
+        [string]$releaseResult.target_level -cne 'unchanged') {
+        throw 'The quarantine release Artifact violated the fixed release-only contract.'
+    }
+    Write-Host 'DVWA GitOps quarantine release completed.'
+    Write-Host "TAKE_ID=$releaseTakeId"
+    Write-Host "GITHUB_RUN_ID=$([int64]$releaseRun.run_id)"
+    Write-Host "COMMIT_SHA=$([string]$releaseResult.commit_sha)"
+    Write-Host "CHANGED=$([bool]$releaseResult.changed)"
+    return
+}
+
 $resolvedSecretRoot = Get-SocSecretRoot -Root $SecretRoot
 $resolvedRuntimeRoot = Get-SocRuntimeRoot -Root $RuntimeRoot
 $activeSessionPath = Join-Path $resolvedRuntimeRoot 'active-soc-session.json'
 
 Write-Host 'SOC lab manual reset preview'
 Write-Host 'Action: one fixed GitHub Reset Workflow -> exact Argo revision -> fresh DVWA low session.'
+Write-Host 'Runtime action: delete only UID-verified orphaned DVWA quarantine Pods.'
 Write-Host "Retake gate: this TAKE alarm ALARM -> natural OK within $AlarmCycleTimeoutSeconds seconds."
 Write-Host 'This command does not run Terraform Apply, Destroy, or force-push.'
 if ($ConfirmReset -cne 'RESET SOC LAB TO LOW') {
@@ -94,6 +136,37 @@ function Assert-SocNoProcessCredentialEnvironment {
         throw 'Process-level AWS credential environment variables remain set; retake readiness is refused.'
     }
     return $true
+}
+
+function Remove-SocQuarantinedPodsForRetake {
+    $raw = Invoke-SocResetNativeCapture -FilePath 'ssh' -ArgumentList @(
+        'bas',
+        "kubectl -n dvwa get pods -l 'soc.unoh.click/state=quarantined' -o json"
+    ) -FailureMessage 'Quarantined DVWA Pods could not be listed for the retake reset.'
+    try {
+        $document = $raw | ConvertFrom-Json -Depth 30
+    } catch {
+        throw 'The quarantined DVWA Pod list is not valid JSON.'
+    }
+
+    $removed = @()
+    foreach ($pod in @($document.items)) {
+        $name = [string]$pod.metadata.name
+        $uid = [string]$pod.metadata.uid
+        $state = [string]$pod.metadata.labels.'soc.unoh.click/state'
+        $instance = [string]$pod.metadata.labels.'app.kubernetes.io/instance'
+        if ($name -cnotmatch '^dvwa-[a-z0-9]{8,16}-[a-z0-9]{5}$' -or
+            $uid -cnotmatch '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$' -or
+            $state -cne 'quarantined' -or $instance -cne 'dvwa-quarantined' -or
+            @($pod.metadata.ownerReferences).Count -ne 0) {
+            throw 'A candidate retake Pod does not match the exact orphaned quarantine contract.'
+        }
+        $command = "test `"`$(kubectl -n dvwa get pod '$name' -o jsonpath='{.metadata.uid}')`" = '$uid' && kubectl -n dvwa delete pod '$name' --wait=true --timeout=60s"
+        [void](Invoke-SocResetNativeCapture -FilePath 'ssh' -ArgumentList @('bas',$command) `
+            -FailureMessage "The UID-verified quarantined DVWA Pod could not be removed: $name")
+        $removed += [pscustomobject][ordered]@{name=$name;uid=$uid}
+    }
+    return @($removed)
 }
 
 function ConvertTo-SocResetUtcDateTimeOffset {
@@ -625,6 +698,7 @@ $resetTransitionPath = Join-Path $evidenceDirectory 'reset-transition.json'
 $resetDeployPath = Join-Path $evidenceDirectory 'reset-deploy.json'
 $resetRetakeReadyPath = Join-Path $evidenceDirectory 'reset-retake-ready.json'
 $resetAllowRemovedPath = Join-Path $evidenceDirectory 'reset-allow-removed.json'
+$resetQuarantineRemovedPath = Join-Path $evidenceDirectory 'reset-quarantine-removed.json'
 $requestedAt = [datetimeoffset]::MinValue
 $run = $null
 $transition = $null
@@ -685,7 +759,8 @@ try {
         $failureStage = 'reset-dispatch'
         $output = @(& gh workflow run ([string]$configuration.reset_workflow) `
             -R ([string]$configuration.github_repository) --ref ([string]$configuration.github_ref) `
-            -f "take_id=$takeId" -f 'confirm=RESET DVWA TO LOW' 2>&1)
+            -f "take_id=$takeId" -f 'confirm=RESET DVWA TO LOW' `
+            -f 'prepare_retake=true' 2>&1)
         $exitCode = $LASTEXITCODE
         $output = $null
         if ($exitCode -ne 0) { throw 'The fixed manual Reset Workflow dispatch was rejected.' }
@@ -709,7 +784,8 @@ try {
                 }
                 $output = @(& gh workflow run ([string]$configuration.reset_workflow) `
                     -R ([string]$configuration.github_repository) --ref ([string]$configuration.github_ref) `
-                    -f "take_id=$takeId" -f 'confirm=RESET DVWA TO LOW' 2>&1)
+                    -f "take_id=$takeId" -f 'confirm=RESET DVWA TO LOW' `
+                    -f 'prepare_retake=true' 2>&1)
                 $exitCode = $LASTEXITCODE
                 $output = $null
                 if ($exitCode -ne 0) { throw 'The explicit Reset Workflow retry was rejected.' }
@@ -805,6 +881,14 @@ try {
         [void](Wait-SocArgoDeployment -ExpectedRevision ([string]$transition.commit_sha) `
             -ExpectedSecurityLevel low -TimeoutSeconds $ArgoTimeoutSeconds)
     }
+
+    $failureStage = 'reset-quarantine-cleanup'
+    $removedQuarantinePods = @(Remove-SocQuarantinedPodsForRetake)
+    Write-SocResetAtomicJson -Path $resetQuarantineRemovedPath -Value ([ordered]@{
+        schema_version=1;take_id=$takeId;removed_pods=$removedQuarantinePods;
+        removed_count=$removedQuarantinePods.Count;
+        verified_at_utc=[datetimeoffset]::UtcNow.ToString('o')
+    })
 
     $failureStage = 'reset-low-validation'
     $applicationUrlText = @(& terraform "-chdir=$terraformRoot" output -raw application_url 2>&1)

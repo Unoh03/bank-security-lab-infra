@@ -178,6 +178,10 @@ try {
     Remove-Item -LiteralPath $sshConfigTestRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 $dailyDown = Get-Content -LiteralPath $dailyDownPath -Raw
+if ($dailyDown -notmatch '\[switch\]\$CollectEvidence' -or
+    $dailyDown -notmatch '\$collectEvidenceRequested\s*=\s*\$CollectEvidence\.IsPresent\s+-or\s+\$EvidenceOnly\.IsPresent') {
+    throw 'daily-down does not keep routine teardown evidence collection opt-in.'
+}
 if ($dailyDown -notmatch '\[switch\]\$RunEvidenceQueries' -or
     $dailyDown -notmatch "RunQueries\s*=\s*\[bool\]\(\`$RunEvidenceQueries\s+-and\s+\`$Phase\s+-cne\s+'post-destroy'\)") {
     throw 'daily-down does not expose and forward the optional Evidence query switch.'

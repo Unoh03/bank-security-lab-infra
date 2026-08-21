@@ -9,6 +9,7 @@ $path = Join-Path $root 'observability\scenarios\Invoke-SocLabReset.ps1'
 $text = Get-Content -LiteralPath $path -Raw
 
 foreach ($contract in @(
+    @{Pattern='\[switch\]\$PrepareRetake[\s\S]*?RESET DVWA QUARANTINE[\s\S]*?prepare_retake=false';Message='Reset lacks the default quarantine-only release path.'},
     @{Pattern="ConfirmReset\s+-cne\s+'RESET SOC LAB TO LOW'";Message='Reset lacks exact outer confirmation.'},
     @{Pattern='resumableStatuses[\s\S]*?E2E_SUCCEEDED[\s\S]*?E2E_FAILED[\s\S]*?RESET_REQUESTED[\s\S]*?RESET_COMMITTED[\s\S]*?RESET_DEPLOYED[\s\S]*?CLOSED[\s\S]*?response_mode -cne ''contain''';Message='Reset does not limit recovery to an exact completed, failed, closed, or resumable containment TAKE.'},
     @{Pattern='reset-exclusive\.lock[\s\S]*?FileShare\]::None[\s\S]*?Another Reset process already owns';Message='Reset does not serialize one exact TAKE with an exclusive lock.'},
@@ -18,7 +19,7 @@ foreach ($contract in @(
     @{Pattern='Get-SocGitHubWorkflowRun[\s\S]*?ExpectedRunId \$dispatchRunId[\s\S]*?Get-SocGitHubTransitionArtifact[\s\S]*?ExpectedAlertBodySha256 \$dispatchBodySha256';Message='Failed-E2E recovery does not re-prove the exact GitHub transition.'},
     @{Pattern='storedContainment[\s\S]*?remoteContainment[\s\S]*?Assert-SocTransitionMatches';Message='Reset does not compare stored containment Evidence with the live GitHub Artifact.'},
     @{Pattern='github_remote_main_sha[\s\S]*?Get-SocGitHubRemoteMainSha[\s\S]*?reset dispatch is refused';Message='Reset does not fail closed on GitHub main drift before dispatch.'},
-    @{Pattern="gh workflow run[\s\S]*?reset_workflow[\s\S]*?--ref[\s\S]*?confirm=RESET DVWA TO LOW";Message='Reset does not dispatch only the fixed manual Workflow.'},
+    @{Pattern="gh workflow run[\s\S]*?reset_workflow[\s\S]*?--ref[\s\S]*?confirm=RESET DVWA TO LOW[\s\S]*?prepare_retake=true";Message='Reset does not dispatch only the fixed manual retake Workflow.'},
     @{Pattern='reset-dispatch-intent\.json[\s\S]*?automatic_redispatch_allowed=\$false[\s\S]*?currentStatus -ceq ''RESET_REQUESTED''[\s\S]*?Wait-SocGitHubWorkflowRun';Message='Reset does not checkpoint and resume the existing dispatch without automatic redispatch.'},
     @{Pattern="ConfirmRetryUndispatched[\s\S]*?RETRY UNDISPATCHED RESET[\s\S]*?Get-SocGitHubWorkflowRun";Message='An ambiguous undispatched Reset cannot be retried through an explicit fail-closed recovery path.'},
     @{Pattern='Wait-SocGitHubWorkflowRun[\s\S]*?Get-SocGitHubTransitionArtifact[\s\S]*?Operation reset[\s\S]*?RequireChange';Message='Reset does not validate its unique Run and transition Artifact.'},
@@ -28,6 +29,7 @@ foreach ($contract in @(
     @{Pattern='describe-alarm-history[\s\S]*?new_state -ceq ''ALARM''[\s\S]*?new_state -ceq ''OK''[\s\S]*?StateValue -ceq ''OK''';Message='Reset does not prove this TAKE alarm transitioned to ALARM and naturally recovered to OK.'},
     @{Pattern='describe-alarm-history[\s\S]*?--scan-by'',''TimestampAscending''[\s\S]*?--max-items'',''100''';Message='Reset does not use the supported bounded alarm-history pagination contract.'},
     @{Pattern='Get-SocCapitalOneDetectionContract[\s\S]*?Wait-SocCapitalOneAlarmCycleReady[\s\S]*?reset-retake-ready\.json';Message='Reset does not record the detector-bound retake readiness gate.'},
+    @{Pattern='Remove-SocQuarantinedPodsForRetake[\s\S]*?soc\.unoh\.click/state=quarantined[\s\S]*?metadata\.uid[\s\S]*?kubectl -n dvwa delete pod[\s\S]*?reset-quarantine-removed\.json';Message='Retake reset does not remove only UID-verified orphaned quarantine Pods.'},
     @{Pattern='Assert-FreshDvWaLow[\s\S]*?reset-retake-readiness[\s\S]*?Remove-ShuffleSocTake[\s\S]*?09-reset\.json[\s\S]*?Status CLOSED';Message='Reset does not verify low and retake readiness, close the allow key, record Evidence, and close the TAKE.'},
     @{Pattern='reset-allow-removed\.json[\s\S]*?shuffle_allow_removed=\$true[\s\S]*?automatic_redispatch_used=\$false';Message='Reset does not make allow removal and final recovery Evidence resumable.'},
     @{Pattern='Get-ChildItem\s+-LiteralPath\s+\$scopePath\s+-File\s+-Recurse[\s\S]*?scope=''entire-take-directory''[\s\S]*?Find-SocSecretExposure\s+-Path\s+@\(\$takeDirectory\)';Message='Reset does not refresh and scan the entire TAKE Evidence tree.'},

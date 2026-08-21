@@ -46,6 +46,28 @@ try {
 } catch { $wrongAlertRejected = $_.Exception.Message -match 'dispatched sanitized Alert' }
 if (-not $wrongAlertRejected) { throw 'A containment Artifact from another Alert was accepted.' }
 
+$release = [pscustomobject]@{
+    schema_version=1;operation='reset';reset_mode='release_quarantine';take_id=$takeId;
+    before_sha=('2' * 40);commit_sha=('3' * 40);changed=$true;
+    diff_sha256=('d' * 64);target_path='deploy/dvwa/values.yaml';target_level='unchanged'
+}
+[void](Assert-SocGitHubTransitionResult -Result $release -TakeId $takeId -Operation reset -RequireChange)
+$retake = [pscustomobject]@{
+    schema_version=1;operation='reset';reset_mode='prepare_retake';take_id=$takeId;
+    before_sha=('3' * 40);commit_sha=('4' * 40);changed=$true;
+    diff_sha256=('e' * 64);target_path='deploy/dvwa/values.yaml';target_level='low'
+}
+[void](Assert-SocGitHubTransitionResult -Result $retake -TakeId $takeId -Operation reset -RequireChange)
+$legacyReset = $retake.PSObject.Copy()
+$legacyReset.PSObject.Properties.Remove('reset_mode')
+[void](Assert-SocGitHubTransitionResult -Result $legacyReset -TakeId $takeId -Operation reset -RequireChange)
+$release.target_level = 'low'
+$wrongResetModeRejected = $false
+try {
+    [void](Assert-SocGitHubTransitionResult -Result $release -TakeId $takeId -Operation reset)
+} catch { $wrongResetModeRejected = $_.Exception.Message -match 'fixed contract' }
+if (-not $wrongResetModeRejected) { throw 'A quarantine-only Artifact with a low target was accepted.' }
+
 function New-TestPod([string]$Uid) {
     [pscustomobject]@{
         metadata=[pscustomobject]@{uid=$Uid;deletionTimestamp=$null}

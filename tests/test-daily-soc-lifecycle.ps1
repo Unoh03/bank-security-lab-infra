@@ -11,17 +11,8 @@ $down = Get-Content -LiteralPath (Join-Path $root 'daily-down.ps1') -Raw
 $start = Get-Content -LiteralPath (Join-Path $root 'tools\Start-SocLab.ps1') -Raw
 $stop = Get-Content -LiteralPath (Join-Path $root 'tools\Stop-SocLab.ps1') -Raw
 
-if ($up -notmatch '\[switch\]\$SkipSocLab') {
-    throw 'daily-up lacks the explicit SOC opt-out switch.'
-}
-if ($up -notmatch "SecurityScenarioProfile\s+-ceq\s+'capital-one-lab'[\s\S]*?SkipSocLab\.IsPresent[\s\S]*?Start-SocLab\.ps1[\s\S]*?Scope[\s\S]*?detection_only") {
-    throw 'daily-up does not auto-start Detection-only SOC only for capital-one-lab.'
-}
-if ($up -notmatch "AWS Runtime and Watchdog remain active[\s\S]*?SOC_LAB_READY=no") {
-    throw 'daily-up does not report partial success when SOC startup fails.'
-}
-if ($up.IndexOf('Start-SocLab.ps1',[StringComparison]::Ordinal) -gt $up.IndexOf('Daily up completed.',[StringComparison]::Ordinal)) {
-    throw 'daily-up prints its success banner before starting SOC.'
+if ($up -match '\$SkipSocLab|Start-SocLab\.ps1|SOC_LAB_READY') {
+    throw 'daily-up still owns SOC startup instead of ending at application readiness.'
 }
 
 if ($down -notmatch 'function Get-DailySocActiveSessionPath[\s\S]*?active-soc-session\.json' -or
@@ -40,6 +31,11 @@ if ($preDestroyEvidenceIndex -lt 0 -or $normalSocStopIndex -le $preDestroyEviden
 }
 if ($down -notmatch "if \(\`$EvidenceOnly\)[\s\S]*?exit 0") {
     throw 'daily-down EvidenceOnly path is missing.'
+}
+if ($down -notmatch '\[switch\]\$CollectEvidence' -or
+    $down -notmatch "if \(\`$collectEvidenceRequested\)[\s\S]*?-Phase 'pre-destroy'" -or
+    $down -notmatch "if \(\`$collectEvidenceRequested\)[\s\S]*?-Phase 'post-destroy'") {
+    throw 'daily-down does not gate automatic pre/post-destroy evidence collection behind CollectEvidence.'
 }
 if ($down -notmatch "dailyState\.Count -eq 0[\s\S]*?ConfirmDestroy -ceq 'DESTROY DAILY'[\s\S]*?Stop-ActiveDailySocLab") {
     throw 'daily-down cannot recover a stale local SOC session after AWS state is already empty.'
