@@ -1,118 +1,154 @@
 #!/usr/bin/env python3
-"""Build deterministic, non-secret Gate B5 webhook payloads from the real sanitizer."""
+"""Build deterministic, non-secret Gate B5 v2 payloads.
+
+The optional control identifier is test metadata only and is deliberately
+never inserted into the CloudTrail sanitized Alert payload.
+"""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.machinery
-import importlib.util
 import json
-from datetime import datetime, timezone
-from pathlib import Path
+import uuid
 from typing import Any
 
-
-ROOT = Path(__file__).resolve().parents[2]
-SANITIZER_PATH = (
-    ROOT / "observability" / "wazuh" / "integrations" / "custom-shuffle-soc"
-)
-LOADER = importlib.machinery.SourceFileLoader("soc_sanitizer", str(SANITIZER_PATH))
-SPEC = importlib.util.spec_from_loader(LOADER.name, LOADER)
-if SPEC is None:
-    raise RuntimeError("the Wazuh sanitizer module could not be loaded")
-SANITIZER = importlib.util.module_from_spec(SPEC)
-LOADER.exec_module(SANITIZER)
 
 CASES = (
     "valid",
     "wrong-account",
     "wrong-scenario",
     "wrong-rule",
-    "wrong-take",
+    "wrong-role",
+    "wrong-bucket",
+    "wrong-key",
+    "wrong-event-source",
+    "wrong-event-name",
+    "wrong-result",
     "wrong-body-hash",
 )
 
+# Every negative case is a single, explicit mutation of the fixed input
+# contract.  Keeping this table next to the generator lets the unit tests
+# compare the generated value with the contract rather than merely checking
+# that JSON was produced.
+CASE_MUTATIONS = {
+    "valid": None,
+    "wrong-account": ("aws_account_id", "000000000000"),
+    "wrong-scenario": ("scenario_id", "OTHER-SCENARIO"),
+    "wrong-rule": ("rule.id", "100999"),
+    "wrong-role": ("incident.principal_role_name", "other-role"),
+    "wrong-bucket": ("incident.bucket_alias", "other-application-data"),
+    "wrong-key": ("incident.object_key", "validation/other.csv"),
+    "wrong-event-source": ("incident.event_source", "ec2.amazonaws.com"),
+    "wrong-event-name": ("incident.event_name", "PutObject"),
+    "wrong-result": ("incident.result", "failed"),
+    "wrong-body-hash": ("integrity.body_sha256", "0" * 64),
+}
 
-def _source_alert(take_id: str, nonce: str) -> dict[str, Any]:
-    digest = hashlib.sha256(nonce.encode("utf-8")).hexdigest()
-    numeric = int(digest[:12], 16)
-    return {
-        "id": f"{numeric}.{int(digest[12:18], 16)}",
-        "timestamp": "2026-08-18T00:00:00.000+0000",
-        "rule": {"id": "100103", "level": 10},
-        "data": {
-            "schema_version": 1,
-            "event_id": (
-                "cwl:433048100798:/aws/eks/aws-topology-primary/"
-                f"application:gate-b5:{digest[:24]}"
-            ),
-            "source": "dvwa",
-            "aws_account_id": "433048100798",
-            "aws_region": "ap-northeast-2",
-            "event_time": "2026-08-18T00:00:00.000Z",
-            "transport": "push",
-            "raw_message_sha256": digest,
-            "payload": {
-                "normalized": True,
-                "take_id": take_id,
-                "event_type": "command.execution",
-                "result": "succeeded",
-                "route": "/vulnerabilities/exec/",
-                "context": {
-                    "action": "shell_command",
-                    "resource": "ec2_imds",
-                    "security_level": "low",
-                    "status": "output_returned",
-                },
-            },
-        },
-    }
+
+def canonical_json(value: dict[str, Any]) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _uuid_from_digest(digest: str) -> str:
+    raw = bytearray.fromhex(digest[:32])
+    raw[6] = (raw[6] & 0x0F) | 0x40
+    raw[8] = (raw[8] & 0x3F) | 0x80
+    return str(uuid.UUID(bytes=bytes(raw)))
 
 
 def _refresh_body_hash(payload: dict[str, Any]) -> None:
     integrity = payload["integrity"]
     integrity.pop("body_sha256", None)
-    integrity["body_sha256"] = hashlib.sha256(
-        SANITIZER.canonical_json(payload)
-    ).hexdigest()
+    integrity["body_sha256"] = hashlib.sha256(canonical_json(payload)).hexdigest()
 
 
-def build_payload(take_id: str, nonce: str, case: str = "valid") -> dict[str, Any]:
+def _base_payload(nonce: str) -> dict[str, Any]:
+    digest = hashlib.sha256(nonce.encode("utf-8")).hexdigest()
+    return {
+        "schema_version": 2,
+        "source_system": "wazuh",
+        "sent_at_utc": "2026-08-18T00:00:01.000Z",
+        "account_alias": "primary-lab",
+        "aws_account_id": "433048100798",
+        "aws_region": "ap-northeast-2",
+        "scenario_id": "CAPITAL-ONE",
+        "rule": {
+            "id": "100104",
+            "level": 12,
+            "role": "high_confidence_s3_access",
+        },
+        "incident": {
+            "cloudtrail_event_id": _uuid_from_digest(digest),
+            "wazuh_alert_id": f"{int(digest[:12], 16)}.{int(digest[12:18], 16)}",
+            "event_time_utc": "2026-08-18T00:00:00.000Z",
+            "event_source": "s3.amazonaws.com",
+            "event_name": "GetObject",
+            "principal_role_name": "aws-topology-primary-karpenter-node",
+            "principal_session_id_sha256": digest,
+            "bucket_alias": "primary-application-data",
+            "object_key": "validation/capital-one-demo.csv",
+            "result": "success",
+        },
+        "integrity": {"raw_message_sha256": digest},
+    }
+
+
+def build_payload(
+    control_id: str | None, nonce: str, case: str = "valid"
+) -> dict[str, Any]:
+    """Return a v2 payload; ``control_id`` is intentionally not serialized."""
+
     if case not in CASES:
         raise ValueError("unsupported Gate B5 payload case")
-    payload = SANITIZER.build_sanitized_alert(
-        _source_alert(take_id, nonce),
-        now=datetime(2026, 8, 18, 0, 0, 1, tzinfo=timezone.utc),
-    )
+    # Keep control metadata outside the Alert derived from CloudTrail.
+    _ = control_id
+    payload = _base_payload(nonce)
+    incident = payload["incident"]
     if case == "wrong-account":
-        payload["account_alias"] = "other-lab"
         payload["aws_account_id"] = "000000000000"
-        payload["incident"]["event_id"] = payload["incident"]["event_id"].replace(
-            "cwl:433048100798:", "cwl:000000000000:"
-        )
     elif case == "wrong-scenario":
         payload["scenario_id"] = "OTHER-SCENARIO"
     elif case == "wrong-rule":
-        payload["rule"]["id"] = "999999"
-    elif case == "wrong-take":
-        suffix = take_id[-8:]
-        replacement = ("0" if suffix[0] != "0" else "1") + suffix[1:]
-        payload["incident"]["take_id"] = take_id[:-8] + replacement
+        payload["rule"]["id"] = "100999"
+    elif case == "wrong-role":
+        incident["principal_role_name"] = "other-role"
+    elif case == "wrong-bucket":
+        incident["bucket_alias"] = "other-application-data"
+    elif case == "wrong-key":
+        incident["object_key"] = "validation/other.csv"
+    elif case == "wrong-event-source":
+        incident["event_source"] = "ec2.amazonaws.com"
+    elif case == "wrong-event-name":
+        incident["event_name"] = "PutObject"
+    elif case == "wrong-result":
+        incident["result"] = "failed"
+
     if case == "wrong-body-hash":
         payload["integrity"]["body_sha256"] = "0" * 64
-    elif case != "valid":
+    else:
         _refresh_body_hash(payload)
     return payload
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--take-id", required=True)
+    parser.add_argument(
+        "--control-id",
+        required=True,
+        help="Control-only identifier; never emitted in the payload.",
+    )
     parser.add_argument("--nonce", required=True)
     parser.add_argument("--case", choices=CASES, default="valid")
     args = parser.parse_args()
-    payload = build_payload(args.take_id, args.nonce, args.case)
+    payload = build_payload(args.control_id, args.nonce, args.case)
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
     return 0
 

@@ -83,11 +83,23 @@ function Get-StableSha256 {
 function Invoke-AwsJson {
     param([Parameter(Mandatory)][string[]]$Arguments)
 
-    $output = @(& aws @Arguments 2>&1)
-    if ($LASTEXITCODE -ne 0) {
-        throw "AWS CLI request failed for $($Arguments[0]) $($Arguments[1])."
+    # Windows PowerShell 5.1 wraps native stderr as ErrorRecord objects. With
+    # the script-wide Stop preference, even harmless AWS CLI stderr output can
+    # terminate the bridge before LASTEXITCODE is inspected.
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& aws @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
     }
-    $text = ($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+    if ($exitCode -ne 0) {
+        throw "AWS CLI request failed for $($Arguments[0]) $($Arguments[1]) with exit code $exitCode."
+    }
+    $text = ($output |
+        Where-Object { $_ -isnot [Management.Automation.ErrorRecord] } |
+        ForEach-Object { [string]$_ }) -join [Environment]::NewLine
     if ([string]::IsNullOrWhiteSpace($text)) {
         return [pscustomobject]@{}
     }
@@ -654,14 +666,30 @@ try {
         }
 
         if ($deleteEntries.Count -gt 0) {
-            $deleteResponse = Invoke-AwsJson -Arguments @(
-                'sqs', 'delete-message-batch',
-                '--queue-url', $resolvedQueueUrl,
-                '--entries', ($deleteEntries | ConvertTo-Json -Depth 5 -Compress),
-                '--region', $Region,
-                '--output', 'json',
-                '--no-cli-pager'
+            # Windows PowerShell 5.1 can strip the JSON quotes when a complex
+            # native argument is marshalled to aws.exe. Use AWS CLI file input
+            # so receipt handles reach delete-message-batch byte-for-byte.
+            $deleteEntriesPath = Join-Path $SpoolDirectory (
+                'delete-message-batch-{0}.json' -f [guid]::NewGuid().ToString('N')
             )
+            try {
+                [IO.File]::WriteAllText(
+                    $deleteEntriesPath,
+                    (ConvertTo-Json -InputObject $deleteEntries -Depth 5 -Compress),
+                    [Text.UTF8Encoding]::new($false)
+                )
+                $deleteEntriesFileUrl = 'file://' + $deleteEntriesPath.Replace('\', '/')
+                $deleteResponse = Invoke-AwsJson -Arguments @(
+                    'sqs', 'delete-message-batch',
+                    '--queue-url', $resolvedQueueUrl,
+                    '--entries', $deleteEntriesFileUrl,
+                    '--region', $Region,
+                    '--output', 'json',
+                    '--no-cli-pager'
+                )
+            } finally {
+                Remove-Item -LiteralPath $deleteEntriesPath -Force -ErrorAction SilentlyContinue
+            }
             if ($null -ne $deleteResponse.PSObject.Properties['Failed'] -and
                 @($deleteResponse.Failed).Count -ne 0) {
                 throw 'SQS did not acknowledge every ledger-preserved message deletion.'

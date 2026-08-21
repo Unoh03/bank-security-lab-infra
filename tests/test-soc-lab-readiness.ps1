@@ -19,6 +19,7 @@ foreach ($pattern in @(
     'SOC_STATIC_READY=',
     'SOC_CLOUD_READY=',
     'Get-ShuffleSocAppUploadEvidence',
+    'IncludeLegacyChecks',
     'dvwa-local-scope',
     '--porcelain=v1',
     '$staticCheckNames',
@@ -27,7 +28,13 @@ foreach ($pattern in @(
     'Assert-ShuffleSocProductionWorkflow',
     'Get-ShuffleSocCloudProvenance',
     'Get-ShuffleSocCoreContractSha256',
-    'no secret values printed'
+    'no secret values printed',
+    'currentV2Paths',
+    "-Name 'v2-contracts'",
+    'legacy-v1-boundary',
+    'EXCLUDED/NOT_CURRENT',
+    'Current=$Current',
+    "-Current `$false"
 )) {
     if ($text -notmatch [regex]::Escape($pattern)) {
         throw "The readiness script lacks a required boundary: $pattern"

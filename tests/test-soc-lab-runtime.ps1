@@ -27,6 +27,35 @@ try {
     if ([string]$readyAgain.status -cne 'READY') {
         throw 'An idempotent Active TAKE status write failed.'
     }
+
+    $beforeFailure = [IO.File]::ReadAllText($path)
+    $held = [IO.File]::Open(
+        $path,
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::ReadWrite,
+        [IO.FileShare]::None
+    )
+    try {
+        $writeFailed = $false
+        try {
+            [void](Write-SocTakeRecord -Record $record -RuntimeRoot $testRoot)
+        } catch {
+            $writeFailed = $true
+        }
+        if (-not $writeFailed) {
+            throw 'A locked Active TAKE destination unexpectedly accepted an overwrite.'
+        }
+    } finally {
+        $held.Dispose()
+    }
+    if ([IO.File]::ReadAllText($path) -cne $beforeFailure) {
+        throw 'A failed Active TAKE write modified the original record.'
+    }
+    if (@(Get-ChildItem -LiteralPath $testRoot -Force -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '\.(tmp|bak)$' }).Count -ne 0) {
+        throw 'A failed Active TAKE write left a temporary or backup artifact.'
+    }
+
     $invalidTransitionRejected = $false
     try {
         [void](Set-SocTakeStatus -RuntimeRoot $testRoot -Status DEPLOYED)
@@ -46,6 +75,29 @@ try {
     }
     if (-not $forbiddenRejected) {
         throw 'The Active TAKE accepted a forbidden secret-like field.'
+    }
+
+    $legacyGuardAccepted = $false
+    try {
+        [void](Assert-SocLegacyObserveOnlyTake -Record $record)
+        $legacyGuardAccepted = $true
+    } catch { }
+    if (-not $legacyGuardAccepted) {
+        throw 'The legacy Rule 100103 OBSERVE_ONLY boundary rejected a valid observe-only TAKE.'
+    }
+    $containRecord = New-SocTakeRecord `
+        -TakeId 'capital-one-20260818T000001Z-deadbeef' `
+        -ResponseMode contain `
+        -IssuedAtUtc ([datetimeoffset]'2026-08-18T00:00:00Z') `
+        -LifetimeMinutes 60
+    $legacyContainRejected = $false
+    try {
+        [void](Assert-SocLegacyObserveOnlyTake -Record $containRecord)
+    } catch {
+        $legacyContainRejected = $_.Exception.Message -match 'legacy Rule 100103 OBSERVE_ONLY'
+    }
+    if (-not $legacyContainRejected) {
+        throw 'The legacy Rule 100103 boundary accepted a containment TAKE.'
     }
 } finally {
     if (Test-Path -LiteralPath $testRoot -PathType Container) {

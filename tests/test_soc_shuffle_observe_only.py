@@ -994,6 +994,76 @@ class Gate2Tests(unittest.TestCase):
     def _payload(self):
         return M.build_synthetic_payload(now=FIXED_NOW, nonce="unit-test")
 
+    def test_synthetic_payload_matches_v2_fixed_incident_contract(self):
+        payload = self._payload()
+        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(
+            payload["rule"],
+            {
+                "id": "100104",
+                "level": 12,
+                "role": "high_confidence_s3_access",
+            },
+        )
+        self.assertEqual(
+            set(payload["incident"]),
+            {
+                "cloudtrail_event_id",
+                "wazuh_alert_id",
+                "event_time_utc",
+                "event_source",
+                "event_name",
+                "principal_role_name",
+                "principal_session_id_sha256",
+                "bucket_alias",
+                "object_key",
+                "result",
+            },
+        )
+        self.assertRegex(
+            payload["incident"]["cloudtrail_event_id"],
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        )
+        self.assertEqual(payload["incident"]["event_source"], "s3.amazonaws.com")
+        self.assertEqual(payload["incident"]["event_name"], "GetObject")
+        self.assertEqual(
+            payload["incident"]["principal_role_name"],
+            "aws-topology-primary-karpenter-node",
+        )
+        self.assertEqual(
+            payload["incident"]["bucket_alias"], "primary-application-data"
+        )
+        self.assertEqual(
+            payload["incident"]["object_key"], "validation/capital-one-demo.csv"
+        )
+        self.assertEqual(payload["incident"]["result"], "success")
+        self.assertNotIn("take_id", payload["incident"])
+        self.assertNotIn("event_id", payload["incident"])
+        self.assertNotIn("route", payload["incident"])
+
+    def test_synthetic_payload_uuid_and_hashes_are_deterministic(self):
+        first = self._payload()
+        second = self._payload()
+        self.assertEqual(first, second)
+        self.assertRegex(first["incident"]["wazuh_alert_id"], r"^[0-9]+\.[0-9]+$")
+        self.assertRegex(
+            first["incident"]["principal_session_id_sha256"], r"^[0-9a-f]{64}$"
+        )
+        self.assertRegex(first["integrity"]["raw_message_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_semantic_diagnostic_allows_current_v2_incident_paths(self):
+        changed = copy.deepcopy(self._payload())
+        changed["incident"]["object_key"] = "validation/other-demo.csv"
+        summary = M.semantic_diff_summary(self._payload(), changed)
+        self.assertEqual(summary["total"], 1)
+        self.assertEqual(summary["entries"][0]["path"], "/incident/object_key")
+
+    def test_legacy_incident_fields_are_rejected(self):
+        legacy = copy.deepcopy(self._payload())
+        legacy["incident"]["take_id"] = "legacy"
+        with self.assertRaisesRegex(M.Refusal, "top-level fields|legacy incident"):
+            M.validate_synthetic_payload(legacy, M.load_json_file(M.SCHEMA_PATH))
+
     def test_body_hash_uses_payload_before_hash_insertion(self):
         payload = self._payload()
         without = copy.deepcopy(payload)

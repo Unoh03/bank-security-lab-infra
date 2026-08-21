@@ -25,7 +25,9 @@ GT-03을 통과한 S3 고신뢰 Rule
 ```
 
 `repeat_back_to_me/$exec`는 새 Schema의 인증·왕복을 확인할 때만 사용한다. G2가
-통과하면 실제 Validator·Dedupe·Containment Workflow로 교체한다.
+통과하면 기존 v1을 수정하지 않고 별도 `CAPITAL-ONE-SOC-CONTAINMENT-v2`
+Validator·Dedupe·Containment Target을 생성·검증한다. v1은 v2 검증 전까지
+Legacy Scaffold·Rollback 용도로 보존한다.
 
 ---
 
@@ -35,9 +37,15 @@ GT-03을 통과한 S3 고신뢰 Rule
 
 - Rule `100103` 독립 3 TAKE의 실제 Event N↔Alert N, 정상 대조군 0, 자동 Write 0
 - 최종 S3 Rule 공격 Positive 3/3
-- 정상 `terra-user`·다른 Bucket·Prefix·Principal·실패 응답 Alert 0
+- 정상 `terra-user`·다른 Bucket·다른 Prefix harmless Object·다른 Principal·wrong `If-Match`
+  실패 응답 Alert 0
 - 원본 CloudTrail `eventID`↔Wazuh Alert 일대일
 - Sanitizer allowlist와 Runtime Secret 경로 확정
+- GT-02·GT-03은 `scope=detection_only`에서 실행하며 `custom-shuffle-soc`
+  Integration은 비활성 상태다. GT-03 Runtime PASS 전 Shuffle Containment Write는 0이다.
+- `runtime_profile=minimal`과 `security_scenario_profile=capital-one-lab`에서
+  Terraform-managed secondary control Bucket·negative-control Role output을 확인한다.
+  출력이 없거나 모호하면 임의 Fixture를 사용하지 않고 fail closed한다.
 
 ---
 
@@ -55,7 +63,7 @@ Authenticated Webhook
 - wrong/missing Header: 신규 Execution 0
 - Request = Execution Argument = Result의 parsed JSON semantic equality
 
-### 최종 Workflow
+### 최종 Workflow Target (현재 B5 Stub/Placeholder; Runtime 미완료)
 
 ```text
 Authenticated Webhook
@@ -70,6 +78,11 @@ Authenticated Webhook
 
 Outgoing Branch는 명시적 조건만 사용하며 암묵적 `else`에 의존하지 않는다.
 
+위 구조는 GT05/GT06의 Target 계약이다. 현재 Gate B5에서 실제로 검증하는 것은
+외부 Side Effect가 없는 `repeat_back_to_me` Stub과 Validator·Dedupe Branch다.
+고정 DVWA Quarantine과 `validation/*` 제한은 별도 Containment Runtime에서
+구현·검증해야 하며, 이 Target 구조만으로 완료를 주장하지 않는다.
+
 ---
 
 ## 4. Validator 계약
@@ -77,6 +90,7 @@ Outgoing Branch는 명시적 조건만 사용하며 암묵적 `else`에 의존�
 필수 exact match:
 
 - `schema_version=2`
+- 정본 Schema: `observability/shuffle/sanitized-alert.schema.json`
 - `scenario_id=CAPITAL-ONE`
 - 승인 Account·Region
 - 최종 고신뢰 Rule ID·Level·Role
@@ -84,7 +98,7 @@ Outgoing Branch는 명시적 조건만 사용하며 암묵적 `else`에 의존�
 - `event_name=GetObject`
 - 승인 Principal Role
 - 승인 Bucket alias
-- `object_key`가 `validation/` Allowlist 안
+- 고정 승인 Object `object_key=validation/capital-one-demo.csv`
 - `result=success`
 - timestamp·SHA-256·CloudTrail eventID 형식
 
@@ -169,6 +183,9 @@ duplicate eventID action 0
 unexpected side effect 0
 secret exposure 0
 ```
+
+최종 경로의 Workflow는 `CAPITAL-ONE-SOC-CONTAINMENT-v2`다. 기존 v1은
+rollback-only로 보존하며 최종 경로에서 사용하지 않는다.
 
 합성 Payload 왕복, Rule `100103` OBSERVE_ONLY, Source·Workflow 존재는 이 완료 판정을
 대신하지 않는다.

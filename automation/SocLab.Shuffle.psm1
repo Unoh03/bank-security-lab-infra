@@ -7,6 +7,45 @@ $script:UuidPattern = '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{
 $script:TakeIdPattern = '^capital-one-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}$'
 $script:ShuffleWorkflowName = 'CAPITAL-ONE-SOC-CONTAINMENT-v1'
 $script:ShuffleCategory = 'soc-v1'
+$script:ShuffleV2WorkflowName = 'CAPITAL-ONE-SOC-CONTAINMENT-v2'
+$script:ShuffleV2Category = 'soc-v2'
+$script:ShuffleV2RequiredActionLabels = @(
+    'validate_payload',
+    'claim_event_dedupe',
+    'classify_dedupe_claim',
+    'write_duplicate_suppressed',
+    'write_observe_only',
+    'write_rejected_schema',
+    'write_rejected_allowlist',
+    'write_safety_gate_blocked',
+    'repeat_back_to_me'
+)
+# Gate B5 uses the fixed Shuffle Tools/Datastore claim shape and the existing
+# v1 repeat_back_to_me writer/stub shape.  This is intentionally a narrow
+# mapping, not a license to accept arbitrary Apps or Action names from a Cloud
+# read-back.
+$script:ShuffleV2SafeActionMapping = [ordered]@{
+    'claim_event_dedupe'       = [ordered]@{
+        app_name='Shuffle Tools';app_version='1.2.0';name='set_datastore_value'
+        parameters=@(
+            [ordered]@{name='category';value='soc-v2'},
+            [ordered]@{name='key';value='$validate_payload.dedupe_key'},
+            [ordered]@{name='value';value='$validate_payload.body_sha256'}
+        )
+    }
+    'classify_dedupe_claim' = [ordered]@{
+        app_name='AWS Topology SOC Validator';app_version='1.0.0';name='classify_dedupe_claim'
+        parameters=@(
+            [ordered]@{name='claim_result';value='$claim_event_dedupe'},
+            [ordered]@{name='expected_key';value='$validate_payload.dedupe_key'}
+        )
+    }
+    'write_duplicate_suppressed' = [ordered]@{app_name='Shuffle Tools';app_version='1.2.0';name='repeat_back_to_me';parameters=@([ordered]@{name='call';value='write_duplicate_suppressed'})}
+    'write_observe_only'       = [ordered]@{app_name='Shuffle Tools';app_version='1.2.0';name='repeat_back_to_me';parameters=@([ordered]@{name='call';value='write_observe_only'})}
+    'write_rejected_schema'    = [ordered]@{app_name='Shuffle Tools';app_version='1.2.0';name='repeat_back_to_me';parameters=@([ordered]@{name='call';value='write_rejected_schema'})}
+    'write_rejected_allowlist' = [ordered]@{app_name='Shuffle Tools';app_version='1.2.0';name='repeat_back_to_me';parameters=@([ordered]@{name='call';value='write_rejected_allowlist'})}
+    'write_safety_gate_blocked' = [ordered]@{app_name='Shuffle Tools';app_version='1.2.0';name='repeat_back_to_me';parameters=@([ordered]@{name='call';value='write_safety_gate_blocked'})}
+}
 $script:ValidatorAppName = 'AWS Topology SOC Validator'
 $script:ValidatorAppVersion = '1.0.0'
 $script:DispatcherAppName = 'AWS Topology SOC GitHub Dispatcher'
@@ -60,6 +99,22 @@ function Resolve-ShuffleApiUri {
     return $resolved
 }
 
+function ConvertFrom-ShuffleApiJson {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    try {
+        $value = ConvertFrom-Json -InputObject $Text -Depth 100 -NoEnumerate
+    } catch {
+        throw 'Shuffle API returned a non-JSON response.'
+    }
+    if ($value -is [array] -or $value -is [Collections.IList]) {
+        Write-Output -NoEnumerate $value
+        return
+    }
+    return $value
+}
+
 function Invoke-ShuffleApiRequest {
     [CmdletBinding()]
     param(
@@ -69,7 +124,9 @@ function Invoke-ShuffleApiRequest {
         [string]$OrgId = '',
         [AllowNull()][object]$Body = $null,
         [uri]$BaseUri = 'https://shuffler.io/',
-        [ValidateRange(5,60)][int]$TimeoutSeconds = 20
+        [ValidateRange(5,60)][int]$TimeoutSeconds = 20,
+        [AllowNull()][Collections.IDictionary]$RequestHeaders = $null,
+        [switch]$IncludeResponseMetadata
     )
 
     if ([string]::IsNullOrWhiteSpace($ApiKey) -or $ApiKey -match '[\r\n]') {
@@ -95,6 +152,16 @@ function Invoke-ShuffleApiRequest {
         if ($OrgId) {
             [void]$request.Headers.TryAddWithoutValidation('Org-Id', $OrgId)
         }
+        if ($null -ne $RequestHeaders) {
+            $requestHeaderNames = @($RequestHeaders.Keys | ForEach-Object {[string]$_})
+            if ($requestHeaderNames.Count -ne 1 -or
+                $requestHeaderNames[0] -cne 'truncate' -or
+                $RequestHeaders[$requestHeaderNames[0]] -isnot [string] -or
+                [string]$RequestHeaders[$requestHeaderNames[0]] -cne 'false' -or
+                -not $request.Headers.TryAddWithoutValidation('truncate', 'false')) {
+                throw 'The Shuffle API request header contract is unsafe.'
+            }
+        }
         if ($null -ne $Body) {
             $json = $Body | ConvertTo-Json -Depth 30 -Compress
             $request.Content = [Net.Http.StringContent]::new(
@@ -116,13 +183,27 @@ function Invoke-ShuffleApiRequest {
             if ($text.Length -gt 8388608) {
                 throw 'Shuffle API response exceeded the fixed 8 MiB limit.'
             }
-            if ([string]::IsNullOrWhiteSpace($text)) {
-                return [pscustomobject]@{}
+            $responseBody = if ([string]::IsNullOrWhiteSpace($text)) {
+                [pscustomobject]@{}
+            } else {
+                ConvertFrom-ShuffleApiJson -Text $text
             }
-            try {
-                return $text | ConvertFrom-Json -Depth 100
-            } catch {
-                throw 'Shuffle API returned a non-JSON response.'
+            if (-not $IncludeResponseMetadata) {
+                if ($responseBody -is [array] -or $responseBody -is [Collections.IList]) {
+                    Write-Output -NoEnumerate $responseBody
+                    return
+                }
+                return $responseBody
+            }
+
+            $responseHeaders = [ordered]@{}
+            $truncatedValues = $null
+            if ($response.Headers.TryGetValues('X-SHUFFLE_TRUNCATED', [ref]$truncatedValues)) {
+                $responseHeaders['X-SHUFFLE_TRUNCATED'] = @($truncatedValues)
+            }
+            return [pscustomobject][ordered]@{
+                body=$responseBody
+                response_headers=[pscustomobject]$responseHeaders
             }
         } finally {
             $response.Dispose()
@@ -1059,6 +1140,356 @@ function Assert-ShuffleSocGateB5Workflow {
     return $Workflow
 }
 
+function Get-ShuffleSocV2TriggerHeader {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object]$Trigger)
+
+    $configured = [Collections.Generic.List[string]]::new()
+    foreach ($propertyName in @('auth','authentication')) {
+        $property = $Trigger.PSObject.Properties[$propertyName]
+        if ($null -ne $property -and
+            -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+            $configured.Add([string]$property.Value)
+        }
+    }
+    if ($null -ne $Trigger.PSObject.Properties['parameters']) {
+        foreach ($parameter in @($Trigger.parameters | Where-Object {
+            $null -ne $_ -and
+            [string]$_.name -match '(?i)^(auth|auth_headers|authentication)$'
+        })) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$parameter.value)) {
+                $configured.Add([string]$parameter.value)
+            }
+        }
+    }
+    if ($configured.Count -ne 1) {
+        throw 'The v2 Shuffle Webhook must configure exactly one authentication header.'
+    }
+    $match = [regex]::Match(
+        [string]$configured[0],
+        '^\s*(?<name>X-SOC-Webhook-Key)\s*(?::|=)\s*(?<value>\S+)\s*$'
+    )
+    if (-not $match.Success -or [string]$configured[0] -match '[\r\n]') {
+        throw 'The v2 Shuffle Webhook authentication header is malformed.'
+    }
+    return [pscustomobject]@{
+        Name  = [string]$match.Groups['name'].Value
+        Value = [string]$match.Groups['value'].Value
+    }
+}
+
+function Assert-ShuffleSocV2Workflow {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Workflow,
+        [Parameter(Mandatory)][string]$WorkflowId,
+        [Parameter(Mandatory)][string]$WebhookId,
+        [AllowNull()][string]$ExpectedHeaderValue = ''
+    )
+
+    Assert-ShuffleUuid -Value $WorkflowId -Label 'Shuffle v2 Workflow ID'
+    Assert-ShuffleUuid -Value $WebhookId -Label 'Shuffle v2 Webhook ID'
+    if ([string]$Workflow.id -cne $WorkflowId -or
+        [string]$Workflow.name -cne $script:ShuffleV2WorkflowName -or
+        [string]$Workflow.sharing -cne 'private' -or
+        $Workflow.is_valid -isnot [bool] -or $Workflow.is_valid -ne $true) {
+        throw 'The v2 Shuffle Workflow identity or validity does not match the frozen contract.'
+    }
+    if ($null -ne $Workflow.PSObject.Properties['workflow_variables'] -and
+        @($Workflow.workflow_variables).Count -ne 0) {
+        throw 'The v2 Shuffle Workflow contains an unapproved Workflow variable.'
+    }
+    $triggers = @($Workflow.triggers)
+    if ($triggers.Count -ne 1 -or [string]$triggers[0].id -cne $WebhookId) {
+        throw 'The v2 Shuffle Workflow must contain exactly the configured Webhook trigger.'
+    }
+    $trigger = $triggers[0]
+    $triggerType = if ($null -ne $trigger.PSObject.Properties['trigger_type']) {
+        [string]$trigger.trigger_type
+    } elseif ($null -ne $trigger.PSObject.Properties['type']) {
+        [string]$trigger.type
+    } else { '' }
+    if ($triggerType.ToLowerInvariant() -cne 'webhook') {
+        throw 'The v2 Shuffle trigger is not a Webhook.'
+    }
+    $triggerStatus = if ($null -ne $trigger.PSObject.Properties['status']) {
+        [string]$trigger.status
+    } else { '' }
+    if ($triggerStatus -and $triggerStatus.ToLowerInvariant() -notin @('running','active')) {
+        throw 'The v2 Shuffle Webhook trigger is not active.'
+    }
+    $header = Get-ShuffleSocV2TriggerHeader -Trigger $trigger
+    if ($ExpectedHeaderValue -and [string]$header.Value -cne $ExpectedHeaderValue) {
+        throw 'The v2 Shuffle Webhook header value does not match the protected secret.'
+    }
+
+    $actions = @($Workflow.actions)
+    $labels = @($actions | ForEach-Object { [string]$_.label })
+    if ($labels.Count -ne $script:ShuffleV2RequiredActionLabels.Count -or
+        @($labels | Sort-Object -Unique).Count -ne $labels.Count -or
+        (($labels | Sort-Object) -join ',') -cne
+            (($script:ShuffleV2RequiredActionLabels | Sort-Object) -join ',')) {
+        throw 'The v2 Shuffle Workflow Action labels are not the exact Gate B5 allowlist.'
+    }
+    foreach ($action in $actions) {
+        if ([string]::IsNullOrWhiteSpace([string]$action.id) -or
+            [string]$action.id -notmatch $script:UuidPattern -or
+            $action.is_valid -isnot [bool] -or $action.is_valid -ne $true) {
+            throw 'The v2 Shuffle Workflow contains an Action with an invalid identity.'
+        }
+        foreach ($propertyName in @(
+            'authentication_id','authentication','auth','authentication_ref','auth_id',
+            'app_authentication_id'
+        )) {
+            $property = $action.PSObject.Properties[$propertyName]
+            if ($null -ne $property -and
+                -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+                throw 'The v2 Gate B5 Action contains an Authentication reference.'
+            }
+        }
+    }
+    $validator = @($actions | Where-Object { [string]$_.label -ceq 'validate_payload' })
+    if ($validator.Count -ne 1 -or
+        [string]$validator[0].app_name -cne $script:ValidatorAppName -or
+        [string]$validator[0].app_version -cne $script:ValidatorAppVersion -or
+        [string]$validator[0].name -cne 'validate_sanitized_alert') {
+        throw 'The v2 Workflow does not use the fixed private SOC Validator App.'
+    }
+    $validatorParameters = @($validator[0].parameters)
+    $validatorInput = @($validatorParameters | Where-Object {
+        [string]$_.name -ceq 'input_data'
+    })
+    if ($validatorParameters.Count -ne 1 -or $validatorInput.Count -ne 1 -or
+        [string]$validatorInput[0].value -cne '$exec' -or
+        (@($validatorInput[0].PSObject.Properties.Name | Sort-Object) -join ',') -cne 'name,value') {
+        throw 'The v2 SOC Validator must receive $exec exactly once.'
+    }
+    $classifier = @($actions | Where-Object { [string]$_.label -ceq 'classify_dedupe_claim' })
+    if ($classifier.Count -ne 1 -or
+        [string]$classifier[0].app_name -cne $script:ValidatorAppName -or
+        [string]$classifier[0].app_version -cne $script:ValidatorAppVersion -or
+        [string]$classifier[0].name -cne 'classify_dedupe_claim') {
+        throw 'The v2 Workflow does not use the fixed private Dedupe Classifier App Action.'
+    }
+    $stub = @($actions | Where-Object { [string]$_.label -ceq 'repeat_back_to_me' })
+    if ($stub.Count -ne 1 -or [string]$stub[0].app_name -cne 'Shuffle Tools' -or
+        [string]$stub[0].name -cne 'repeat_back_to_me') {
+        throw 'The v2 Gate B5 Workflow must contain exactly one repeat_back_to_me Stub.'
+    }
+    $stubParameters = @($stub[0].parameters)
+    $marker = @($stubParameters | Where-Object {
+        [string]$_.name -ceq 'call' -and [string]$_.value -ceq 'GATE_B5_REPEAT_STUB'
+    })
+    if ($stubParameters.Count -ne 1 -or $marker.Count -ne 1 -or
+        (@($marker[0].PSObject.Properties.Name | Sort-Object) -join ',') -cne 'name,value') {
+        throw 'The v2 repeat_back_to_me Stub marker is absent or dynamic.'
+    }
+
+    foreach ($mapping in $script:ShuffleV2SafeActionMapping.GetEnumerator()) {
+        $label = [string]$mapping.Key
+        $expected = $mapping.Value
+        $candidate = @($actions | Where-Object { [string]$_.label -ceq $label })
+        $parameters = if ($candidate.Count -eq 1) { @($candidate[0].parameters) } else { @() }
+        $expectedParameters = @($expected.parameters)
+        if ($candidate.Count -ne 1 -or
+            [string]$candidate[0].app_name -cne [string]$expected['app_name'] -or
+            [string]$candidate[0].app_version -cne [string]$expected['app_version'] -or
+            [string]$candidate[0].name -cne [string]$expected['name'] -or
+            $parameters.Count -ne $expectedParameters.Count) {
+            throw "The v2 safe Action mapping is not exact for label: $label"
+        }
+        foreach ($expectedParameter in $expectedParameters) {
+            $actualParameter = @($parameters | Where-Object {
+                [string]$_.name -ceq [string]$expectedParameter['name']
+            })
+            if ($actualParameter.Count -ne 1 -or
+                [string]$actualParameter[0].value -cne [string]$expectedParameter['value'] -or
+                (@($actualParameter[0].PSObject.Properties.Name | Sort-Object) -join ',') -cne 'name,value') {
+                throw "The v2 safe Action mapping is not exact for label: $label"
+            }
+        }
+    }
+    if (@($actions | Where-Object {
+        [string]$_.name -match '(?i)^(execute_python|execute_bash)$'
+    }).Count -ne 0) {
+        throw 'The v2 Gate B5 Workflow contains a forbidden dynamic code Action.'
+    }
+
+    $idToLabel = @{$WebhookId='__WEBHOOK_TRIGGER__'}
+    foreach ($action in $actions) { $idToLabel[[string]$action.id] = [string]$action.label }
+    $branches = if ($null -ne $Workflow.PSObject.Properties['branches']) {
+        @($Workflow.branches)
+    } else { @() }
+    if ($branches.Count -eq 0) {
+        throw 'The v2 Gate B5 Workflow must contain at least one Branch.'
+    }
+    $branchIds = @()
+    $branchTuples = @()
+    foreach ($branch in $branches) {
+        $branchId = [string]$branch.id
+        $sourceId = [string]$branch.source_id
+        $destinationId = [string]$branch.destination_id
+        if ($branchId -notmatch $script:UuidPattern -or
+            $branchIds -contains $branchId -or
+            -not $idToLabel.ContainsKey($sourceId) -or
+            -not $idToLabel.ContainsKey($destinationId)) {
+            throw 'The v2 Workflow contains a duplicate or dangling Branch.'
+        }
+        $branchIds += $branchId
+        $conditions = if ($null -ne $branch.PSObject.Properties['conditions']) {
+            ConvertTo-ShuffleSocCanonicalValue -Value $branch.conditions |
+                ConvertTo-Json -Depth 40 -Compress
+        } else { '[]' }
+        $tuple = '{0}|{1}|{2}' -f $idToLabel[$sourceId],$idToLabel[$destinationId],$conditions
+        if ($branchTuples -contains $tuple) {
+            throw 'The v2 Workflow contains a duplicate Branch tuple.'
+        }
+        $branchTuples += $tuple
+    }
+    $expectedGraph = @(
+        [pscustomobject]@{source='__WEBHOOK_TRIGGER__';destination='validate_payload';conditions=@()},
+        [pscustomobject]@{source='validate_payload';destination='claim_event_dedupe';conditions=@([pscustomobject]@{source='$validate_payload.valid';destination='true'})},
+        [pscustomobject]@{source='validate_payload';destination='write_rejected_schema';conditions=@([pscustomobject]@{source='$validate_payload.rejection';destination='REJECTED_SCHEMA'})},
+        [pscustomobject]@{source='validate_payload';destination='write_rejected_allowlist';conditions=@([pscustomobject]@{source='$validate_payload.rejection';destination='REJECTED_ALLOWLIST'})},
+        [pscustomobject]@{source='claim_event_dedupe';destination='classify_dedupe_claim';conditions=@()},
+        [pscustomobject]@{source='classify_dedupe_claim';destination='write_safety_gate_blocked';conditions=@([pscustomobject]@{source='$classify_dedupe_claim.valid';destination='false'})},
+        [pscustomobject]@{source='classify_dedupe_claim';destination='repeat_back_to_me';conditions=@(
+            [pscustomobject]@{source='$classify_dedupe_claim.valid';destination='true'},
+            [pscustomobject]@{source='$classify_dedupe_claim.existed';destination='false'}
+        )},
+        [pscustomobject]@{source='classify_dedupe_claim';destination='write_duplicate_suppressed';conditions=@(
+            [pscustomobject]@{source='$classify_dedupe_claim.valid';destination='true'},
+            [pscustomobject]@{source='$classify_dedupe_claim.existed';destination='true'}
+        )}
+    )
+    if ($branches.Count -ne $expectedGraph.Count) {
+        throw 'The v2 Gate B5 Workflow contains an unexpected Branch count.'
+    }
+    foreach ($expectedEdge in $expectedGraph) {
+        $matches = @($branches | Where-Object {
+            $idToLabel[[string]$_.source_id] -ceq [string]$expectedEdge.source -and
+            $idToLabel[[string]$_.destination_id] -ceq [string]$expectedEdge.destination
+        })
+        if ($matches.Count -ne 1) {
+            throw "The v2 Gate B5 Branch graph is missing or duplicating: $($expectedEdge.source) -> $($expectedEdge.destination)"
+        }
+        $edge = $matches[0]
+        $conditions = if ($null -ne $edge.PSObject.Properties['conditions']) {
+            @($edge.conditions)
+        } else { @() }
+        $expectedConditions = @($expectedEdge.conditions)
+        if (@($conditions).Count -ne @($expectedConditions).Count) {
+            throw "The v2 Gate B5 Branch Condition count is not exact for: $($expectedEdge.source) -> $($expectedEdge.destination)"
+        }
+        for ($conditionIndex = 0; $conditionIndex -lt $expectedConditions.Count; $conditionIndex++) {
+            $condition = @($conditions)[$conditionIndex]
+            $expectedCondition = @($expectedConditions)[$conditionIndex]
+            if ((@($condition.PSObject.Properties.Name | Sort-Object) -join ',') -cne 'condition,destination,source') {
+                throw 'The v2 Branch Condition does not use the official nested source/condition/destination shape.'
+            }
+            $source = $condition.source
+            $operator = $condition.condition
+            $destination = $condition.destination
+            if ((@($source.PSObject.Properties.Name | Sort-Object) -join ',') -cne 'id,name,value,variant' -or
+                (@($operator.PSObject.Properties.Name | Sort-Object) -join ',') -cne 'id,name,value' -or
+                (@($destination.PSObject.Properties.Name | Sort-Object) -join ',') -cne 'id,name,value,variant' -or
+                [string]$source.name -cne 'source' -or [string]$source.variant -cne 'STATIC_VALUE' -or
+                [string]$source.value -cne [string]$expectedCondition.source -or
+                [string]$operator.name -cne 'condition' -or [string]$operator.value -cne 'equals' -or
+                [string]$destination.name -cne 'destination' -or [string]$destination.variant -cne 'STATIC_VALUE' -or
+                [string]$destination.value -cne [string]$expectedCondition.destination) {
+                throw "The v2 Gate B5 Branch Condition is not exact for: $($expectedEdge.source) -> $($expectedEdge.destination)"
+            }
+            Assert-ShuffleUuid -Value ([string]$source.id) -Label 'Shuffle Branch source parameter ID'
+            Assert-ShuffleUuid -Value ([string]$operator.id) -Label 'Shuffle Branch condition parameter ID'
+            Assert-ShuffleUuid -Value ([string]$destination.id) -Label 'Shuffle Branch destination parameter ID'
+        }
+    }
+    return $Workflow
+}
+
+function Get-ShuffleSocV2CoreContractSha256 {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Workflow,
+        [Parameter(Mandatory)][string]$WebhookId
+    )
+
+    [void](Assert-ShuffleSocV2Workflow -Workflow $Workflow -WorkflowId ([string]$Workflow.id) `
+        -WebhookId $WebhookId)
+    $idToLabel = @{$WebhookId='__WEBHOOK_TRIGGER__'}
+    $actions = [Collections.Generic.List[object]]::new()
+    foreach ($action in @($Workflow.actions)) {
+        $idToLabel[[string]$action.id] = [string]$action.label
+        $parameters = @($action.parameters | ForEach-Object {
+            [ordered]@{
+                name=[string]$_.name
+                value=ConvertTo-ShuffleSocCanonicalValue -Value $_.value
+                variant=if ($null -ne $_.PSObject.Properties['variant']) {[string]$_.variant} else {''}
+                configuration=if ($null -ne $_.PSObject.Properties['configuration']) {[bool]$_.configuration} else {$false}
+            }
+        } | Sort-Object name)
+        $actions.Add([ordered]@{
+            label=[string]$action.label
+            app_id=if ($null -ne $action.PSObject.Properties['app_id']) {[string]$action.app_id} else {''}
+            app_name=[string]$action.app_name
+            app_version=[string]$action.app_version
+            name=[string]$action.name
+            parameters=$parameters
+        })
+    }
+    $trigger = @($Workflow.triggers)[0]
+    $header = Get-ShuffleSocV2TriggerHeader -Trigger $trigger
+    $branches = @($Workflow.branches | ForEach-Object {
+        $conditions = if ($null -ne $_.PSObject.Properties['conditions']) {
+            ConvertTo-ShuffleSocCanonicalValue -Value $_.conditions
+        } else { @() }
+        [ordered]@{
+            source=$idToLabel[[string]$_.source_id]
+            destination=$idToLabel[[string]$_.destination_id]
+            conditions=$conditions
+        }
+    } | Sort-Object { $_ | ConvertTo-Json -Depth 50 -Compress })
+    $core = [ordered]@{
+        schema_version=2
+        workflow_name=[string]$Workflow.name
+        sharing=[string]$Workflow.sharing
+        trigger=[ordered]@{
+            id=$WebhookId
+            type='webhook'
+            header_name=[string]$header.Name
+            header_binding='configured'
+        }
+        actions=@($actions | Sort-Object label)
+        branches=$branches
+    }
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($core | ConvertTo-Json -Depth 100 -Compress))
+    try {
+        return [Convert]::ToHexString(
+            [Security.Cryptography.SHA256]::HashData($bytes)
+        ).ToLowerInvariant()
+    } finally { [Array]::Clear($bytes,0,$bytes.Length) }
+}
+
+function Get-ShuffleSocWorkflowV2 {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$WorkflowId,
+        [Parameter(Mandatory)][string]$WebhookId,
+        [Parameter(Mandatory)][string]$ApiKey,
+        [Parameter(Mandatory)][string]$OrgId,
+        [AllowNull()][string]$ExpectedHeaderValue = '',
+        [uri]$BaseUri = 'https://shuffler.io/'
+    )
+
+    Assert-ShuffleUuid -Value $WorkflowId -Label 'Shuffle v2 Workflow ID'
+    $workflow = Invoke-ShuffleApiRequest -Method GET `
+        -RelativePath "/api/v1/workflows/$WorkflowId" -ApiKey $ApiKey -OrgId $OrgId `
+        -BaseUri $BaseUri
+    return Assert-ShuffleSocV2Workflow -Workflow $workflow -WorkflowId $WorkflowId `
+        -WebhookId $WebhookId -ExpectedHeaderValue $ExpectedHeaderValue
+}
+
 function Get-ShuffleSocWorkflow {
     [CmdletBinding()]
     param(
@@ -1324,6 +1755,39 @@ function Remove-ShuffleSocCacheKey {
         throw 'Shuffle did not delete the bounded SOC cache key.'
     }
     return [pscustomobject]@{removed=$true;key=$Key;category=$script:ShuffleCategory}
+}
+
+function Remove-ShuffleSocV2CacheKey {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Key,
+        [Parameter(Mandatory)][string]$OrgId,
+        [Parameter(Mandatory)][string]$ApiKey,
+        [uri]$BaseUri = 'https://shuffler.io/'
+    )
+
+    Assert-ShuffleUuid -Value $OrgId -Label 'Shuffle Organization ID'
+    if ($Key.Length -gt 128 -or $Key -match '[\r\n]' -or
+        $Key -cnotmatch '^CAPITAL-ONE:[0-9]{12}:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
+        throw 'The Shuffle v2 event Dedupe cleanup key is outside the fixed namespace.'
+    }
+    $response = Invoke-ShuffleApiRequest -Method POST `
+        -RelativePath "/api/v1/orgs/$OrgId/delete_cache" -ApiKey $ApiKey -OrgId $OrgId `
+        -BaseUri $BaseUri -Body ([ordered]@{
+            org_id=$OrgId
+            key=$Key
+            category=$script:ShuffleV2Category
+        })
+    if ([bool]$response.success -ne $true -or
+        [string]$response.key -cne $Key -or
+        [string]$response.category -cne $script:ShuffleV2Category) {
+        throw 'Shuffle did not delete the bounded v2 event Dedupe key.'
+    }
+    return [pscustomobject]@{
+        removed=$true
+        key=$Key
+        category=$script:ShuffleV2Category
+    }
 }
 
 function New-ShuffleSocAllowRecord {
@@ -1636,11 +2100,14 @@ Export-ModuleMember -Function @(
     'Assert-ShuffleSocProductionWorkflow',
     'Assert-ShuffleSocGateB5Evidence',
     'Get-ShuffleSocWorkflow',
+    'Get-ShuffleSocWorkflowV2',
+    'Assert-ShuffleSocV2Workflow',
     'Get-ShuffleSocObserveOnlyWorkflow',
     'Get-ShuffleSocWorkflowExecutions',
     'Get-ShuffleSocExecutionResult',
     'Get-ShuffleSocExecutionSummary',
     'Get-ShuffleSocCoreContractSha256',
+    'Get-ShuffleSocV2CoreContractSha256',
     'Assert-ShuffleSocAppUploadEvidence',
     'Get-ShuffleSocAppUploadEvidence',
     'Assert-ShuffleSocCloudProvenance',
@@ -1651,6 +2118,7 @@ Export-ModuleMember -Function @(
     'Register-ShuffleSocTake',
     'Remove-ShuffleSocTake',
     'Remove-ShuffleSocCacheKey',
+    'Remove-ShuffleSocV2CacheKey',
     'Get-ShuffleSocOutcomeKey',
     'Assert-ShuffleSocOutcomeRecord',
     'Get-ShuffleSocOutcome',

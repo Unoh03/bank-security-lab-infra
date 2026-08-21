@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Send only the approved Rule 100103 fields to Shuffle Cloud."""
+"""Send only the approved Rule 100104 S3 fields to Shuffle Cloud."""
 
 from __future__ import annotations
 
@@ -16,16 +16,24 @@ from urllib.parse import urlsplit
 
 EXPECTED_ACCOUNT_ID = "433048100798"
 EXPECTED_REGION = "ap-northeast-2"
-EXPECTED_RULE_ID = "100103"
-EXPECTED_RULE_LEVEL = 10
-EXPECTED_ROUTE = "/vulnerabilities/exec/"
-TAKE_ID_PATTERN = re.compile(
-    r"^capital-one-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}$"
-)
-SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+EXPECTED_RULE_ID = "100104"
+EXPECTED_RULE_LEVEL = 12
+EXPECTED_EVENT_SOURCE = "s3.amazonaws.com"
+EXPECTED_EVENT_NAME = "GetObject"
+EXPECTED_CLOUDTRAIL_SOURCE = "cloudtrail"
+EXPECTED_USER_IDENTITY_TYPE = "AssumedRole"
+EXPECTED_ROLE_NAME = "aws-topology-primary-karpenter-node"
+EXPECTED_BUCKET_NAME = "aws-topology-primary-bd56288914d9d31c4d07225deb"
+EXPECTED_OBJECT_KEY = "validation/capital-one-demo.csv"
+EXPECTED_BUCKET_ALIAS = "primary-application-data"
+EXPECTED_HTTP_STATUS = "200"
+ROLE_METADATA = "high_confidence_s3_access"
+MAX_PRINCIPAL_ID_BYTES = 512
+MAX_FULL_LOG_BYTES = 262144
 ALERT_ID_PATTERN = re.compile(r"^[0-9]+\.[0-9]+$")
 EVENT_ID_PATTERN = re.compile(
-    rf"^cwl:{EXPECTED_ACCOUNT_ID}:[\x21-\x7e]{{20,480}}$"
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    re.IGNORECASE,
 )
 HEADER_KEY_PATTERN = re.compile(r"^[A-Za-z0-9.*+?-]{24,128}$")
 WEBHOOK_ID_PATTERN = r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
@@ -76,64 +84,96 @@ def canonical_json(value: dict[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
-def is_canonical_true(value: Any) -> bool:
-    """Accept JSON true and Wazuh's exact decoded string representation only."""
-    return value is True or (isinstance(value, str) and value == "true")
+def bounded_text(value: Any, label: str, max_bytes: int) -> tuple[str, bytes]:
+    if not isinstance(value, str) or not value:
+        raise ContractError(f"{label} must be a non-empty string")
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ContractError(f"{label} is not valid UTF-8") from error
+    if len(encoded) > max_bytes:
+        raise ContractError(f"{label} exceeds the bounded size")
+    return value, encoded
 
 
 def build_sanitized_alert(alert: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     rule = require_object(alert.get("rule"), "rule")
     data = require_object(alert.get("data"), "data")
-    payload = require_object(data.get("payload"), "data.payload")
-    context = require_object(payload.get("context"), "data.payload.context")
+    aws = require_object(data.get("aws"), "data.aws")
+    request_parameters = require_object(
+        aws.get("requestParameters"), "data.aws.requestParameters"
+    )
+    user_identity = require_object(
+        aws.get("userIdentity"), "data.aws.userIdentity"
+    )
+    session_context = require_object(
+        user_identity.get("sessionContext"),
+        "data.aws.userIdentity.sessionContext",
+    )
+    session_issuer = require_object(
+        session_context.get("sessionIssuer"),
+        "data.aws.userIdentity.sessionContext.sessionIssuer",
+    )
+    additional_event_data = require_object(
+        aws.get("additionalEventData"), "data.aws.additionalEventData"
+    )
 
     if str(rule.get("id")) != EXPECTED_RULE_ID:
         raise ContractError("rule.id is not allowlisted")
     if rule.get("level") != EXPECTED_RULE_LEVEL:
         raise ContractError("rule.level is not allowlisted")
-    if data.get("schema_version") != "1" and data.get("schema_version") != 1:
-        raise ContractError("schema_version is unsupported")
-    if data.get("source") != "dvwa" or data.get("transport") != "push":
-        raise ContractError("source or transport is not allowlisted")
-    if data.get("aws_account_id") != EXPECTED_ACCOUNT_ID:
-        raise ContractError("AWS account is not allowlisted")
-    if data.get("aws_region") != EXPECTED_REGION:
-        raise ContractError("AWS region is not allowlisted")
-    if not is_canonical_true(payload.get("normalized")):
-        raise ContractError("payload is not normalized")
-    if payload.get("event_type") != "command.execution":
-        raise ContractError("event_type is not allowlisted")
-    if payload.get("result") != "succeeded":
-        raise ContractError("result is not allowlisted")
-    if payload.get("route") != EXPECTED_ROUTE:
-        raise ContractError("route is not allowlisted")
-    if context.get("action") != "shell_command":
-        raise ContractError("context.action is not allowlisted")
-    if context.get("resource") != "ec2_imds":
-        raise ContractError("context.resource is not allowlisted")
-    if context.get("security_level") != "low":
-        raise ContractError("context.security_level is not allowlisted")
+    if aws.get("source") != EXPECTED_CLOUDTRAIL_SOURCE:
+        raise ContractError("data.aws.source is not cloudtrail")
+    if aws.get("eventSource") != EXPECTED_EVENT_SOURCE:
+        raise ContractError("aws.eventSource is not allowlisted")
+    if aws.get("eventName") != EXPECTED_EVENT_NAME:
+        raise ContractError("aws.eventName is not allowlisted")
+    if aws.get("recipientAccountId") != EXPECTED_ACCOUNT_ID:
+        raise ContractError("aws.recipientAccountId is not allowlisted")
+    if aws.get("awsRegion") != EXPECTED_REGION:
+        raise ContractError("aws.awsRegion is not allowlisted")
+    if request_parameters.get("bucketName") != EXPECTED_BUCKET_NAME:
+        raise ContractError("aws.requestParameters.bucketName is not allowlisted")
+    if request_parameters.get("key") != EXPECTED_OBJECT_KEY:
+        raise ContractError("aws.requestParameters.key is not allowlisted")
+    if session_issuer.get("userName") != EXPECTED_ROLE_NAME:
+        raise ContractError("approved principal role is not allowlisted")
+    if user_identity.get("type") != EXPECTED_USER_IDENTITY_TYPE:
+        raise ContractError("data.aws.userIdentity.type is not AssumedRole")
+    http_status = additional_event_data.get("httpStatusCode")
+    if not (
+        (type(http_status) is int and http_status == 200)
+        or (type(http_status) is str and http_status == EXPECTED_HTTP_STATUS)
+    ):
+        raise ContractError("aws.additionalEventData.httpStatusCode is not 200")
+    if aws.get("errorCode") not in (None, ""):
+        raise ContractError("aws.errorCode must be absent or empty")
 
-    take_id = payload.get("take_id")
-    if not isinstance(take_id, str) or not TAKE_ID_PATTERN.fullmatch(take_id):
-        raise ContractError("take_id is missing or invalid")
-    event_id = data.get("event_id")
+    event_id = aws.get("eventID")
     if not isinstance(event_id, str) or not EVENT_ID_PATTERN.fullmatch(event_id):
-        raise ContractError("event_id is invalid")
+        raise ContractError("aws.eventID is not a UUID")
+    event_id = event_id.lower()
     alert_id = alert.get("id")
     if not isinstance(alert_id, str) or not ALERT_ID_PATTERN.fullmatch(alert_id):
         raise ContractError("Wazuh alert id is invalid")
-    raw_sha256 = data.get("raw_message_sha256")
-    if not isinstance(raw_sha256, str) or not SHA256_PATTERN.fullmatch(raw_sha256):
-        raise ContractError("raw message SHA-256 is invalid")
-    event_time = parse_utc_timestamp(data.get("event_time"), "event_time")
+    event_time = parse_utc_timestamp(aws.get("eventTime"), "aws.eventTime")
+    _, full_log_bytes = bounded_text(
+        alert.get("full_log"), "alert.full_log", MAX_FULL_LOG_BYTES
+    )
+    _, principal_id_bytes = bounded_text(
+        user_identity.get("principalId"),
+        "data.aws.userIdentity.principalId",
+        MAX_PRINCIPAL_ID_BYTES,
+    )
+    raw_sha256 = hashlib.sha256(full_log_bytes).hexdigest()
+    principal_session_sha256 = hashlib.sha256(principal_id_bytes).hexdigest()
 
     sent_at = now or datetime.now(timezone.utc)
     if sent_at.tzinfo is None or sent_at.utcoffset() is None:
         raise ContractError("sent_at source must be timezone-aware")
 
     sanitized: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "source_system": "wazuh",
         "sent_at_utc": sent_at.astimezone(timezone.utc)
         .isoformat(timespec="milliseconds")
@@ -145,14 +185,19 @@ def build_sanitized_alert(alert: dict[str, Any], now: datetime | None = None) ->
         "rule": {
             "id": EXPECTED_RULE_ID,
             "level": EXPECTED_RULE_LEVEL,
+            "role": ROLE_METADATA,
         },
         "incident": {
-            "take_id": take_id,
-            "event_id": event_id,
+            "cloudtrail_event_id": event_id,
             "wazuh_alert_id": alert_id,
             "event_time_utc": event_time,
-            "result": "succeeded",
-            "route": EXPECTED_ROUTE,
+            "event_source": EXPECTED_EVENT_SOURCE,
+            "event_name": EXPECTED_EVENT_NAME,
+            "principal_role_name": EXPECTED_ROLE_NAME,
+            "principal_session_id_sha256": principal_session_sha256,
+            "bucket_alias": EXPECTED_BUCKET_ALIAS,
+            "object_key": EXPECTED_OBJECT_KEY,
+            "result": "success",
         },
         "integrity": {
             "raw_message_sha256": raw_sha256,
@@ -246,7 +291,7 @@ def main() -> int:
         return 1
 
     print(
-        "custom-shuffle-soc: sanitized Rule 100103 alert delivered",
+        "custom-shuffle-soc: sanitized Rule 100104 alert delivered",
         file=sys.stderr,
     )
     return 0

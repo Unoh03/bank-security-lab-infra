@@ -151,6 +151,11 @@ output "wazuh_log_reader_role_arn" {
   value       = try(aws_iam_role.wazuh_log_reader[0].arn, null)
 }
 
+output "wazuh_reader_trusted_principal_arn" {
+  description = "Explicit same-account principal allowed to assume narrowly scoped local integration roles."
+  value       = local.wazuh_reader_trusted_principal_arn
+}
+
 output "wazuh_push_primary_queue_url" {
   description = "Primary-region SQS URL consumed by the local Wazuh shadow bridge. Null while Push is disabled."
   value       = try(aws_sqs_queue.wazuh_push_primary[0].id, null)

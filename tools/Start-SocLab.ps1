@@ -23,10 +23,11 @@ $ErrorActionPreference = 'Stop'
 $Scope = $Scope.ToLowerInvariant()
 $ResponseMode = $ResponseMode.ToLowerInvariant()
 
-# The current Active TAKE contract emits Rule 100103, which is OBSERVE_ONLY
-# until the final high-confidence S3 Rule has been validated and registered.
+# The Active TAKE is a legacy v1 control for the Rule 100103 early-warning
+# path only. Current high-confidence S3 Alerts use Rule 100104/schema v2 and
+# never receive this TAKE ID in their sanitized payload.
 if ($ResponseMode -ceq 'contain') {
-    throw 'Rule 100103 is OBSERVE_ONLY only; the final high-confidence S3 Rule is not validated/registered yet.'
+    throw 'The legacy Rule 100103 Active TAKE cannot authorize v2/100104 containment; fixed GT05/GT06 containment is not implemented.'
 }
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -60,7 +61,8 @@ Write-Host "Response mode: $ResponseMode"
 if ($Scope -ceq 'full') {
     if ($ResponseMode -ceq 'observe_only') {
         Write-Host 'Read-only preflight: Daily, DVWA, Shuffle, Foundation.'
-        Write-Host 'Runtime actions: local Wazuh/Bridge start, harmless Rule 100102 probe, local TAKE/session only.'
+        Write-Host 'Runtime actions: local Wazuh/Bridge start, harmless Rule 100102 probe, legacy v1 Rule 100103 TAKE/session only.'
+        Write-Host 'Current v2/100104 sanitized Alerts do not contain TAKE_ID; the legacy TAKE is not a containment authorization.'
         Write-Host 'Skipped in OBSERVE_ONLY: GitHub, Argo CD, Shuffle Datastore TAKE registration.'
     } else {
         Write-Host 'Read-only preflight: Daily, DVWA, Shuffle, GitHub, Argo CD, Foundation.'
@@ -1761,6 +1763,9 @@ try {
     $takeId = New-SocTakeId
     $takeRecord = New-SocTakeRecord -TakeId $takeId `
         -ResponseMode $ResponseMode -LifetimeMinutes $TakeLifetimeMinutes
+    if ($ResponseMode -ceq 'observe_only') {
+        [void](Assert-SocLegacyObserveOnlyTake -Record $takeRecord)
+    }
     [void](Write-SocTakeRecord -Record $takeRecord -RuntimeRoot $sessionPath)
     if ($Scope -ceq 'full' -and $ResponseMode -ceq 'contain') {
         $shuffleAllow = Register-ShuffleSocTake `

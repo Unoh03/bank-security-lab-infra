@@ -1,8 +1,8 @@
 <ossec_config>
   <integration>
     <name>custom-shuffle-soc</name>
-    <level>10</level>
-    <rule_id>100103</rule_id>
+    <level>12</level>
+    <rule_id>100104</rule_id>
     <alert_format>json</alert_format>
     <timeout>10</timeout>
     <retries>1</retries>

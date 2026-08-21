@@ -7,7 +7,30 @@ $ErrorActionPreference = 'Stop'
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Import-Module (Join-Path $root 'automation\SocLab.Runtime.psm1') -Force
-Import-Module (Join-Path $root 'automation\SocLab.Shuffle.psm1') -Force
+$shuffleModulePath = Join-Path $root 'automation\SocLab.Shuffle.psm1'
+Import-Module $shuffleModulePath -Force
+
+$jsonShapeSummary = & (Get-Module SocLab.Shuffle) {
+    $empty = ConvertFrom-ShuffleApiJson -Text '[]'
+    $single = ConvertFrom-ShuffleApiJson -Text '[{"id":"one"}]'
+    $many = ConvertFrom-ShuffleApiJson -Text '[{"id":"one"},{"id":"two"}]'
+    $object = ConvertFrom-ShuffleApiJson -Text '{"id":"one"}'
+    [pscustomobject]@{
+        empty_is_array=($empty -is [array]);empty_count=@($empty).Count
+        single_is_array=($single -is [array]);single_count=@($single).Count
+        many_is_array=($many -is [array]);many_count=@($many).Count
+        object_is_array=($object -is [array]);object_type=$object.GetType().FullName
+        object_id=[string]$object.id
+    }
+}
+if (-not [bool]$jsonShapeSummary.empty_is_array -or [int]$jsonShapeSummary.empty_count -ne 0 -or
+    -not [bool]$jsonShapeSummary.single_is_array -or [int]$jsonShapeSummary.single_count -ne 1 -or
+    -not [bool]$jsonShapeSummary.many_is_array -or [int]$jsonShapeSummary.many_count -ne 2 -or
+    [bool]$jsonShapeSummary.object_is_array -or
+    [string]$jsonShapeSummary.object_type -cne 'System.Management.Automation.PSCustomObject' -or
+    [string]$jsonShapeSummary.object_id -cne 'one') {
+    throw 'The Shuffle API JSON decoder did not preserve the root response shape.'
+}
 
 $workflowId = '11111111-1111-4111-8111-111111111111'
 $webhookId = '22222222-2222-4222-8222-222222222222'
@@ -484,9 +507,10 @@ foreach ($forbidden in @('token','credential','cookie','password','webhook','aws
     }
 }
 
-$shuffleModuleText = Get-Content -LiteralPath (
-    Join-Path $root 'automation\SocLab.Shuffle.psm1'
-) -Raw
+$shuffleModuleText = Get-Content -LiteralPath $shuffleModulePath -Raw
+if ($shuffleModuleText -notmatch 'Write-Output\s+-NoEnumerate\s+\$responseBody') {
+    throw 'The Shuffle API non-metadata return can collapse a root array.'
+}
 if ($shuffleModuleText -notmatch 'function\s+Remove-ShuffleSocTake[\s\S]*?delete_cache[\s\S]*?category\s*=\s*\$script:ShuffleCategory') {
     throw 'The Shuffle module lacks a category-bound TAKE allowlist removal path.'
 }

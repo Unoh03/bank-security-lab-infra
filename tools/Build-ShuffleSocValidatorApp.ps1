@@ -9,17 +9,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$appRoot = Join-Path $repositoryRoot `
-    'observability\shuffle\apps\aws-topology-soc-validator\1.0.0'
-$requiredFiles = @(
-    'api.yaml','Dockerfile','requirements.txt','src\app.py','src\validator.py'
-)
-foreach ($relativePath in $requiredFiles) {
-    if (-not (Test-Path -LiteralPath (Join-Path $appRoot $relativePath) -PathType Leaf)) {
-        throw "The Shuffle Validator package source is incomplete: $relativePath"
-    }
+$bundleBuilder = Join-Path $PSScriptRoot 'Build-ShuffleSocAppBundle.ps1'
+if (-not (Test-Path -LiteralPath $bundleBuilder -PathType Leaf)) {
+    throw 'The canonical Shuffle SOC App bundle builder is missing.'
 }
-
 if (-not $OutputDirectory) {
     if (-not $env:USERPROFILE) {
         throw 'USERPROFILE is unavailable; specify -OutputDirectory explicitly.'
@@ -28,50 +21,39 @@ if (-not $OutputDirectory) {
         'Documents\aws-topology-evidence\shuffle-packages'
 }
 $resolvedOutput = [IO.Path]::GetFullPath($OutputDirectory)
-$stamp = [datetimeoffset]::UtcNow.ToString('yyyyMMddTHHmmssZ')
-$packagePath = Join-Path $resolvedOutput `
-    "aws-topology-soc-validator-1.0.0-$stamp.zip"
 
 Write-Host 'Shuffle SOC Validator package preview'
 Write-Host 'App: AWS Topology SOC Validator 1.0.0'
-Write-Host "Source: $appRoot"
-Write-Host "Output: $packagePath"
-Write-Host 'The package contains fixed validation code only; no credential or Workflow ID is included.'
+Write-Host "Output directory: $resolvedOutput"
+Write-Host 'Packaging delegates to the canonical four-file SOC App bundle builder.'
 if ($ConfirmBuild -cne 'BUILD SHUFFLE VALIDATOR') {
     throw "Preview only. Re-run with -ConfirmBuild 'BUILD SHUFFLE VALIDATOR'."
 }
 
-& python -B -m unittest tests.test_soc_shuffle_validator_app
+$bundleOutput = & $bundleBuilder `
+    -OutputDirectory $resolvedOutput `
+    -ConfirmBuild 'BUILD SHUFFLE SOC APPS' 6>&1 2>&1
 if ($LASTEXITCODE -ne 0) {
-    throw 'The Shuffle SOC Validator unit tests failed; no package was built.'
+    throw "The canonical Shuffle SOC App bundle builder failed: $($bundleOutput -join ' ')"
+}
+$manifestLine = @($bundleOutput | ForEach-Object { [string]$_ } | Where-Object {
+    $_.StartsWith('BUNDLE_MANIFEST=', [StringComparison]::Ordinal)
+}) | Select-Object -Last 1
+if (-not $manifestLine) {
+    throw 'The canonical Shuffle SOC App bundle builder did not report its manifest.'
+}
+$manifestPath = $manifestLine.Substring('BUNDLE_MANIFEST='.Length)
+$manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -Depth 20
+$apps = @($manifest.apps)
+if ($apps.Count -ne 1 -or
+    [string]$apps[0].name -cne 'AWS Topology SOC Validator' -or
+    [bool]$apps[0].current_v2 -ne $true -or
+    (@($apps[0].entries | Sort-Object) -join ',') -cne
+        ((@('Dockerfile','api.yaml','requirements.txt','src/app.py') | Sort-Object) -join ',')) {
+    throw 'The canonical builder did not produce exactly one four-file current Validator package.'
 }
 
-$staging = Join-Path ([IO.Path]::GetTempPath()) `
-    ('shuffle-soc-validator-' + [guid]::NewGuid().ToString('N'))
-try {
-    New-Item -ItemType Directory -Path (Join-Path $staging 'src') -Force | Out-Null
-    foreach ($relativePath in $requiredFiles) {
-        $destination = Join-Path $staging $relativePath
-        $parent = Split-Path -Parent $destination
-        New-Item -ItemType Directory -Path $parent -Force | Out-Null
-        Copy-Item -LiteralPath (Join-Path $appRoot $relativePath) `
-            -Destination $destination
-    }
-    New-Item -ItemType Directory -Path $resolvedOutput -Force | Out-Null
-    Compress-Archive -LiteralPath @(
-        (Join-Path $staging 'api.yaml'),
-        (Join-Path $staging 'Dockerfile'),
-        (Join-Path $staging 'requirements.txt'),
-        (Join-Path $staging 'src')
-    ) -DestinationPath $packagePath -CompressionLevel Optimal
-} finally {
-    if (Test-Path -LiteralPath $staging) {
-        Remove-Item -LiteralPath $staging -Recurse -Force
-    }
-}
-
-$hash = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
 Write-Host 'SHUFFLE_VALIDATOR_PACKAGE_READY=yes'
-Write-Host "PACKAGE_PATH=$packagePath"
-Write-Host "PACKAGE_SHA256=$hash"
-
+Write-Host "PACKAGE_PATH=$([string]$apps[0].package_path)"
+Write-Host "PACKAGE_SHA256=$([string]$apps[0].package_sha256)"
+Write-Host "BUNDLE_MANIFEST=$manifestPath"

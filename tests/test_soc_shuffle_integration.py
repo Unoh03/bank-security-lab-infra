@@ -23,54 +23,73 @@ assert SPEC is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 LOADER.exec_module(MODULE)
 
+VALIDATOR_PATH = (
+    ROOT
+    / "observability"
+    / "shuffle"
+    / "apps"
+    / "aws-topology-soc-validator"
+    / "1.0.0"
+    / "src"
+    / "validator.py"
+)
+VALIDATOR_SPEC = importlib.util.spec_from_file_location(
+    "soc_validator_from_sanitizer_test", VALIDATOR_PATH
+)
+assert VALIDATOR_SPEC is not None and VALIDATOR_SPEC.loader is not None
+VALIDATOR = importlib.util.module_from_spec(VALIDATOR_SPEC)
+VALIDATOR_SPEC.loader.exec_module(VALIDATOR)
+
+
+FULL_LOG = '{"eventName":"GetObject","sensitive":"must-not-be-forwarded"}'
+EVENT_ID = "123e4567-e89b-12d3-a456-426614174000"
+PRINCIPAL_ID = "AROAEXAMPLE:capital-one-demo-session"
+
 
 def valid_alert() -> dict[str, object]:
     return {
         "id": "1787000000.123456",
-        "timestamp": "2026-08-18T01:02:03.000+0000",
+        "timestamp": "2026-08-20T01:02:03.000+0000",
         "rule": {
-            "id": "100103",
-            "level": 10,
-            "description": "not forwarded",
+            "id": "100104",
+            "level": 12,
+            "description": "high confidence S3 access",
         },
         "data": {
-            "schema_version": 1,
-            "event_id": (
-                "cwl:433048100798:/aws/eks/aws-topology-primary/"
-                "application:stream-name:0123456789abcdef"
-            ),
-            "source": "dvwa",
-            "aws_account_id": "433048100798",
-            "aws_region": "ap-northeast-2",
-            "event_time": "2026-08-18T01:02:03.000Z",
-            "transport": "push",
-            "raw_message_sha256": "a" * 64,
-            "payload": {
-                "normalized": True,
-                "take_id": "capital-one-20260818T010000Z-deadbeef",
-                "event_type": "command.execution",
-                "result": "succeeded",
-                "route": "/vulnerabilities/exec/",
-                "source_ip": "must-not-be-forwarded",
-                "user_id": "must-not-be-forwarded",
-                "request_id": "must-not-be-forwarded",
-                "context": {
-                    "action": "shell_command",
-                    "resource": "ec2_imds",
-                    "security_level": "low",
-                    "status": "output_returned",
+            "aws": {
+                "source": "cloudtrail",
+                "eventSource": "s3.amazonaws.com",
+                "eventName": "GetObject",
+                "recipientAccountId": "433048100798",
+                "awsRegion": "ap-northeast-2",
+                "eventID": EVENT_ID,
+                "eventTime": "2026-08-20T01:02:03.000Z",
+                "errorCode": "",
+                "requestParameters": {
+                    "bucketName": "aws-topology-primary-bd56288914d9d31c4d07225deb",
+                    "key": "validation/capital-one-demo.csv",
                 },
-            },
+                "userIdentity": {
+                    "type": "AssumedRole",
+                    "principalId": PRINCIPAL_ID,
+                    "sessionContext": {
+                        "sessionIssuer": {
+                            "userName": "aws-topology-primary-karpenter-node",
+                        }
+                    },
+                },
+                "additionalEventData": {"httpStatusCode": "200"},
+            }
         },
-        "full_log": "must-not-be-forwarded",
+        "full_log": FULL_LOG,
     }
 
 
 class CustomShuffleSocTest(unittest.TestCase):
-    def test_builds_only_the_frozen_sanitized_schema(self) -> None:
+    def test_builds_exact_v2_blueprint_without_raw_fields_or_take_id(self) -> None:
         result = MODULE.build_sanitized_alert(
             valid_alert(),
-            now=datetime(2026, 8, 18, 1, 3, 0, tzinfo=timezone.utc),
+            now=datetime(2026, 8, 20, 1, 3, 0, tzinfo=timezone.utc),
         )
 
         self.assertEqual(
@@ -88,28 +107,47 @@ class CustomShuffleSocTest(unittest.TestCase):
                 "integrity",
             },
         )
-        self.assertEqual(result["rule"], {"id": "100103", "level": 10})
+        self.assertEqual(result["schema_version"], 2)
+        self.assertEqual(result["rule"], {
+            "id": "100104",
+            "level": 12,
+            "role": "high_confidence_s3_access",
+        })
         self.assertEqual(
-            result["incident"]["take_id"],
-            "capital-one-20260818T010000Z-deadbeef",
+            result["incident"],
+            {
+                "cloudtrail_event_id": EVENT_ID,
+                "wazuh_alert_id": "1787000000.123456",
+                "event_time_utc": "2026-08-20T01:02:03.000Z",
+                "event_source": "s3.amazonaws.com",
+                "event_name": "GetObject",
+                "principal_role_name": "aws-topology-primary-karpenter-node",
+                "principal_session_id_sha256": hashlib.sha256(
+                    PRINCIPAL_ID.encode("utf-8")
+                ).hexdigest(),
+                "bucket_alias": "primary-application-data",
+                "object_key": "validation/capital-one-demo.csv",
+                "result": "success",
+            },
+        )
+        self.assertEqual(
+            result["integrity"]["raw_message_sha256"],
+            hashlib.sha256(FULL_LOG.encode("utf-8")).hexdigest(),
         )
         encoded = json.dumps(result, sort_keys=True)
         for forbidden in (
             "full_log",
-            "source_ip",
-            "user_id",
-            "request_id",
-            "command",
-            "cookie",
-            "token",
+            "principalId",
+            "session-token",
             "must-not-be-forwarded",
+            "take_id",
         ):
-            self.assertNotIn(forbidden, encoded.lower())
+            self.assertNotIn(forbidden.lower(), encoded.lower())
 
     def test_body_hash_covers_the_schema_before_the_hash_field(self) -> None:
         result = MODULE.build_sanitized_alert(
             valid_alert(),
-            now=datetime(2026, 8, 18, 1, 3, 0, tzinfo=timezone.utc),
+            now=datetime(2026, 8, 20, 1, 3, 0, tzinfo=timezone.utc),
         )
         body_hash = result["integrity"].pop("body_sha256")
 
@@ -118,50 +156,79 @@ class CustomShuffleSocTest(unittest.TestCase):
             hashlib.sha256(MODULE.canonical_json(result)).hexdigest(),
         )
 
-    def test_accepts_wazuh_decoded_canonical_true_string(self) -> None:
-        alert = valid_alert()
-        alert["data"]["payload"]["normalized"] = "true"
-
+    def test_actual_sanitizer_output_is_accepted_by_validator(self) -> None:
         result = MODULE.build_sanitized_alert(
-            alert,
-            now=datetime(2026, 8, 18, 1, 3, 0, tzinfo=timezone.utc),
+            valid_alert(),
+            now=datetime(2026, 8, 20, 1, 3, 0, tzinfo=timezone.utc),
         )
-
+        validation = VALIDATOR.validate_sanitized_alert(result)
+        self.assertTrue(validation["valid"])
+        self.assertEqual(validation["cloudtrail_event_id"], EVENT_ID)
         self.assertEqual(
-            result["incident"]["take_id"],
-            "capital-one-20260818T010000Z-deadbeef",
+            validation["dedupe_key"], f"CAPITAL-ONE:433048100798:{EVENT_ID}"
         )
 
-    def test_rejects_noncanonical_normalized_values(self) -> None:
-        for normalized in (False, 1, "True", "1", "yes", None):
-            with self.subTest(normalized=normalized):
+    def test_canonicalizes_uppercase_cloudtrail_event_id(self) -> None:
+        alert = valid_alert()
+        alert["data"]["aws"]["eventID"] = EVENT_ID.upper()
+        result = MODULE.build_sanitized_alert(alert)
+        self.assertEqual(result["incident"]["cloudtrail_event_id"], EVENT_ID)
+
+    def test_accepts_only_integer_200_or_exact_string_200_status(self) -> None:
+        for value in (200, "200"):
+            with self.subTest(value=value):
                 alert = valid_alert()
-                alert["data"]["payload"]["normalized"] = normalized
-                with self.assertRaisesRegex(MODULE.ContractError, "normalized"):
+                alert["data"]["aws"]["additionalEventData"]["httpStatusCode"] = value
+                MODULE.build_sanitized_alert(alert)
+        for value in (True, False, 200.0, "0200", "200.0", "201", None):
+            with self.subTest(value=value):
+                alert = valid_alert()
+                alert["data"]["aws"]["additionalEventData"]["httpStatusCode"] = value
+                with self.assertRaises(MODULE.ContractError):
                     MODULE.build_sanitized_alert(alert)
 
-    def test_rejects_alert_without_valid_take_id(self) -> None:
-        alert = valid_alert()
-        del alert["data"]["payload"]["take_id"]
-        with self.assertRaisesRegex(MODULE.ContractError, "take_id"):
-            MODULE.build_sanitized_alert(alert)
-
-        alert = valid_alert()
-        alert["data"]["payload"]["take_id"] = "capital-one-legacy"
-        with self.assertRaisesRegex(MODULE.ContractError, "take_id"):
-            MODULE.build_sanitized_alert(alert)
-
-    def test_rejects_non_allowlisted_alert_contracts(self) -> None:
+    def test_rejects_wrong_tuple_or_failed_event(self) -> None:
         mutations = (
-            (lambda value: value["rule"].__setitem__("id", "100100")),
-            (lambda value: value["data"].__setitem__("source", "cloudtrail")),
-            (lambda value: value["data"].__setitem__("transport", "poll")),
-            (lambda value: value["data"].__setitem__("aws_region", "us-east-1")),
-            (
-                lambda value: value["data"]["payload"].__setitem__(
-                    "route", "/other"
-                )
+            lambda value: value["data"]["aws"].__setitem__(
+                "source", "other"
             ),
+            lambda value: value["data"]["aws"].__setitem__(
+                "recipientAccountId", "000000000000"
+            ),
+            lambda value: value["data"]["aws"].__setitem__(
+                "awsRegion", "us-east-1"
+            ),
+            lambda value: value["data"]["aws"].__setitem__(
+                "eventSource", "ec2.amazonaws.com"
+            ),
+            lambda value: value["data"]["aws"].__setitem__(
+                "eventName", "PutObject"
+            ),
+            lambda value: value["data"]["aws"]["requestParameters"].__setitem__(
+                "bucketName", "other-bucket"
+            ),
+            lambda value: value["data"]["aws"]["requestParameters"].__setitem__(
+                "key", "web/capital-one-demo.csv"
+            ),
+            lambda value: value["data"]["aws"]["userIdentity"][
+                "sessionContext"
+            ]["sessionIssuer"].__setitem__(
+                "userName", "other-role"
+            ),
+            lambda value: value["data"]["aws"]["userIdentity"].__setitem__(
+                "type", "IAMUser"
+            ),
+            lambda value: value["data"]["aws"]["additionalEventData"].__setitem__(
+                "httpStatusCode", "403"
+            ),
+            lambda value: value["data"]["aws"].__setitem__(
+                "errorCode", "AccessDenied"
+            ),
+            lambda value: value["data"]["aws"].__setitem__(
+                "eventID", "not-a-uuid"
+            ),
+            lambda value: value["rule"].__setitem__("id", "100103"),
+            lambda value: value["rule"].__setitem__("level", 10),
         )
         for mutate in mutations:
             with self.subTest(mutate=mutate):
@@ -169,6 +236,19 @@ class CustomShuffleSocTest(unittest.TestCase):
                 mutate(alert)
                 with self.assertRaises(MODULE.ContractError):
                     MODULE.build_sanitized_alert(alert)
+
+    def test_rejects_unbounded_raw_or_principal_input(self) -> None:
+        alert = valid_alert()
+        alert["full_log"] = "x" * (MODULE.MAX_FULL_LOG_BYTES + 1)
+        with self.assertRaisesRegex(MODULE.ContractError, "full_log"):
+            MODULE.build_sanitized_alert(alert)
+
+        alert = valid_alert()
+        alert["data"]["aws"]["userIdentity"]["principalId"] = (
+            "x" * (MODULE.MAX_PRINCIPAL_ID_BYTES + 1)
+        )
+        with self.assertRaisesRegex(MODULE.ContractError, "principalId"):
+            MODULE.build_sanitized_alert(alert)
 
     def test_webhook_url_is_https_and_host_allowlisted(self) -> None:
         webhook_id = "22222222-2222-4222-8222-222222222222"

@@ -50,6 +50,42 @@ output "primary_application_bucket_name" {
   description = "Primary application S3 bucket used by the scoped IAM-01 canary."
   value       = aws_s3_bucket.primary.id
 }
+
+output "capital_one_secondary_control_bucket_name" {
+  description = "Secondary S3 control bucket used only by the capital-one-lab negative control."
+  value       = local.capital_one_secondary_control_enabled ? aws_s3_bucket.capital_one_secondary_control[0].id : null
+}
+
+output "capital_one_secondary_control_region" {
+  description = "Region of the capital-one-lab secondary control bucket."
+  value       = local.capital_one_secondary_control_enabled ? var.primary_region : null
+}
+
+output "capital_one_secondary_control_object_key" {
+  description = "Fixed harmless object key shared by the primary and secondary Capital One controls."
+  value       = local.capital_one_secondary_control_enabled ? local.capital_one_secondary_control_object_key : null
+}
+
+output "capital_one_secondary_control_object_sha256" {
+  description = "SHA-256 of the deterministic fake-data object body."
+  value       = local.capital_one_secondary_control_enabled ? sha256(local.capital_one_secondary_control_csv) : null
+}
+
+output "capital_one_other_prefix_control_object_key" {
+  description = "Fixed non-validation key used by the successful same-role, same-bucket GT03 negative control."
+  value       = local.capital_one_secondary_control_enabled ? local.capital_one_other_prefix_control_object_key : null
+}
+
+output "capital_one_other_prefix_control_object_sha256" {
+  description = "SHA-256 of the deterministic other-prefix fake-data object body."
+  value       = local.capital_one_secondary_control_enabled ? sha256(local.capital_one_secondary_control_csv) : null
+}
+
+output "capital_one_negative_control_role_arn" {
+  description = "Same-account assumable role for the exact-primary-object other-principal negative control."
+  value       = local.capital_one_secondary_control_enabled ? aws_iam_role.capital_one_negative_control[0].arn : null
+}
+
 output "dr_application_bucket_name" {
   description = "DR application S3 bucket."
   value       = try(aws_s3_bucket.dr[0].id, null)

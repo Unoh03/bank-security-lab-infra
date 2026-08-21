@@ -1,6 +1,6 @@
 app_version: 1.0.0
 name: AWS Topology SOC Validator
-description: Strict and side-effect-free validator for the Capital One SOC sanitized alert v1.
+description: Strict and side-effect-free validator for the Capital One SOC sanitized CloudTrail S3 alert v2.
 tags:
   - SOC
   - Validation
@@ -12,12 +12,29 @@ contact_info:
   email: no-reply@example.invalid
 actions:
   - name: validate_sanitized_alert
-    description: Validates exact fields, types, patterns, and the canonical body SHA-256 without returning the original payload.
+    description: Validates exact v2 fields, fixed S3 allowlist values, timestamps, and the canonical body SHA-256 without returning the original payload or Active TAKE metadata.
     parameters:
       - name: input_data
         description: The complete Shuffle execution argument from the authenticated Wazuh webhook.
         required: true
         multiline: true
+        schema:
+          type: string
+    returns:
+      schema:
+        type: string
+  - name: classify_dedupe_claim
+    description: Reduces one exact Shuffle Datastore claim result to scalar valid/existed values; malformed or mismatched claims fail closed to the safety-gate result without side effects.
+    parameters:
+      - name: claim_result
+        description: The serialized result returned by Shuffle Tools set_datastore_value.
+        required: true
+        multiline: true
+        schema:
+          type: string
+      - name: expected_key
+        description: The exact CAPITAL-ONE account and lowercase CloudTrail eventID Dedupe key from validate_sanitized_alert.
+        required: true
         schema:
           type: string
     returns:

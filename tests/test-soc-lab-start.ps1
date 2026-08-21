@@ -21,9 +21,9 @@ function Assert-NotMatch {
     if ($text -match $Pattern) { throw $Message }
 }
 
-$containDiagnostic = 'Rule 100103 is OBSERVE_ONLY only; the final high-confidence S3 Rule is not validated/registered yet.'
-Assert-Match "Rule 100103 is OBSERVE_ONLY only; the final high-confidence S3 Rule is not validated/registered yet\." `
-    'Start does not fail closed before runtime for the unvalidated Rule 100103 containment mode.'
+$containDiagnostic = 'The legacy Rule 100103 Active TAKE cannot authorize v2/100104 containment'
+Assert-Match 'legacy v1 control for the Rule 100103 early-warning[\s\S]*?Current high-confidence S3 Alerts use Rule 100104/schema v2' `
+    'Start does not document the legacy Rule 100103 versus current v2/100104 boundary.'
 Assert-Match "ResponseMode\s*-ceq\s*'observe_only'" `
     'Start no longer exposes the allowed Rule 100103 OBSERVE_ONLY mode.'
 $containOutput = @(& (Get-Command pwsh -ErrorAction Stop).Source -NoProfile -File $path `
@@ -31,7 +31,7 @@ $containOutput = @(& (Get-Command pwsh -ErrorAction Stop).Source -NoProfile -Fil
 $containExitCode = $LASTEXITCODE
 $containText = ($containOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
 if ($containExitCode -eq 0 -or $containText -notmatch [regex]::Escape($containDiagnostic)) {
-    throw 'Start did not reject Rule 100103 containment at the CLI boundary.'
+    throw 'Start did not reject legacy Rule 100103 containment at the CLI boundary.'
 }
 
 Assert-Match "ConfirmStart\s+-cne\s+'START SOC LAB'" 'Start lacks its exact mutation confirmation.'
@@ -104,6 +104,8 @@ Assert-Match 'Register-ShuffleSocTake[\s\S]*?Set-SocTakeStatus[\s\S]*?READY' 'St
 Assert-Match "if \(\`$Scope -ceq 'full' -and \`$ResponseMode -ceq 'contain'\) \{[\s\S]*?Register-ShuffleSocTake" 'OBSERVE_ONLY still registers a Shuffle Datastore TAKE.'
 Assert-Match "requiredCommands[\s\S]*?Scope -ceq 'full' -and \`$ResponseMode -ceq 'contain'[\s\S]*?gh','ssh" 'OBSERVE_ONLY still requires gh or ssh.'
 Assert-Match 'Skipped in OBSERVE_ONLY: GitHub, Argo CD, Shuffle Datastore TAKE registration' 'The preview does not disclose OBSERVE_ONLY exclusions.'
+Assert-Match 'Assert-SocLegacyObserveOnlyTake' 'OBSERVE_ONLY does not bind the Active TAKE to the legacy Rule 100103 contract.'
+Assert-Match 'Current v2/100104 sanitized Alerts do not contain TAKE_ID' 'OBSERVE_ONLY does not disclose that TAKE_ID is outside the v2 Alert payload.'
 Assert-Match 'SOC_LAB_READY=yes[\s\S]*?ACTIVE_TAKE_ID=[\s\S]*?RESPONSE_MODE=[\s\S]*?READY_EVIDENCE=' 'Start lacks the frozen four-line READY output.'
 Assert-Match "Invoke-SocComposeCapture[\s\S]*?Arguments @\('down'\)" 'Start does not stop Wazuh on partial failure before deleting Runtime Secrets.'
 Assert-NotMatch "Invoke-SocNativeCapture\s+-FilePath\s+'terraform'[\s\S]{0,240}'(apply|destroy)'|Invoke-SocNativeCapture\s+-FilePath\s+'gh'[\s\S]{0,300}'--method','(POST|PUT|PATCH|DELETE)'" 'Start contains a forbidden Terraform or GitHub mutation.'

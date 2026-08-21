@@ -1,9 +1,9 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "artifact_kind": "shuffle-soc-workflow-contract",
   "importable_shuffle_workflow": false,
   "workflow": {
-    "name": "CAPITAL-ONE-SOC-CONTAINMENT-v1",
+    "name": "CAPITAL-ONE-SOC-CONTAINMENT-v2",
     "sharing": "private",
     "trigger": {
       "type": "webhook",
@@ -28,95 +28,117 @@
       "aws_account_id": "433048100798",
       "aws_region": "ap-northeast-2",
       "scenario_id": "CAPITAL-ONE",
-      "rule_id": "100103",
-      "rule_level": 10,
-      "source_system": "wazuh"
+      "rule_id": "100104",
+      "rule_level": 12,
+      "rule_role": "high_confidence_s3_access",
+      "source_system": "wazuh",
+      "event_source": "s3.amazonaws.com",
+      "event_name": "GetObject",
+      "principal_role_name": "aws-topology-primary-karpenter-node",
+      "bucket_alias": "primary-application-data",
+      "object_key": "validation/capital-one-demo.csv",
+      "result": "success"
+    },
+    "take_binding": {
+      "status": "separate_control_metadata",
+      "required_in_alert_payload": false,
+      "rule": "An Active TAKE is never inserted into the CloudTrail sanitized payload."
     }
   },
   "required_action_labels": [
     "validate_payload",
-    "get_take_allow",
-    "claim_take_dispatch",
-    "dispatch_github_containment",
-    "write_response_dispatched",
+    "claim_event_dedupe",
+    "classify_dedupe_claim",
     "write_duplicate_suppressed",
     "write_observe_only",
     "write_rejected_schema",
     "write_rejected_allowlist",
-    "write_rejected_take",
-    "write_response_failed"
+    "write_safety_gate_blocked",
+    "quarantine_fixed_dvwa",
+    "restrict_validation_prefix",
+    "write_containment_succeeded",
+    "write_containment_failed"
   ],
-  "production_only_action_labels": [],
+  "production_only_action_labels": [
+    "quarantine_fixed_dvwa",
+    "restrict_validation_prefix"
+  ],
   "datastore": {
-    "category": "soc-v1",
-    "allow_key": "soc:v1:allow:primary-lab:CAPITAL-ONE:<take_id>",
-    "dedupe_key": "soc:v1:response:primary-lab:CAPITAL-ONE:<take_id>",
-    "outcome_key": "soc:v1:outcome:<take_id>:<raw_message_sha256>"
-  },
-  "outcome_record": {
-    "exact_fields": [
-      "schema_version",
-      "take_id",
-      "raw_message_sha256",
-      "body_sha256",
-      "account_alias",
-      "scenario_id",
-      "rule_id",
-      "result",
-      "github_dispatch_count",
-      "workflow_run_id",
-      "completed_at_utc"
-    ],
-    "response_dispatched": {
-      "github_dispatch_count": 1,
-      "workflow_run_id": "positive_integer",
-      "body_sha256": "exact_dispatcher_input"
-    },
-    "all_other_results": {
-      "github_dispatch_count": 0,
-      "workflow_run_id": 0
-    }
+    "category": "soc-v2",
+    "dedupe_key": "CAPITAL-ONE:<aws_account_id>:<cloudtrail_event_id>",
+    "outcome_key": "soc:v2:outcome:<aws_account_id>:<cloudtrail_event_id>",
+    "active_take_control_key": "soc:v2:control:primary-lab:CAPITAL-ONE:<take_id>",
+    "take_binding_rule": "The control key is separate from the Alert payload and is never synthesized into it."
   },
   "branches": [
     {
       "when": "schema_or_body_hash_invalid",
       "result": "REJECTED_SCHEMA",
-      "github_dispatch_count": 0
+      "dedupe_claim": 0,
+      "external_action_count": 0
     },
     {
       "when": "fixed_allowlist_mismatch",
       "result": "REJECTED_ALLOWLIST",
-      "github_dispatch_count": 0
-    },
-    {
-      "when": "take_absent_expired_or_mismatched",
-      "result": "REJECTED_TAKE",
-      "github_dispatch_count": 0
+      "dedupe_claim": 0,
+      "external_action_count": 0
     },
     {
       "when": "response_mode_is_observe_only",
       "result": "OBSERVE_ONLY",
-      "github_dispatch_count": 0
+      "dedupe_claim": 0,
+      "external_action_count": 0
     },
     {
       "when": "dedupe_claim_already_exists",
       "result": "DUPLICATE_SUPPRESSED",
-      "github_dispatch_count": 0
+      "dedupe_claim": 1,
+      "external_action_count": 0
     },
     {
-      "when": "contain_and_fresh_dedupe_claim",
-      "result": "RESPONSE_DISPATCHED",
-      "github_dispatch_count": 1
+      "when": "fresh_event_and_fixed_targets_not_yet_implemented",
+      "result": "SAFETY_GATE_BLOCKED",
+      "dedupe_claim": 1,
+      "external_action_count": 0
     },
     {
-      "when": "github_dispatch_failed_after_claim",
-      "result": "RESPONSE_FAILED",
-      "github_dispatch_count": 0,
-      "dispatch_acceptance": "unverified_no_automatic_retry"
+      "when": "fresh_event_and_fixed_containment_targets_succeed",
+      "result": "CONTAINMENT_SUCCEEDED",
+      "dedupe_claim": 1,
+      "external_action_count": 2
+    },
+    {
+      "when": "containment_partially_applied_or_failed",
+      "result": "CONTAINMENT_FAILED",
+      "dedupe_claim": 1,
+      "external_action_count": 0,
+      "dispatch_acceptance": "safe_state_and_explicit_rollback_only"
     }
   ],
   "gate_b5": {
     "dispatch_action_stage": "stub",
+    "action_labels_exact": [
+      "validate_payload",
+      "claim_event_dedupe",
+      "classify_dedupe_claim",
+      "write_duplicate_suppressed",
+      "write_observe_only",
+      "write_rejected_schema",
+      "write_rejected_allowlist",
+      "write_safety_gate_blocked",
+      "repeat_back_to_me"
+    ],
+    "forbidden_action_labels": [
+      "get_take_allow",
+      "claim_take_dispatch",
+      "dispatch_github_containment",
+      "write_rejected_take",
+      "write_response_dispatched",
+      "write_response_failed",
+      "quarantine_fixed_dvwa",
+      "restrict_validation_prefix"
+    ],
+    "branch_identity": "Each branch id and each source/destination/condition tuple is unique and references only the exact action label set.",
     "stress_transport": "authenticated_execute_api",
     "webhook_ingress_smoke": {
       "valid_required_header": "accepted",
@@ -124,80 +146,142 @@
     },
     "stub": {
       "app": "Shuffle Tools",
-      "app_version": "1.2.0",
       "action": "repeat_back_to_me",
-      "fixed_marker": "GATE_B5_GITHUB_STUB"
+      "label": "repeat_back_to_me",
+      "fixed_marker": "GATE_B5_REPEAT_STUB"
     },
+    "safe_action_mapping": {
+      "claim_event_dedupe": {
+        "app": "Shuffle Tools",
+        "app_version": "1.2.0",
+        "action": "set_datastore_value",
+        "parameters": {
+          "category": "soc-v2",
+          "key": "$validate_payload.dedupe_key",
+          "value": "$validate_payload.body_sha256"
+        }
+      },
+      "classify_dedupe_claim": {
+        "app": "AWS Topology SOC Validator",
+        "app_version": "1.0.0",
+        "action": "classify_dedupe_claim",
+        "parameters": {
+          "claim_result": "$claim_event_dedupe",
+          "expected_key": "$validate_payload.dedupe_key"
+        }
+      },
+      "write_duplicate_suppressed": {
+        "app": "Shuffle Tools",
+        "app_version": "1.2.0",
+        "action": "repeat_back_to_me",
+        "parameters": {"call": "write_duplicate_suppressed"}
+      },
+      "write_observe_only": {
+        "app": "Shuffle Tools",
+        "app_version": "1.2.0",
+        "action": "repeat_back_to_me",
+        "parameters": {"call": "write_observe_only"}
+      },
+      "write_rejected_schema": {
+        "app": "Shuffle Tools",
+        "app_version": "1.2.0",
+        "action": "repeat_back_to_me",
+        "parameters": {"call": "write_rejected_schema"}
+      },
+      "write_rejected_allowlist": {
+        "app": "Shuffle Tools",
+        "app_version": "1.2.0",
+        "action": "repeat_back_to_me",
+        "parameters": {"call": "write_rejected_allowlist"}
+      },
+      "write_safety_gate_blocked": {
+        "app": "Shuffle Tools",
+        "app_version": "1.2.0",
+        "action": "repeat_back_to_me",
+        "parameters": {"call": "write_safety_gate_blocked"}
+      }
+    },
+    "dedupe_branch_condition": {
+      "source": "$classify_dedupe_claim.existed",
+      "operator": "equals",
+      "value": false
+    },
+    "condition_shape": {
+      "source": {"id": "<uuid>", "name": "source", "variant": "STATIC_VALUE", "value": "<expression>"},
+      "condition": {"id": "<uuid>", "name": "condition", "value": "equals"},
+      "destination": {"id": "<uuid>", "name": "destination", "variant": "STATIC_VALUE", "value": "true|false"}
+    },
+    "branch_graph": [
+      {"source_label": "__WEBHOOK_TRIGGER__", "destination_label": "validate_payload", "conditions": []},
+      {"source_label": "validate_payload", "destination_label": "claim_event_dedupe", "condition_source": "$validate_payload.valid", "condition_destination": "true"},
+      {"source_label": "validate_payload", "destination_label": "write_rejected_schema", "condition_source": "$validate_payload.rejection", "condition_destination": "REJECTED_SCHEMA"},
+      {"source_label": "validate_payload", "destination_label": "write_rejected_allowlist", "condition_source": "$validate_payload.rejection", "condition_destination": "REJECTED_ALLOWLIST"},
+      {"source_label": "claim_event_dedupe", "destination_label": "classify_dedupe_claim", "conditions": []},
+      {"source_label": "classify_dedupe_claim", "destination_label": "write_safety_gate_blocked", "condition_source": "$classify_dedupe_claim.valid", "condition_destination": "false"},
+      {"source_label": "classify_dedupe_claim", "destination_label": "repeat_back_to_me", "conditions": [{"condition_source": "$classify_dedupe_claim.valid", "condition_destination": "true"}, {"condition_source": "$classify_dedupe_claim.existed", "condition_destination": "false"}]},
+      {"source_label": "classify_dedupe_claim", "destination_label": "write_duplicate_suppressed", "conditions": [{"condition_source": "$classify_dedupe_claim.valid", "condition_destination": "true"}, {"condition_source": "$classify_dedupe_claim.existed", "condition_destination": "true"}]}
+    ],
     "same_exact_body_concurrency": 10,
     "expected_new_claim_count": 1,
     "expected_duplicate_claim_count": 9,
     "expected_stub_execution_count": 1,
+    "expected_external_action_count": 0,
     "expected_real_github_dispatch_count": 0,
+    "observe_only_consumes_containment_dedupe": false,
+    "active_take_in_payload": false,
     "negative_cases": [
       "wrong-account",
       "wrong-scenario",
       "wrong-rule",
-      "wrong-take",
+      "wrong-role",
+      "wrong-bucket",
+      "wrong-key",
+      "wrong-event-source",
+      "wrong-event-name",
+      "wrong-result",
       "wrong-body-hash"
     ],
     "atomicity_claim_allowed_only_after_runtime_stress": true
   },
+  "containment_targets": {
+    "gt05_gt06": {
+      "status": "placeholder_contract_only",
+      "actions": [
+        "quarantine_fixed_dvwa",
+        "restrict_validation_prefix"
+      ],
+      "target_source": "fixed repository allowlist only",
+      "active_take_requirement": "separate control metadata; never payload"
+    },
+    "gt09": {
+      "status": "out_of_scope",
+      "description": "The low-to-impossible GitHub Workflow and Argo remediation is GT09, not this Containment Workflow."
+    }
+  },
   "gate_to_production_binding": {
     "workflow_core_sha256_required": true,
-    "allowed_difference": "dispatch_github_containment implementation and its outgoing success/failure branches only",
+    "allowed_difference": "fixed quarantine and validation/* enforcement implementation only",
     "forbidden_after_gate_b5": [
       "trigger change",
       "header authentication change",
-      "non-dispatch action change",
-      "non-dispatch branch or condition change",
+      "non-containment action change",
+      "non-containment branch or condition change",
       "extra action",
-      "workflow variable"
+      "workflow variable",
+      "Active TAKE insertion into the Alert payload"
     ]
-  },
-  "production_dispatch": {
-    "enabled_only_after_gate_b5": true,
-    "repository": "Unoh03/Uns-DVWA",
-    "workflow": ".github/workflows/soc-contain-dvwa.yml",
-    "app": "AWS Topology SOC GitHub Dispatcher",
-    "app_version": "1.0.0",
-    "action": "dispatch_containment",
-    "private_org_app": true,
-    "fixed_url_in_app_source": "https://api.github.com/repos/Unoh03/Uns-DVWA/actions/workflows/soc-contain-dvwa.yml/dispatches",
-    "ref": "main",
-    "return_run_details": true,
-    "dispatch_response": "github-api-2026-03-10-returns-workflow-run-id-and-urls",
-    "github_api_version": "2026-03-10",
-    "inputs": [
-      "take_id",
-      "scenario_id",
-      "rule_id",
-      "alert_body_sha256"
-    ],
-    "forbidden_dynamic_inputs": [
-      "repository",
-      "workflow",
-      "ref",
-      "path",
-      "target_value",
-      "shell_command"
-    ],
-    "credential": "shuffle-app-authentication-fine-grained-pat-actions-write-one-repository-no-contents-write",
-    "result": {
-      "success": true,
-      "status": "DISPATCHED",
-      "workflow_run_id": "positive_integer",
-      "secret_or_raw_response_returned": false
-    }
   },
   "evidence": {
     "persist": [
       "workflow_id",
       "workflow_export_sha256",
       "execution_ids",
+      "cloudtrail_event_ids",
+      "wazuh_alert_ids",
       "action_labels",
       "branch_results",
       "claim_counts",
-      "dispatch_counts",
+      "external_action_counts",
       "latency_ms"
     ],
     "never_persist": [
@@ -208,7 +292,9 @@
       "wazuh_credentials",
       "cookie",
       "token",
-      "raw_command"
+      "raw_command",
+      "full_log",
+      "Active TAKE secret material"
     ]
   }
 }

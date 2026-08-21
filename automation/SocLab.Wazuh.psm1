@@ -266,8 +266,8 @@ function Assert-WazuhSocIntegrationXml {
     $integration = $nodes[0]
     $expected = [ordered]@{
         name         = 'custom-shuffle-soc'
-        level        = '10'
-        rule_id      = '100103'
+        level        = '12'
+        rule_id      = '100104'
         alert_format = 'json'
         timeout      = '10'
         retries      = '1'

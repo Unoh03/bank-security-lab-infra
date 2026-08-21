@@ -4,6 +4,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $script:TakeIdPattern = '^capital-one-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}$'
+$script:LegacyObserveRuleId = '100103'
+$script:CurrentHighConfidenceRuleId = '100104'
 $script:TakeStatuses = @(
     'ISSUED',
     'READY',
@@ -100,6 +102,18 @@ function Assert-SocTakeRecord {
     return $Record
 }
 
+function Assert-SocLegacyObserveOnlyTake {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object]$Record)
+
+    [void](Assert-SocTakeRecord -Record $Record)
+    if ([string]$Record.response_mode -cne 'observe_only' -or
+        [string]$Record.expected_rule_id -cne $script:LegacyObserveRuleId) {
+        throw 'The Active TAKE is a legacy Rule 100103 OBSERVE_ONLY control and cannot authorize current v2/100104 containment.'
+    }
+    return $Record
+}
+
 function New-SocTakeRecord {
     [CmdletBinding()]
     param(
@@ -118,7 +132,7 @@ function New-SocTakeRecord {
         expires_at_utc   = $IssuedAtUtc.ToUniversalTime().AddMinutes($LifetimeMinutes).ToString('o')
         status           = 'ISSUED'
         account_alias    = 'primary-lab'
-        expected_rule_id = '100103'
+        expected_rule_id = $script:LegacyObserveRuleId
     }
     return Assert-SocTakeRecord -Record $record
 }
@@ -135,22 +149,20 @@ function Write-SocTakeRecord {
     New-Item -ItemType Directory -Path $root -Force | Out-Null
     $path = Get-SocActiveTakePath -RuntimeRoot $root
     $temporaryPath = "$path.$([guid]::NewGuid().ToString('N')).tmp"
-    $backupPath = "$path.$([guid]::NewGuid().ToString('N')).bak"
     try {
         [IO.File]::WriteAllText(
             $temporaryPath,
             (($Record | ConvertTo-Json -Depth 8) + "`n"),
             [Text.UTF8Encoding]::new($false)
         )
-        if (Test-Path -LiteralPath $path -PathType Leaf) {
-            [IO.File]::Replace($temporaryPath, $path, $backupPath)
-            Remove-Item -LiteralPath $backupPath -Force
-        } else {
-            [IO.File]::Move($temporaryPath, $path)
-        }
+        # The temporary file is a sibling of the destination, so this is a
+        # same-volume rename. File.Replace is not reliable on the supported
+        # Windows LOCALAPPDATA/temp filesystems and can fail before changing
+        # either file; Move(..., overwrite) preserves the same atomic rename
+        # boundary without creating a backup artifact.
+        [IO.File]::Move($temporaryPath, $path, $true)
     } finally {
         Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
     }
     return $path
 }
@@ -193,6 +205,7 @@ function Set-SocTakeStatus {
 Export-ModuleMember -Function @(
     'Get-SocActiveTakePath',
     'Assert-SocTakeRecord',
+    'Assert-SocLegacyObserveOnlyTake',
     'New-SocTakeRecord',
     'Write-SocTakeRecord',
     'Read-SocTakeRecord',

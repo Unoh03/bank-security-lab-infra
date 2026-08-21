@@ -115,7 +115,8 @@ RECOVERY_EVIDENCE_ID=<최종 검증 Evidence ID>
 
 - `FINAL_TAKE_ID`, 시작 UTC
 - Wazuh Manager·Indexer·Dashboard READY
-- Shuffle Webhook/Workflow READY
+- 최종 `CAPITAL-ONE-SOC-CONTAINMENT-v2` Webhook/Workflow READY
+- `CAPITAL-ONE-SOC-CONTAINMENT-v1`은 rollback-only이며 최종 경로에서 비활성
 - Wazuh Reader와 로그 수집 상태 READY
 - Argo CD `Synced + Healthy`
 - Wazuh 전체 현황 Dashboard
@@ -144,7 +145,8 @@ TAKE_ID=<앞 8자> / START_UTC=<시각>
 
 - 5개 Source 검색 가능
 - Wazuh 3개 Service 정상
-- Shuffle Workflow·Webhook 활성
+- 최종 `CAPITAL-ONE-SOC-CONTAINMENT-v2` Workflow·Webhook 활성
+- v1 Workflow·Webhook은 rollback-only이며 촬영 경로에 없음
 - Baseline Git SHA와 Argo Revision
 - 이전 TAKE Credential 잔존 없음
 
@@ -309,6 +311,7 @@ CloudTrail 도착·Wazuh 탐지까지 실제 N분 N초
 ### 보여줄 화면
 
 - Wazuh Alert의 Integrator 전달
+- 최종 `CAPITAL-ONE-SOC-CONTAINMENT-v2` Workflow/Execution
 - 인증된 Shuffle Webhook
 - Validator·Allowlist·중복 방지 결과
 - 정확히 한 개의 신규 Shuffle Execution
@@ -422,9 +425,9 @@ Blast Radius: 사전 승인 범위
 - 다른 Object 접근 여부
 - Credential/Session 재사용 여부
 - 다른 AWS Resource 접근 여부
-- IAM 최소 권한
+- IAM 최소 권한 — Future Work, 이번 촬영에서는 Apply하지 않음
 - DVWA 보안 설정 패치
-- IMDSv2·Hop Limit 보강
+- IMDSv2·Hop Limit 보강 — Future Work, 이번 촬영에서는 Apply하지 않음
 ```
 
 ### 운영자 조작
@@ -475,11 +478,11 @@ Seed Alert → 관련 Evidence 확장
 - 승인된 Remediation Workflow
 - GitHub Diff·Commit SHA
 - Argo CD `Synced + Healthy`
-- 필요 시 IAM·IMDS 복구 결과 요약
+- IAM·IMDS·Node Apply 제외라는 범위 경계
 
 ### 내레이션
 
-> 반복적이고 즉시 실행해도 안전한 격리는 SOAR가 자동으로 처리했습니다. 이제 관제자는 수집된 Evidence와 영향 범위를 바탕으로 근본 대응을 선택합니다. 이번 사건에서는 DVWA의 취약 설정을 `low`에서 `impossible`로 변경하고, IAM 최소 권한과 IMDS 보강을 승인된 절차로 적용합니다.
+> 반복적이고 즉시 실행해도 안전한 격리는 SOAR가 자동으로 처리했습니다. 이제 관제자는 수집된 Evidence와 영향 범위를 바탕으로 근본 대응을 선택합니다. 이번 사건에서는 승인된 Workflow로 DVWA의 취약 설정을 `low`에서 `impossible`로 변경하고 GitHub Commit과 Argo Revision을 확인합니다. IAM·IMDS·Node 변경은 이번 촬영 범위에서 적용하지 않습니다.
 
 > Wazuh가 새로운 대응 방법을 임의로 발명한 것이 아니라, 사건 유형별 Runbook과 Evidence를 제공해 사람이 다음 조치를 쉽게 결정하도록 지원합니다.
 
@@ -487,7 +490,8 @@ Seed Alert → 관련 Evidence 확장
 
 ```text
 자동: 사전 승인된 Containment
-사람 승인: Remediation · IAM/IMDS Recovery
+사람 승인: `low → impossible` Remediation
+IAM·IMDS·Node Apply: 이번 촬영 범위 제외
 low → impossible = 애플리케이션 보안 설정 패치
 ```
 
@@ -498,7 +502,7 @@ low → impossible = 애플리케이션 보안 설정 패치
 - 예상한 파일·값만 변경
 - 정확한 GitHub Commit SHA
 - Argo exact Revision
-- IAM/IMDS 조치를 적용했다면 실제 Runtime 상태
+- IAM·IMDS·Node Apply를 실행하지 않았다는 범위 경계
 
 ---
 

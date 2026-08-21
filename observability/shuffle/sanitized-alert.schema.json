@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://aws-topology.invalid/schemas/capital-one-soc-sanitized-alert-v1.json",
-  "title": "Capital One SOC sanitized Wazuh alert v1",
+  "$id": "https://aws-topology.invalid/schemas/capital-one-soc-sanitized-alert-v2.json",
+  "title": "Capital One SOC sanitized Wazuh CloudTrail S3 alert v2",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -17,7 +17,7 @@
     "integrity"
   ],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "const": 2 },
     "source_system": { "const": "wazuh" },
     "sent_at_utc": {
       "type": "string",
@@ -42,40 +42,32 @@
     "rule": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "level"],
+      "required": ["id", "level", "role"],
       "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "^[0-9]{6}$"
-        },
-        "level": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 15
-        }
+        "id": { "const": "100104" },
+        "level": { "const": 12 },
+        "role": { "const": "high_confidence_s3_access" }
       }
     },
     "incident": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "take_id",
-        "event_id",
+        "cloudtrail_event_id",
         "wazuh_alert_id",
         "event_time_utc",
-        "result",
-        "route"
+        "event_source",
+        "event_name",
+        "principal_role_name",
+        "principal_session_id_sha256",
+        "bucket_alias",
+        "object_key",
+        "result"
       ],
       "properties": {
-        "take_id": {
+        "cloudtrail_event_id": {
           "type": "string",
-          "pattern": "^capital-one-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}$"
-        },
-        "event_id": {
-          "type": "string",
-          "minLength": 24,
-          "maxLength": 512,
-          "pattern": "^cwl:[0-9]{12}:[!-~]+$"
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
         },
         "wazuh_alert_id": {
           "type": "string",
@@ -85,8 +77,25 @@
           "type": "string",
           "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
         },
-        "result": { "const": "succeeded" },
-        "route": { "const": "/vulnerabilities/exec/" }
+        "event_source": { "const": "s3.amazonaws.com" },
+        "event_name": { "const": "GetObject" },
+        "principal_role_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+=,.@_-]{1,128}$"
+        },
+        "principal_session_id_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "bucket_alias": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{2,63}$"
+        },
+        "object_key": {
+          "type": "string",
+          "pattern": "^validation/[A-Za-z0-9._/-]{1,512}$"
+        },
+        "result": { "const": "success" }
       }
     },
     "integrity": {
@@ -101,6 +110,46 @@
         "body_sha256": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "dedupeClaimResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["success", "keys_existed"],
+      "properties": {
+        "success": { "const": true },
+        "keys_existed": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "existed"],
+            "properties": {
+              "key": {
+                "type": "string",
+                "pattern": "^CAPITAL-ONE:[0-9]{12}:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "existed": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "dedupeClassifierResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["valid", "existed", "reason_code"],
+      "properties": {
+        "valid": { "type": "boolean" },
+        "existed": { "type": "boolean" },
+        "reason_code": {
+          "type": "string",
+          "enum": ["", "dedupe_claim_invalid"]
         }
       }
     }

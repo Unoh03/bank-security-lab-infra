@@ -18,6 +18,7 @@ import secrets
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -91,13 +92,18 @@ APPROVED_SEMANTIC_POINTERS = frozenset(
         "/rule",
         "/rule/id",
         "/rule/level",
+        "/rule/role",
         "/incident",
-        "/incident/take_id",
-        "/incident/event_id",
+        "/incident/cloudtrail_event_id",
         "/incident/wazuh_alert_id",
         "/incident/event_time_utc",
+        "/incident/event_source",
+        "/incident/event_name",
+        "/incident/principal_role_name",
+        "/incident/principal_session_id_sha256",
+        "/incident/bucket_alias",
+        "/incident/object_key",
         "/incident/result",
-        "/incident/route",
         "/integrity",
         "/integrity/raw_message_sha256",
         "/integrity/body_sha256",
@@ -1664,13 +1670,48 @@ def assert_approved_sources(schema_path: Path, sanitizer_path: Path) -> dict[str
         "schema_version", "source_system", "sent_at_utc", "account_alias",
         "aws_account_id", "aws_region", "scenario_id", "rule", "incident", "integrity",
     }
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        raise Refusal("the approved sanitized Alert schema properties are invalid")
+    rule_schema = properties.get("rule")
+    incident_schema = properties.get("incident")
+    integrity_schema = properties.get("integrity")
+    if not all(
+        isinstance(section, dict)
+        for section in (rule_schema, incident_schema, integrity_schema)
+    ):
+        raise Refusal("the approved sanitized Alert schema sections are invalid")
+    rule_properties = rule_schema.get("properties", {})
+    incident_properties = incident_schema.get("properties", {})
     if (
         schema.get("additionalProperties") is not False
         or _required_keys(schema) != expected_top
-        or _required_keys(schema, "rule") != {"id", "level"}
+        or schema.get("properties", {}).get("schema_version", {}).get("const") != 2
+        or schema.get("properties", {}).get("source_system", {}).get("const") != "wazuh"
+        or rule_schema.get("additionalProperties") is not False
+        or _required_keys(schema, "rule") != {"id", "level", "role"}
+        or rule_properties.get("id", {}).get("const") != "100104"
+        or rule_properties.get("level", {}).get("const") != 12
+        or rule_properties.get("role", {}).get("const") != "high_confidence_s3_access"
+        or incident_schema.get("additionalProperties") is not False
         or _required_keys(schema, "incident") != {
-            "take_id", "event_id", "wazuh_alert_id", "event_time_utc", "result", "route"
+            "cloudtrail_event_id",
+            "wazuh_alert_id",
+            "event_time_utc",
+            "event_source",
+            "event_name",
+            "principal_role_name",
+            "principal_session_id_sha256",
+            "bucket_alias",
+            "object_key",
+            "result",
         }
+        or incident_properties.get("event_source", {}).get("const") != "s3.amazonaws.com"
+        or incident_properties.get("event_name", {}).get("const") != "GetObject"
+        or incident_properties.get("cloudtrail_event_id", {}).get("pattern")
+        != "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        or incident_properties.get("result", {}).get("const") != "success"
+        or integrity_schema.get("additionalProperties") is not False
         or _required_keys(schema, "integrity") != {"raw_message_sha256", "body_sha256"}
     ):
         raise Refusal("the approved sanitized Alert schema shape changed")
@@ -1679,10 +1720,18 @@ def assert_approved_sources(schema_path: Path, sanitizer_path: Path) -> dict[str
     except OSError as error:
         raise Refusal("the approved Wazuh sanitizer source is unavailable") from error
     required_tokens = (
-        'EXPECTED_RULE_ID = "100103"',
-        'EXPECTED_RULE_LEVEL = 10',
+        'EXPECTED_RULE_ID = "100104"',
+        "EXPECTED_RULE_LEVEL = 12",
         'EXPECTED_ACCOUNT_ID = "433048100798"',
         'EXPECTED_REGION = "ap-northeast-2"',
+        'EXPECTED_CLOUDTRAIL_SOURCE = "cloudtrail"',
+        'EXPECTED_EVENT_SOURCE = "s3.amazonaws.com"',
+        'EXPECTED_EVENT_NAME = "GetObject"',
+        'EXPECTED_USER_IDENTITY_TYPE = "AssumedRole"',
+        'EXPECTED_ROLE_NAME = "aws-topology-primary-karpenter-node"',
+        'EXPECTED_BUCKET_ALIAS = "primary-application-data"',
+        'EXPECTED_OBJECT_KEY = "validation/capital-one-demo.csv"',
+        "event_id = event_id.lower()",
         'body_sha256 = hashlib.sha256(canonical_json(sanitized)).hexdigest()',
     )
     if any(token not in sanitizer for token in required_tokens):
@@ -1701,25 +1750,36 @@ def build_synthetic_payload(
     moment = now or utc_now()
     token = nonce or secrets.token_hex(16)
     digest = sha256_bytes(token.encode("utf-8"))
+    cloudtrail_event_id = str(
+        uuid.uuid5(uuid.NAMESPACE_URL, f"capital-one-observe-only:{token}")
+    )
+    principal_session_id_sha256 = sha256_bytes(
+        f"capital-one-principal-session:{token}".encode("utf-8")
+    )
     payload: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "source_system": "wazuh",
         "sent_at_utc": utc_text(moment),
         "account_alias": "primary-lab",
         "aws_account_id": "433048100798",
         "aws_region": "ap-northeast-2",
         "scenario_id": "CAPITAL-ONE",
-        "rule": {"id": "100103", "level": 10},
+        "rule": {
+            "id": "100104",
+            "level": 12,
+            "role": "high_confidence_s3_access",
+        },
         "incident": {
-            "take_id": "capital-one-"
-            + moment.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ-")
-            + digest[:8],
-            "event_id": "cwl:433048100798:/aws/eks/aws-topology-primary/application:observe-only:"
-            + digest[:24],
+            "cloudtrail_event_id": cloudtrail_event_id,
             "wazuh_alert_id": f"{int(moment.timestamp())}.{int(digest[:8], 16)}",
             "event_time_utc": utc_text(moment),
-            "result": "succeeded",
-            "route": "/vulnerabilities/exec/",
+            "event_source": "s3.amazonaws.com",
+            "event_name": "GetObject",
+            "principal_role_name": "aws-topology-primary-karpenter-node",
+            "principal_session_id_sha256": principal_session_id_sha256,
+            "bucket_alias": "primary-application-data",
+            "object_key": "validation/capital-one-demo.csv",
+            "result": "success",
         },
         "integrity": {"raw_message_sha256": digest},
     }
@@ -1731,6 +1791,8 @@ def build_synthetic_payload(
 def validate_synthetic_payload(payload: dict[str, Any], schema: dict[str, Any]) -> None:
     if set(payload) != _required_keys(schema):
         raise Refusal("synthetic payload top-level fields do not match the approved schema")
+    if {"take_id", "event_id", "route"} & set(payload.get("incident", {})):
+        raise Refusal("synthetic payload contains a legacy incident field")
     if set(payload["rule"]) != _required_keys(schema, "rule"):
         raise Refusal("synthetic payload rule fields do not match the approved schema")
     if set(payload["incident"]) != _required_keys(schema, "incident"):

@@ -35,7 +35,7 @@ Rule 100103
 = 자동 격리 Trigger 아님
 
 Rule 100104
-= 보호 대상 validation/* GetObject 성공
+= 보호 대상 고정 Object `validation/capital-one-demo.csv` GetObject 성공
 + 승인 Account
 + 공격 시나리오 Principal/Role Session
 + errorCode 없음
@@ -152,7 +152,7 @@ CloudTrail의 별도 저지연 Route 전환은 촬영 필수 조건이 아니다
 - [ ] 비대상 Namespace·정상 서비스 영향 0
 - [ ] Alert 중심 사건 조사 View에서 관련 로그·관측 공백·자동 조치·Runbook 확인
 - [ ] 다른 팀원의 3분 무검색 사용성 Test 통과
-- [ ] 사람이 선택한 Remediation·Recovery가 승인된 Diff로 적용
+- [ ] 사람이 선택한 고정 `low → impossible` Remediation이 승인된 Diff로 적용
 - [ ] 동일 공격 실패, 정상 기능 성공, 새 보호 대상 S3 성공 Alert 0
 - [ ] 모든 장면의 TAKE·UTC·Event ID·Execution ID·Commit SHA가 대조 가능
 - [ ] Secret·Credential·실제 개인정보가 Evidence와 영상에 없음
@@ -165,7 +165,7 @@ CloudTrail의 별도 저지연 Route 전환은 촬영 필수 조건이 아니다
 
 | 영역 | 현재 확인된 Evidence | 현재 판정 | 새 시연에서 남은 핵심 |
 |---|---|---|---|
-| 공격 Baseline | Node Role 임시 자격증명으로 `validation/*` 가짜 Object 읽기 성공·CloudTrail Event 존재 | Runtime 확인 | 새 TAKE 반복성·촬영용 공개본 |
+| 공격 Baseline | Node Role 임시 자격증명으로 고정 Object `validation/capital-one-demo.csv` 읽기 성공·CloudTrail Event 존재 | Runtime 확인 | 새 TAKE 반복성·촬영용 공개본 |
 | 5-Source 수집 | CloudFront·WAF·ALB·DVWA·CloudTrail의 Wazuh Raw/Index 연결 | Source별 Runtime 확인 | 동일 TAKE Timeline |
 | Rule `100100` | 보호 대상 S3 `GetObject` Alert와 CloudTrail `eventID` 연결 | 과거 양성 Runtime 확인 | 역사적 Evidence로만 보존·자동 조치 제외 |
 | Rule `100104` | 고신뢰 Source 계약·Level 12·합성 Positive/Negative Matrix | `PRE-RUNTIME PASS`, `GT-03` 미통과 | 실제 공격·정상 대조군·원본 `eventID` 일대일·지연 |
@@ -178,6 +178,12 @@ CloudTrail의 별도 저지연 Route 전환은 촬영 필수 조건이 아니다
 | 자동 Containment | Source·Test 후보 존재 | 미완료 | 실제 적용·효과·Rollback·Blast Radius |
 | 관제 Dashboard | 한글 Dashboard·Saved View·Drill-down 존재 | 부분 확인 | Seed Alert 중심 View·동일 TAKE·3분 Test |
 | Remediation·Recovery | `low → impossible`, Terraform 보안 Profile Source 후보 | 미완료 | 승인 Workflow·Runtime·재공격·정상 기능 |
+
+위 Shuffle G0~G2 PASS는 기존 `CAPITAL-ONE-SOC-CONTAINMENT-v1` Legacy
+Transport Scaffold의 과거 검증이다. v1은 `CAPITAL-ONE-SOC-CONTAINMENT-v2`가
+생성·저장·Runtime 검증될 때까지 수정·삭제하지 않고 Rollback 용도로 보존한다.
+v2는 Validator·Dedupe·Containment 계약을 별도로 구축하는 현재 Target이며,
+v1의 PASS를 v2 Runtime PASS로 확대하지 않는다.
 
 ### 현재 Evidence를 잘못 확대하지 않는다
 
@@ -213,8 +219,8 @@ CloudTrail의 별도 저지연 Route 전환은 촬영 필수 조건이 아니다
 
 - 기본 완료 기록은 각 Gate의 체크박스와 짧은 Runtime 결과다. 모든 Gate마다 별도 Bundle·Manifest·
   SHA 파일을 만들지는 않는다.
-- 별도 Evidence 파일은 최종 영상의 핵심 Runtime 주장, Alert↔Execution 일대일, 실제 자동 조치·
-  복구처럼 나중에 다시 확인해야 하는 항목에만 만든다.
+- Durable JSON은 `GT04 alert-execution`, `GT05~06 containment`, `GT09~10 recovery-retest`
+  세 묶음만 만든다. 그 밖의 Gate는 짧은 Secret-safe Runtime 결과로 충분하다.
 - 합성 Test·Preflight·Catch-up/Drain은 `TEST`, `PRE-RUNTIME`, `PRECONDITION`으로 구분하며
   뒤 Gate의 PASS를 대신하지 않는다. Stale backlog는 개별 메시지를 Evidence 목적으로 보존하지 않는다.
 - 기록을 남길 때도 실제 Credential·Token·Cookie·Webhook URI·원문 Secret은 저장하지 않는다.
@@ -238,7 +244,7 @@ CloudTrail의 별도 저지연 Route 전환은 촬영 필수 조건이 아니다
 ### 해야 할 일
 
 - [x] 촬영용 새 `TAKE_ID` 발급 계약 고정
-- [x] Account·Region·Bucket·`validation/*` 고정
+- [x] Account·Region·Bucket·고정 Object `validation/capital-one-demo.csv` 고정
 - [x] 가짜 Object 내용·Hash 고정
 - [x] 실제 Credential 원문 비저장 확인
 - [x] 공격 Runner 3회 Rehearsal
@@ -342,6 +348,13 @@ S3 침해 확정 전 조기 징후를 실제 Push Alert로 보여준다.
 - [ ] Offline Catch-up과 동일 `event_id` 중복 Alert 0
 - [ ] Rule `100103`을 자동 격리 Trigger에서 제거하거나 observe-only로 고정
 
+### Runtime 경계
+
+GT-02·GT-03은 `scope=detection_only` 세션에서 실행한다. 이 구간에는
+`custom-shuffle-soc` Integration을 활성화하지 않으며 Shuffle Containment Write를
+실행하지 않는다. GT-03 Runtime PASS 후에만 최종 고신뢰 Rule의 Integration을 GT-04에서
+연결한다.
+
 ### PASS Evidence
 
 ```text
@@ -379,23 +392,33 @@ Principal/Role Session = 공격 시나리오 승인 대상
 
 ### 해야 할 일
 
+- [ ] `runtime_profile=minimal`, `security_scenario_profile=capital-one-lab` 확인
+- [ ] Terraform-managed secondary control Bucket과 managed negative-control Role의
+      출력이 존재하고 대상이 고정됨을 확인한다. 출력이 없거나 모호하면 임의 Bucket·Principal을
+      사용하지 않고 fail closed한다.
 - [x] 현재 Rule `100100`의 실제 Decoded Field·조건 재검토
 - [x] 부족하면 새 Rule ID 생성
 - [x] Rule Level·Group·Description 확정
 - [ ] Alert에 CloudTrail `eventID`, Principal, Bucket/Key, 성공 여부 포함
 - [ ] 공격 Positive 3회
 - [ ] 정상 `terra-user` Negative Control 3회
-- [ ] 다른 Bucket·Prefix·Principal·실패 응답 대조군
+- [ ] Terraform-managed secondary control Bucket Positive 1회
+- [ ] Terraform-managed Primary의 고정 harmless control Object를 Node Role로 성공 조회하는
+      다른 Prefix Control 1회(정본 Object Key는 구현 시 고정)
+- [ ] Terraform-managed negative-control Principal의 승인 Primary Object 접근 1회
+- [ ] 동일 Node Role·동일 Primary Bucket/Key에 wrong `If-Match`를 사용한 실패 Control 1회
 - [ ] 재수집 동일 `eventID` 중복 처리 확인
 - [ ] Event→Wazuh Alert 실제 지연 측정
 
 ### PASS 기준
 
 ```text
-공격 3/3 Alert
-정상 대조군 0 Alert
-비대상 Prefix 0 Alert
-실패 GetObject 0 Alert
+공격 Positive 3/3 Alert
+normal_operator 3회 → 0 Alert
+other_bucket 1회 → 0 Alert
+other_prefix 1회 → 0 Alert
+other_principal 1회 → 0 Alert
+failure 1회 → 0 Alert
 원본 eventID ↔ Alert 1:1
 ```
 
@@ -432,10 +455,12 @@ Rule이 이 기준을 통과하기 전에는 Shuffle Write를 연결하지 않�
 - [ ] `<integration>` 대상 Rule을 최종 고신뢰 S3 Rule로 변경 또는 별도 등록
 - [ ] `custom-shuffle-soc`가 CloudTrail Alert 필드를 Sanitizer에 포함
 - [ ] Secret·원본 Credential·불필요한 Request 원문 제거
+- [ ] Schema v2 Payload에 `TAKE_ID`를 넣지 않고 원본 CloudTrail `eventID`를 상관·Dedupe에 사용
 - [ ] Webhook Header exact match 유지
 - [ ] 정상 실제 Alert→신규 Execution 1개
 - [ ] wrong/missing Header→Execution 0
 - [ ] 미등록 Rule·Account·Prefix→Write 0
+- [ ] 검증 경로의 외부 Side Effect 0
 - [ ] Wazuh Alert·CloudTrail eventID·Shuffle Execution ID 연결
 - [ ] Retry·Timeout·오류 로그 확인
 
@@ -449,8 +474,12 @@ CloudTrail 확인 Event는 재수집 때 달라질 수 있는 Wazuh Alert ID가 
 Actual Wazuh Rule Alert: 1
 New Shuffle Execution: 1
 Execution terminal: FINISHED/SUCCESS
+Wazuh Alert UTC: <UTC>
+Shuffle Execution UTC: <UTC>
+Alert → Execution latency: <seconds>
 Wrong/missing header execution: 0
 Unexpected action: 0
+External side effect: 0
 ```
 
 ---
@@ -469,6 +498,9 @@ Unexpected action: 0
    또는 사전 승인된 전용 Principal 제한
 ```
 
+GT-05는 고정된 임시 DVWA Quarantine과 `validation/*` 제한만 실행한다. GT-06은
+이 두 제한의 실제 효과와 비대상 영향만 별도로 검증한다.
+
 ### 금지
 
 - 공유 Karpenter Node Role 전체 `DenyAll`
@@ -482,7 +514,8 @@ Unexpected action: 0
 - [ ] NetworkPolicy enforcement 실제 확인
 - [ ] Resource/Permission Deny 대상 고정
 - [ ] Workflow Idempotency
-- [ ] 같은 CloudTrail eventID 10회 전달 시 Action 1회
+- [ ] 같은 CloudTrail eventID 10회 Dedupe Stress를 side-effect-free 경로에서 수행해 Action 1회를 증명
+- [ ] 위 결과가 PASS한 뒤 exact dispatch만 실제 Containment으로 승격
 - [ ] 실패 시 DLQ/오류 상태 또는 명시적 승인 대기
 - [ ] Rollback Workflow·사람 승인 경계
 - [ ] 다른 Namespace·Object Prefix 영향 Test
@@ -491,7 +524,7 @@ Unexpected action: 0
 
 - Shuffle 검증·Containment Outcome
 - NetworkPolicy UID/Commit/Revision
-- Resource Policy/IAM 변경 Diff
+- Resource/Permission 제한 Diff (고정 Allowlist 범위, 광범위 IAM 변경 없음)
 - Action 1회·중복 0
 - 비대상 영향 0
 - Rollback 성공
@@ -583,9 +616,12 @@ Rule ID
 - [ ] 공개본 마스킹 View 분리
 - [ ] Raw Drill-down 링크 확인
 
-### 사용성 PASS
+### HUMAN CHECKPOINT — 사용성 Test
 
-검색 문법을 모르는 팀원이 3분 안에 다음을 설명해야 한다.
+검색 문법을 모르는 팀원이 3분 안에 다음을 설명해야 한다. 이 평가는 사람만 수행하며
+Codex가 임의로 PASS 처리하지 않는다.
+View 구현은 GT-08에서 준비하되, 실제 사용성 판정은 GT-11A Rehearsal과 함께 마지막
+통합 사용자 Checkpoint에서 수행한다.
 
 ```text
 무슨 일이 발생했는가
@@ -656,14 +692,16 @@ DVWA defaultSecurityLevel: low → impossible
 
 이는 애플리케이션 보안 설정 패치다.
 
-### 완성형 Recovery 후보
+### 제외된 Future Work 후보
 
 - IAM 최소 권한
 - `validation/*` 실습 권한 제거 또는 축소
 - IMDSv2 강제
 - Hop Limit 검토·보강
 - 필요 시 Node 교체
-- 임시 IAM Deny·Quarantine 해제
+
+위 항목은 이 촬영 Goal에서 Apply·Runtime 검증하지 않는다. 임시 Quarantine과
+`validation/*` 제한 해제는 촬영 Reset 운영 절차에서만 다룬다.
 
 ### 해야 할 일
 
@@ -673,15 +711,15 @@ DVWA defaultSecurityLevel: low → impossible
 - [ ] 예상하지 않은 Diff 0
 - [ ] Argo exact Commit SHA 배포
 - [ ] 새 Pod·새 세션에서 `impossible`
-- [ ] IAM/IMDS Apply는 Fresh Plan·사람 승인·Post-Apply 확인
 - [ ] 격리 해제 순서·주체·UTC 기록
+- [ ] IAM·IMDS·Node Apply를 실행하거나 적용 완료로 주장하지 않음
 
 ### PASS Evidence
 
 - 승인 기록
 - GitHub Run·Commit SHA
 - Argo Revision·Healthy
-- 실제 IAM/IMDS Runtime
+- 고정 `low → impossible` Remediation Runtime
 - 임시 조치 해제 Evidence
 
 ---
@@ -699,7 +737,9 @@ DVWA defaultSecurityLevel: low → impossible
 - [ ] 기존 Credential/Session의 보호 대상 접근 실패
 - [ ] 정상 로그인 성공
 - [ ] 승인 기능 성공
-- [ ] 새 Rule `100103` 조기 위협 Event·Rule `100104` 고신뢰 S3 성공 Alert 증가 없음
+- [ ] 새 Rule `100104` 고신뢰 S3 성공 Alert 증가 없음
+- [ ] Rule `100103` 조기 경보는 관찰값으로 기록하되 GT-10 PASS를 위해 0으로 만들도록
+  요구하지 않음
 - [ ] 관찰 시간창 고정
 
 ### PASS 기준
@@ -713,7 +753,10 @@ DVWA defaultSecurityLevel: low → impossible
 
 ---
 
-## GT-11A — 촬영 전 준비·Rehearsal·Final Recording Baseline
+## GT-11A — 촬영 전 준비·Rehearsal·Final Recording Baseline (HUMAN CHECKPOINT)
+
+GT-08 사용성 Test와 GT-11A Rehearsal은 마지막 통합 사용자 Checkpoint다. 두 결과를
+사람이 확인하기 전에는 촬영 가능 상태로 표시하지 않는다.
 
 ### 해야 할 일
 
@@ -726,18 +769,23 @@ DVWA defaultSecurityLevel: low → impossible
 - [ ] 편집 자막 Template 준비
 - [ ] 실패 TAKE 처리·수동 Reset Rehearsal
 - [ ] 팀원별 내레이션 담당 확정
-- [ ] 본편 전체 2회 무중단 Rehearsal
+- [ ] 본편 전체 2회 무중단 Rehearsal — 사람이 확인하고 PASS를 기록
 
 ### FINAL RECORDING BASELINE
 
 - [ ] DVWA가 촬영용 취약 Baseline인 `defaultSecurityLevel=low`
 - [ ] 이전 DVWA Quarantine 해제
 - [ ] 이전 `validation/*` 임시 Deny·추가 접근 제한 해제
-- [ ] Wazuh Manager·Indexer·Dashboard와 최종 Shuffle Workflow READY
+- [ ] Wazuh Manager·Indexer·Dashboard와 최종 `CAPITAL-ONE-SOC-CONTAINMENT-v2`
+      Workflow/개별 Webhook READY. v1은 rollback-only이며 최종 경로가 아님
 - [ ] Baseline Git SHA 고정, Argo CD가 같은 Revision으로 `Synced + Healthy`, 새 Pod Ready
+- [ ] Terraform Runtime이 `minimal + capital-one-lab`
 - [ ] 이전 임시 Credential 잔존 0
 - [ ] 새 `FINAL_TAKE_ID`와 `START_UTC` 기록
 - [ ] DLQ `0`
+- [ ] Bridge heartbeat가 fresh이고 상태가 `READY` 또는 `RUNNING`
+- [ ] Primary queue in-flight (`queue_not_visible`) `0`
+- [ ] Primary queue oldest age `<=120`초
 - [ ] stale Event와 새 TAKE를 명확히 구분 가능
 - [ ] 이전 Event가 새 자동 조치를 오발하지 않음
 
@@ -747,10 +795,15 @@ DVWA defaultSecurityLevel: low → impossible
 FINAL RECORDING BASELINE: PASS
 DVWA vulnerable baseline: READY
 Previous containment: RELEASED
-Wazuh / Shuffle: READY
+Wazuh / Shuffle v2: READY (`CAPITAL-ONE-SOC-CONTAINMENT-v2`)
+Shuffle v1: rollback-only / final path inactive
 Argo CD: Synced + Healthy / revision <SHA>
+Terraform Runtime: minimal + capital-one-lab
 Previous temporary credential: 0
 DLQ: 0
+Bridge heartbeat: fresh / READY
+Primary in-flight: 0
+Primary oldest age: <=120s
 Stale event / new TAKE separation: PASS
 FINAL_TAKE_ID: <ID>
 START_UTC: <UTC>
@@ -761,8 +814,8 @@ Queue 전체 Purge나 과거 Event의 Evidence 목적 재보존은 요구하지 
 
 ### 촬영 시작 조건
 
-`GT-00~GT-10`이 각 Gate의 PASS 기준을 만족하고 `GT-11A`가 PASS여야 한다. Plan-only나
-합성 Payload 성공으로 대체하지 않는다.
+`GT-00~GT-10`이 각 Gate의 PASS 기준을 만족하고, 사람이 확인한 `GT-11A HUMAN CHECKPOINT`
+가 PASS여야 한다. Plan-only나 합성 Payload 성공으로 대체하지 않는다.
 
 ---
 
@@ -796,8 +849,8 @@ Queue 전체 Purge나 과거 Event의 Evidence 목적 재보존은 요구하지 
 
 1. Workload Quarantine Target 고정
 2. `validation/*` Resource/Permission 제한 방식 결정
-3. Validator·Dispatcher Allowlist
-4. Dry Run
+3. Validator·고정 Containment Action Allowlist
+4. Side-effect-free Dedupe Stress
 5. 실제 Apply·Rollback
 6. GT-05·GT-06
 
@@ -815,7 +868,7 @@ Queue 전체 Purge나 과거 Event의 Evidence 목적 재보존은 요구하지 
 
 1. `low → impossible` 별도 Workflow
 2. GitHub/Argo Runtime
-3. IAM·IMDS 영구 대응
+3. IAM·IMDS·Node 대응은 Future Work로 기록만 하고 실행하지 않음
 4. 동일 공격·정상 기능 Test
 5. GT-09·GT-10
 
@@ -896,19 +949,24 @@ Wazuh는 근거·관측 공백·Runbook을 보여주고, 관제자가 근본 대
 
 ---
 
-# 9. 최종 Stop Condition
+# 9. 촬영 시작·최종 완료 Stop Condition
 
-다음 수치가 모두 0이면 문서 검토를 끝내고 촬영한다.
+촬영 시작과 최종 완료를 분리한다.
 
 ```text
-미완료 Gate = 0
+촬영 시작: GT-00~GT-10 PASS + GT-11A HUMAN CHECKPOINT PASS
+촬영 실행: Recording Script
+최종 완료: 촬영 + GT-11B PASS
 정상 대조군 오탐 = 0
 실제 Alert↔Execution 미연결 = 0
 중복 자동 조치 = 0
 비대상 영향 = 0
 같은 TAKE에서 빠진 필수 Evidence = 0
 Secret 노출 = 0
-설명할 수 없는 관측 공백 = 0
+설명되지 않은 필수 Evidence 공백 = 0
 ```
+
+공통 ID 부재나 Pod→IMDS 직접 네트워크 로그 부재처럼 이미 확인·문서화한 관측 공백은
+촬영에서 숨기지 않고 설명하면 허용한다.
 
 그 이후의 개선점은 촬영 완료를 막지 않고 Future Work로 이동한다.

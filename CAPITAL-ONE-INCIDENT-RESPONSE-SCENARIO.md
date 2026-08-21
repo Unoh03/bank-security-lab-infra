@@ -28,10 +28,11 @@
 | 신호 | 의미 | 자동 조치 |
 |---|---|---|
 | Rule `100103` | `command.execution + ec2_imds + succeeded` 조기 이상 징후 | 없음. Alert·Evidence만 보존 |
-| Rule `100100` 또는 새 엄격한 Rule | 승인 범위의 `validation/* GetObject` 성공을 정상 흐름과 구분한 고신뢰 침해 확인 | 사전 승인된 좁고 가역적인 격리 |
+| Rule `100104` (Level 12) | 승인 범위의 `validation/* GetObject` 성공을 정상 흐름과 구분한 고신뢰 침해 확인 | 사전 승인된 좁고 가역적인 격리 |
 
-현재 Rule `100100`이 고신뢰 계약을 모두 만족하면 재사용한다. 부족하면 기존 Rule의
-의미를 조용히 바꾸지 않고 새 Rule ID를 만든다.
+Rule `100104` (Level 12)를 이번 시나리오의 고신뢰 자동 조치용 ID로 고정한다.
+기존 Rule `100100`의 양성 Runtime은 역사적 Evidence로만 보존하며 자동 조치용으로
+재사용하지 않는다.
 
 ---
 
@@ -45,6 +46,10 @@
 - Wazuh·Shuffle·5개 로그 Source가 READY여야 한다.
 - 이전 TAKE의 Credential·임시 조치·활성 실행이 남아 있으면 공격하지 않는다.
 - TAKE_ID는 Evidence Bundle을 묶는 외부 식별자이며 CloudTrail Event 필드라고 주장하지 않는다.
+- TAKE_ID는 CloudTrail·Wazuh·Shuffle Payload에 삽입하지 않는다. 단일 만료 전 Active
+  TAKE와 Event Time·Account·Region·Role·Bucket·Key가 모호성 없이 일치할 때만 외부
+  Evidence Control Metadata로 연결하고, 그렇지 않으면 원본 CloudTrail `eventID`만
+  상관·Dedupe 식별자로 사용한다.
 
 ### Phase 1 — Early Detection
 
@@ -92,7 +97,10 @@ Write를 연결하지 않는다.
 
 고신뢰 S3 Alert가 발생한 뒤 Wazuh Integrator가 최소 필드만 인증된 Shuffle Webhook으로
 보낸다. Shuffle은 Schema·Account·Rule·Resource Allowlist와 CloudTrail `eventID`
-Dedupe를 통과한 경우에만 다음 조치를 한 번 실행한다.
+Dedupe를 통과한 경우에만 다음 조치를 한 번 실행한다. Dedupe 10회 Stress는 먼저
+side-effect-free 검증으로 Action 1회를 증명한 뒤, exact dispatch만 실제 조치로 승격한다.
+GT-04의 Alert→Execution Transport 검증은 외부 Side Effect 0으로 유지하고, 실제 임시
+Quarantine과 `validation/*` 제한은 GT-05에서만 실행한다.
 
 1. 고정된 DVWA Workload를 Quarantine한다.
 2. 공유 Node Role 전체가 아니라 `validation/*` 추가 접근 또는 사전 승인된 전용
@@ -133,13 +141,13 @@ Source를 관통하는 공통 ID와 Pod→IMDS 직접 네트워크 Event가 없�
 
 1. DVWA `defaultSecurityLevel: low → impossible` 보안 설정 패치
 2. 정확한 GitHub Commit SHA와 Argo CD Revision 배포 확인
-3. IAM 최소 권한과 `validation/*` 실습 권한 제거
-4. IMDSv2·Hop Limit·필요한 Node 교체 검토·적용
-5. 동일 공격과 정상 기능 재검증
-6. 조건 충족 뒤 임시 격리 해제와 Incident 종료
+3. 동일 공격과 정상 기능 재검증
+4. 조건 충족 뒤 임시 격리 해제와 Incident 종료
 
 `low → impossible`은 애플리케이션 Remediation이다. Workload 격리나 Credential
 폐기가 아니다.
+IAM 최소 권한·IMDSv2·Hop Limit·Node 교체 Apply는 이 촬영 Goal의 범위에서 제외하며,
+적용한 것처럼 말하지 않는다. 필요하면 별도 승인된 Future Work로 다룬다.
 
 ### Phase 6 — Retest and Closure
 
@@ -228,4 +236,5 @@ Alert의 시간·Principal·Bucket/Key로 저장된 관련 로그를 좁혀 조�
 ```
 
 구축·Runtime 완료 판정과 촬영 순서는 `CAPITAL-ONE-SOC-DEMO-PLAN.md`의
-`GT-00~GT-11`을 그대로 따른다.
+`GT-00~GT-10 → GT-11A → Recording → GT-11B`를 따른다. `GT-08` 사용성 Test와
+`GT-11A` Rehearsal은 사람이 확인하는 Checkpoint이며 자동 PASS 처리하지 않는다.

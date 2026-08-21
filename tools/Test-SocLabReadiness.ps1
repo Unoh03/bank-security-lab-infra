@@ -5,6 +5,7 @@ param(
     [string]$SecretRoot = '',
     [string]$EvidenceRoot = '',
     [switch]$Online,
+    [switch]$IncludeLegacyChecks,
     [switch]$RequireReady
 )
 
@@ -30,9 +31,10 @@ function Add-ReadinessCheck {
     param(
         [Parameter(Mandatory)][string]$Name,
         [Parameter(Mandatory)][bool]$Ready,
-        [Parameter(Mandatory)][string]$Detail
+        [Parameter(Mandatory)][string]$Detail,
+        [bool]$Current = $true
     )
-    $checks.Add([pscustomobject]@{Name=$Name;Ready=$Ready;Detail=$Detail})
+    $checks.Add([pscustomobject]@{Name=$Name;Ready=$Ready;Current=$Current;Detail=$Detail})
 }
 
 $dvwaCommitPaths = @(
@@ -44,22 +46,72 @@ $dvwaCommitPaths = @(
     'tests/test_soc_security_level_transition.py',
     'tests/test_soc_workflow_contract.py'
 )
+$currentV2Paths = @(
+    (Join-Path $repositoryRoot 'observability\wazuh\integrations\custom-shuffle-soc'),
+    (Join-Path $repositoryRoot 'observability\wazuh\templates\shuffle-integration.xml'),
+    (Join-Path $repositoryRoot 'observability\shuffle\sanitized-alert.schema.json'),
+    (Join-Path $repositoryRoot 'observability\shuffle\shuffle-soc-workflow-contract.json'),
+    (Join-Path $repositoryRoot 'observability\shuffle\apps\aws-topology-soc-validator\1.0.0\api.yaml'),
+    (Join-Path $repositoryRoot 'observability\shuffle\apps\aws-topology-soc-validator\1.0.0\src\validator.py'),
+    (Join-Path $repositoryRoot 'tools\soc_shuffle_observe_only.py')
+)
 $sourcePaths = @(
     (Join-Path $repositoryRoot 'tools\Start-SocLab.ps1'),
-    (Join-Path $repositoryRoot 'observability\scenarios\Invoke-CapitalOneSocE2E.ps1'),
     (Join-Path $repositoryRoot 'observability\scenarios\Invoke-SocLabReset.ps1'),
-    (Join-Path $repositoryRoot 'observability\shuffle\apps\aws-topology-soc-validator\1.0.0\api.yaml'),
-    (Join-Path $repositoryRoot 'observability\shuffle\apps\aws-topology-soc-github-dispatcher\1.0.0\api.yaml')
+    $currentV2Paths
 )
 $sourcePaths += @($dvwaCommitPaths | ForEach-Object { Join-Path $dvwaRoot $_ })
 $missingSource = @($sourcePaths | Where-Object {
     -not (Test-Path -LiteralPath $_ -PathType Leaf)
 })
 Add-ReadinessCheck -Name 'source-contracts' -Ready ($missingSource.Count -eq 0) `
-    -Detail $(if ($missingSource.Count -eq 0) {'required files present'} else {"missing=$($missingSource.Count)"})
+    -Detail $(if ($missingSource.Count -eq 0) {'runtime, current v2 contracts, and fixed DVWA files present'} else {"missing=$($missingSource.Count)"})
 if ($missingSource.Count -ne 0) {
     $remaining.Add('Agent: restore or complete the missing fixed source files.')
 }
+
+$v2ContractReady = $false
+$v2ContractDetail = 'current v2 contract was not parsed'
+try {
+    $schemaPath = Join-Path $repositoryRoot 'observability\shuffle\sanitized-alert.schema.json'
+    $contractPath = Join-Path $repositoryRoot 'observability\shuffle\shuffle-soc-workflow-contract.json'
+    $schema = Get-Content -LiteralPath $schemaPath -Raw | ConvertFrom-Json -Depth 30
+    $contract = Get-Content -LiteralPath $contractPath -Raw | ConvertFrom-Json -Depth 30
+    $incidentProperties = @($schema.properties.incident.properties.PSObject.Properties.Name)
+    $v2ContractReady = (
+        [int]$schema.properties.schema_version.const -eq 2 -and
+        [int]$contract.schema_version -eq 2 -and
+        [string]$contract.workflow.name -ceq 'CAPITAL-ONE-SOC-CONTAINMENT-v2' -and
+        [string]$contract.input_contract.allowlist.rule_id -ceq '100104' -and
+        [string]$contract.datastore.category -ceq 'soc-v2' -and
+        'take_id' -notin $incidentProperties -and
+        'event_id' -notin $incidentProperties
+    )
+    if ($v2ContractReady) {
+        $v2ContractDetail = 'schema v2 / Workflow v2 / Rule 100104 / eventID dedupe / TAKE outside payload'
+    } else {
+        $v2ContractDetail = 'schema, Workflow, Rule, dedupe, or TAKE-boundary mismatch'
+    }
+} catch {
+    $v2ContractDetail = 'current v2 schema or Workflow contract is missing or invalid'
+}
+Add-ReadinessCheck -Name 'v2-contracts' -Ready $v2ContractReady -Detail $v2ContractDetail
+if (-not $v2ContractReady) {
+    $remaining.Add('Agent: align the current v2/100104 schema, Workflow contract, and eventID dedupe boundary.')
+}
+
+# These files remain as historical/GT09 remediation material. They are not
+# current GT03-GT06 entry points and are deliberately excluded from the v2
+# source gate so their presence cannot make an old dispatcher look current.
+$legacyV1Paths = @(
+    (Join-Path $repositoryRoot 'observability\scenarios\Invoke-CapitalOneSocE2E.ps1'),
+    (Join-Path $repositoryRoot 'observability\shuffle\apps\aws-topology-soc-github-dispatcher\1.0.0\api.yaml'),
+    (Join-Path $repositoryRoot 'observability\shuffle\apps\aws-topology-soc-github-dispatcher\1.0.0\src\dispatcher.py')
+)
+$legacyV1Present = @($legacyV1Paths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count
+Add-ReadinessCheck -Name 'legacy-v1-boundary' -Ready $true `
+    -Current $false `
+    -Detail "EXCLUDED/NOT_CURRENT: legacy_files_present=$legacyV1Present/$($legacyV1Paths.Count); Rule 100103/take_id only"
 
 $dvwaScopeReady = $false
 $dvwaScopeDetail = 'local Git status could not be validated'
@@ -201,23 +253,23 @@ if ('shuffle_api_key' -in $missingSecrets -or 'shuffle_webhook_url' -in $missing
 
 $uploadReady = $false
 $upload = $null
-try {
-    $expectedOrgId = if ($null -ne $configuration) {
-        [string]$configuration.shuffle_org_id
-    } else { '' }
-    $upload = Get-ShuffleSocAppUploadEvidence -EvidenceRoot $resolvedEvidenceRoot `
-        -ExpectedOrgId $expectedOrgId
-    $uploadReady = $true
-} catch { $uploadReady = $false }
-Add-ReadinessCheck -Name 'shuffle-private-app-upload' -Ready $uploadReady `
-    -Detail $(if ($uploadReady) {'Validator and Dispatcher upload evidence valid'} else {'bundle upload evidence absent or invalid'})
-if (-not $uploadReady) {
-    $remaining.Add('User approval: upload the already built, reviewed Private App bundle to the selected Shuffle organization.')
+if ($IncludeLegacyChecks) {
+    try {
+        $expectedOrgId = if ($null -ne $configuration) {
+            [string]$configuration.shuffle_org_id
+        } else { '' }
+        $upload = Get-ShuffleSocAppUploadEvidence -EvidenceRoot $resolvedEvidenceRoot `
+            -ExpectedOrgId $expectedOrgId
+        $uploadReady = $true
+    } catch { $uploadReady = $false }
 }
+Add-ReadinessCheck -Name 'legacy-v1-app-upload' -Ready $uploadReady `
+    -Current $false `
+    -Detail $(if (-not $IncludeLegacyChecks) {'EXCLUDED/NOT_CURRENT: legacy check not run; use -IncludeLegacyChecks only for historical GT09 review'} elseif ($uploadReady) {'EXCLUDED/NOT_CURRENT: legacy Validator + Dispatcher upload evidence valid; never current v2 containment'} else {'EXCLUDED/NOT_CURRENT: legacy v1 bundle upload evidence absent or invalid'})
 
 $gateB5Ready = $false
 $gateB5Detail = 'requires configured Workflow and Runtime Evidence'
-if ($null -ne $configuration) {
+if ($IncludeLegacyChecks -and $null -ne $configuration) {
     try {
         $proof = Assert-ShuffleSocGateB5Evidence -EvidenceRoot $resolvedEvidenceRoot `
             -WorkflowId ([string]$configuration.shuffle_workflow_id)
@@ -225,14 +277,13 @@ if ($null -ne $configuration) {
         $gateB5Detail = "verified take=$([string]$proof.TakeId)"
     } catch { $gateB5Detail = 'no valid current Gate B5 Evidence' }
 }
-Add-ReadinessCheck -Name 'shuffle-gate-b5' -Ready $gateB5Ready -Detail $gateB5Detail
-if (-not $gateB5Ready) {
-    $remaining.Add('User approval: run the safe 10-request Gate B5 Stub test after the Cloud Workflow is assembled.')
-}
+Add-ReadinessCheck -Name 'legacy-v1-gate-b5' -Ready $gateB5Ready `
+    -Current $false `
+    -Detail $(if (-not $IncludeLegacyChecks) {'EXCLUDED/NOT_CURRENT: legacy check not run; use -IncludeLegacyChecks only for historical review'} else {"EXCLUDED/NOT_CURRENT: legacy v1 evidence: $gateB5Detail"})
 
 $productionReady = $false
-$productionDetail = if ($Online) {'online validation not reached'} else {'not checked; use -Online after Cloud setup'}
-if ($Online -and $null -ne $configuration -and $uploadReady -and
+$productionDetail = if (-not $IncludeLegacyChecks) {'EXCLUDED/NOT_CURRENT: legacy check not run; use -IncludeLegacyChecks only for historical review'} elseif ($Online) {'online validation not reached'} else {'not checked; use -Online after Cloud setup'}
+if ($IncludeLegacyChecks -and $Online -and $null -ne $configuration -and $uploadReady -and
     'shuffle_api_key' -in $validSecrets) {
     try {
         $apiKey = Unprotect-SocSecret -Name 'shuffle_api_key' -SecretRoot $resolvedSecretRoot
@@ -267,22 +318,21 @@ if ($Online -and $null -ne $configuration -and $uploadReady -and
         $apiKey = $null
     }
 }
-Add-ReadinessCheck -Name 'shuffle-production-export' -Ready $productionReady `
+Add-ReadinessCheck -Name 'legacy-v1-production-export' -Ready $productionReady `
+    -Current $false `
     -Detail $productionDetail
-if (-not $productionReady) {
-    $remaining.Add('User: create the repository-scoped fine-grained PAT, register it as Dispatcher App Authentication, and allow read-only App/Auth/Workflow validation.')
-}
 
-$staticCheckNames = @('source-contracts','dvwa-local-scope')
+$staticCheckNames = @('source-contracts','v2-contracts','dvwa-local-scope')
+$legacyCheckNames = @('legacy-v1-boundary','legacy-v1-app-upload','legacy-v1-gate-b5','legacy-v1-production-export')
 $staticReady = @($checks | Where-Object {
     $_.Name -in $staticCheckNames -and -not $_.Ready
 }).Count -eq 0
 $cloudReady = @($checks | Where-Object {
-    $_.Name -notin $staticCheckNames -and -not $_.Ready
+    $_.Current -and $_.Name -notin $staticCheckNames -and $_.Name -notin $legacyCheckNames -and -not $_.Ready
 }).Count -eq 0 -and $staticReady
 Write-Host 'SOC lab readiness (no secret values printed)'
 foreach ($check in $checks) {
-    $state = if ($check.Ready) {'READY'} else {'PENDING'}
+    $state = if (-not $check.Current) {'EXCLUDED'} elseif ($check.Ready) {'READY'} else {'PENDING'}
     Write-Host ("[{0}] {1}: {2}" -f $state,$check.Name,$check.Detail)
 }
 Write-Host "SOC_STATIC_READY=$($staticReady.ToString().ToLowerInvariant())"

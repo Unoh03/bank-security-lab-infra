@@ -350,7 +350,8 @@ resource "aws_cloudtrail" "security" {
         field = "resources.ARN"
         starts_with = [
           "arn:${data.aws_partition.current.partition}:s3:::${local.name}-primary-",
-          "arn:${data.aws_partition.current.partition}:s3:::${local.name}-dr-"
+          "arn:${data.aws_partition.current.partition}:s3:::${local.name}-dr-",
+          "arn:${data.aws_partition.current.partition}:s3:::${local.name}-capital-one-secondary-control-"
         ]
       }
     }

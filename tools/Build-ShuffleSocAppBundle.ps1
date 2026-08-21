@@ -2,29 +2,41 @@
 [CmdletBinding()]
 param(
     [string]$OutputDirectory = '',
-    [string]$ConfirmBuild = ''
+    [string]$ConfirmBuild = '',
+    [switch]$IncludeLegacyGt09Dispatcher
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+. (Join-Path $PSScriptRoot 'ShuffleSocValidatorPackage.ps1')
+
 $apps = @(
     [pscustomobject]@{
         name='AWS Topology SOC Validator'
         slug='aws-topology-soc-validator'
         version='1.0.0'
+        contract_role='current-v2-validator'
+        current_v2=$true
         test='tests.test_soc_shuffle_validator_app'
-        files=@('api.yaml','Dockerfile','requirements.txt','src\app.py','src\validator.py')
-    },
-    [pscustomobject]@{
+        files=@('api.yaml','Dockerfile','requirements.txt','src\app.py')
+        source_files=@('api.yaml','Dockerfile','requirements.txt','src\app.py','src\validator.py')
+    }
+)
+$legacyDispatcherApp = [pscustomobject]@{
         name='AWS Topology SOC GitHub Dispatcher'
         slug='aws-topology-soc-github-dispatcher'
         version='1.0.0'
+        contract_role='legacy-gt09-remediation-dispatcher'
+        current_v2=$false
         test='tests.test_soc_shuffle_github_dispatcher_app'
         files=@('api.yaml','Dockerfile','requirements.txt','src\app.py','src\dispatcher.py')
-    }
-)
+        source_files=@('api.yaml','Dockerfile','requirements.txt','src\app.py','src\dispatcher.py')
+}
+if ($IncludeLegacyGt09Dispatcher) {
+    $apps += $legacyDispatcherApp
+}
 
 if (-not $OutputDirectory) {
     if (-not $env:USERPROFILE) {
@@ -38,7 +50,13 @@ $stamp = [datetimeoffset]::UtcNow.ToString('yyyyMMddTHHmmssZ')
 $manifestPath = Join-Path $resolvedOutput "shuffle-soc-app-bundle-$stamp.json"
 
 Write-Host 'Shuffle SOC private App bundle preview'
-Write-Host 'Apps: Validator 1.0.0 + fixed GitHub Dispatcher 1.0.0'
+if ($IncludeLegacyGt09Dispatcher) {
+    Write-Host 'Apps: current v2 Validator 1.0.0 + explicitly opted-in legacy GT09 remediation Dispatcher 1.0.0'
+    Write-Host 'Dispatcher role: legacy-gt09-remediation-dispatcher; EXCLUDED from current v2/100104 GT03-GT06.'
+} else {
+    Write-Host 'Apps: current v2 Validator 1.0.0'
+    Write-Host 'Legacy GT09 Dispatcher: EXCLUDED by default; use -IncludeLegacyGt09Dispatcher only for legacy review.'
+}
 Write-Host "Output directory: $resolvedOutput"
 Write-Host 'No Cloud upload, Workflow execution, credential access, GitHub write, AWS change, or attack is performed.'
 if ($ConfirmBuild -cne 'BUILD SHUFFLE SOC APPS') {
@@ -48,7 +66,7 @@ if ($ConfirmBuild -cne 'BUILD SHUFFLE SOC APPS') {
 foreach ($app in $apps) {
     $appRoot = Join-Path $repositoryRoot `
         "observability\shuffle\apps\$($app.slug)\$($app.version)"
-    foreach ($relativePath in $app.files) {
+    foreach ($relativePath in $app.source_files) {
         if (-not (Test-Path -LiteralPath (Join-Path $appRoot $relativePath) -PathType Leaf)) {
             throw "The Shuffle App package source is incomplete: $($app.slug)/$relativePath"
         }
@@ -68,13 +86,35 @@ foreach ($app in $apps) {
         "$($app.slug)-$($app.version)-$stamp.zip"
     $staging = Join-Path ([IO.Path]::GetTempPath()) `
         ("shuffle-soc-app-" + [guid]::NewGuid().ToString('N'))
+    $validatorExpectedPackage = $null
+    if ([string]$app.slug -ceq 'aws-topology-soc-validator') {
+        $validatorExpectedPackage = New-SocShuffleValidatorExpectedPackage `
+            -AppRoot $appRoot
+    }
     try {
         foreach ($relativePath in $app.files) {
             $destination = Join-Path $staging $relativePath
             New-Item -ItemType Directory -Path (Split-Path -Parent $destination) `
                 -Force | Out-Null
-            Copy-Item -LiteralPath (Join-Path $appRoot $relativePath) `
-                -Destination $destination
+            if ($null -ne $validatorExpectedPackage) {
+                $entryName = ([string]$relativePath).Replace('\','/')
+                $entryDefinition = $validatorExpectedPackage.Entries[$entryName]
+                if ($null -eq $entryDefinition) {
+                    throw "The deterministic Validator package map is missing: $entryName"
+                }
+                [IO.File]::WriteAllBytes($destination, [byte[]]$entryDefinition.Bytes)
+                if ($entryName -ceq 'src/app.py') {
+                    & python -B -c `
+                        'import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"), filename=sys.argv[1])' `
+                        $destination
+                    if ($LASTEXITCODE -ne 0) {
+                        throw 'The generated Validator src/app.py failed Python AST parsing.'
+                    }
+                }
+            } else {
+                Copy-Item -LiteralPath (Join-Path $appRoot $relativePath) `
+                    -Destination $destination
+            }
         }
         Compress-Archive -LiteralPath @(
             (Join-Path $staging 'api.yaml'),
@@ -87,11 +127,24 @@ foreach ($app in $apps) {
             Remove-Item -LiteralPath $staging -Recurse -Force
         }
     }
-    $hash = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($null -ne $validatorExpectedPackage) {
+        [byte[]]$builtPackageBytes = [IO.File]::ReadAllBytes($packagePath)
+        try {
+            $builtPackageProof = Assert-SocShuffleValidatorPackageSnapshot `
+                -PackageBytes $builtPackageBytes -AppRoot $appRoot
+            $hash = [string]$builtPackageProof.PackageSha256
+        } finally {
+            [Array]::Clear($builtPackageBytes, 0, $builtPackageBytes.Length)
+        }
+    } else {
+        $hash = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
     $manifestApps.Add([ordered]@{
         name=[string]$app.name
         slug=[string]$app.slug
         version=[string]$app.version
+        contract_role=[string]$app.contract_role
+        current_v2=[bool]$app.current_v2
         package_path=$packagePath
         package_sha256=$hash
         entries=@($app.files | ForEach-Object { $_.Replace('\','/') } | Sort-Object)
@@ -101,6 +154,9 @@ foreach ($app in $apps) {
 $manifest = [ordered]@{
     schema_version=1
     artifact_kind='shuffle-soc-private-app-bundle'
+    current_contract='v2/100104'
+    legacy_dispatcher_included=[bool]$IncludeLegacyGt09Dispatcher
+    legacy_dispatcher_excluded_from_current_v2=$true
     created_at_utc=[datetimeoffset]::UtcNow.ToString('o')
     apps=@($manifestApps)
     secret_persisted=$false
