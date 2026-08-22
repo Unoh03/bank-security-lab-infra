@@ -25,6 +25,12 @@ resource "aws_lb_target_group" "primary" {
   target_type = "ip"
   vpc_id      = module.primary_vpc.vpc_id
 
+  stickiness {
+    type            = "lb_cookie"
+    cookie_duration = 86400
+    enabled         = true
+  }
+
   health_check {
     path    = var.web_health_check_path
     matcher = "200-399"
@@ -66,6 +72,12 @@ resource "aws_lb_target_group" "dr" {
   protocol    = "HTTP"
   target_type = "ip"
   vpc_id      = module.dr_vpc[0].vpc_id
+
+  stickiness {
+    type            = "lb_cookie"
+    cookie_duration = 86400
+    enabled         = true
+  }
 
   health_check {
     path    = var.web_health_check_path
