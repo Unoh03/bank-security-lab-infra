@@ -15,7 +15,7 @@
    — 촬영 범위, 화면, 조작, 내레이션, 필수 Evidence
 4. [`CAPITAL-ONE-SOC-E2E-BLUEPRINT.md`](CAPITAL-ONE-SOC-E2E-BLUEPRINT.md)
    — Hop별 Interface·상태·Evidence 계약
-5. [`CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md`](CAPITAL-ONE-SOC-TERRAFORM-IMPLEMENTATION-PLAN.md)
+5. [`구현_계획.md`](구현_계획.md)
    — AWS Source와 영구 복구의 Terraform 경계
 6. [`observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md`](observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md)
    — 빠른 AWS → Wazuh 전달 계약
