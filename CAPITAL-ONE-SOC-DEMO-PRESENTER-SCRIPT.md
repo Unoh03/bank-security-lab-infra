@@ -1,0 +1,453 @@
+# Capital One SOC 시연 발표자용 촬영 대본
+
+> 목적: 발표자가 이 문서의 **화면 큐·조작·대사**를 위에서 아래로 따라가며 촬영한다.
+>
+> 화자 설정: 사건을 처음 발견하는 관제자 연기가 아니라, 공격 흐름과 대응 원리를 이미
+> 알고 있는 발표자가 각 단계의 실제 화면 증거를 설명한다.
+>
+> 기술 판정과 금지 표현은
+> [`CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md`](./CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md)를
+> 우선한다. 이 문서는 그 계약을 실제 촬영 동작과 대사로 번역한 큐시트다.
+
+---
+
+## 1. 현재 사용 범위
+
+| 구간 | 사용 여부 |
+|---|---|
+| Reset → `low` | 사용 가능 |
+| 최초 공격 → Rule `100110` | 사용 가능 |
+| Rule `100110` → 실제 Pod 격리 | Fresh 재시험 PASS 뒤 본 촬영 가능 |
+| 자연 CloudTrail 수집 → Rule `100111` | 사용 가능, 대기 구간 빨리감기 |
+| Rule `100111` → 자동 `impossible` | Fresh 재시험 PASS 뒤 본 촬영 가능 |
+| 사람 승인 WAF 차단 → 재공격 | **Runtime PASS 전 촬영 금지** |
+
+WAF 구간은 대사와 화면 목적만 미리 적는다. 실제 Apply 명령, 고정 Rule ID, Read-back,
+Reattack PASS가 확정되기 전에는 성공 장면처럼 촬영하지 않는다.
+
+---
+
+## 2. 편집·진실성 규칙
+
+1. 원본 화면 녹화는 중단하지 않고 보존한다.
+2. Rule `100111` 자연 수집 대기만 빨리감기한다.
+3. 빨리감기 시작 전과 종료 후 같은 Dashboard, Rule Count, 시간 범위를 보여준다.
+4. 자막에 배속과 실제 대기 시간을 함께 쓴다.
+
+```text
+8배속 — 실제 CloudTrail 수집 대기 00분 00초
+자연 수집 경로 유지 / Replay·Synthetic Event·직접 Webhook 호출 없음
+```
+
+5. 서로 다른 TAKE를 이어 붙이거나 장면 순서를 바꾸지 않는다.
+6. 기다리는 동안 Dashboard를 새로 고치는 행위는 허용한다. 수집기 재시작, 직접 Event
+   주입, Workflow 수동 호출은 허용하지 않는다.
+7. 배속 종료 지점 앞뒤로 2초 이상 정상 속도 화면을 남긴다.
+
+---
+
+## 3. 촬영 전 창 배치
+
+촬영 전에 아래 창을 열어 둔다. 로그인 정보와 Secret이 보이는 창은 녹화 영역 밖에 둔다.
+
+1. **Wazuh** — `Capital One Incident Timeline v2`
+2. **Argo CD** — `dvwa` Application Resource Tree
+3. **DVWA** — `https://unoh.click/security.php`
+4. **GitHub Actions** — `Unoh03/Uns-DVWA`
+5. **PowerShell 7** — 공격 명령이 입력되기 직전인 터미널
+
+Wazuh Dashboard에서 촬영할 Panel 이름은 다음과 같다.
+
+- `[CAPITAL-ONE] 01 Rule 100110 조기탐지`
+- `[CAPITAL-ONE] 02 Rule 100111 침해확정`
+- `[CAPITAL-ONE] 03 Push Health`
+- `[CAPITAL-ONE] 04 최초 공격 ALLOW`
+- `[CAPITAL-ONE] 05 재공격 BLOCK`
+- `[CAPITAL-ONE] 10 WAF 공격 요청 추이`
+- `[CAPITAL-ONE] 11 Wazuh 탐지 추이`
+- `[CAPITAL-ONE] 20 Push 공격 단계`
+- `[CAPITAL-ONE] 21 Rule 100110 근거`
+- `[CAPITAL-ONE] 22 Rule 100111 근거`
+
+### 촬영 직전, 녹화 밖에서 실행
+
+```powershell
+Set-Location D:\terraform\aws_terraform_build_code
+
+.\observability\scenarios\Invoke-SocLabReset.ps1 `
+  -PrepareRetake `
+  -ConfirmReset 'RESET SOC LAB TO LOW'
+```
+
+Reset 성공 뒤 다음을 확인한다.
+
+- DVWA: `Security level is currently: low`
+- Argo CD: `Synced / Healthy`
+- 이전 격리 Pod 없음
+- Wazuh 시간 범위: 새 TAKE를 포함할 수 있도록 `Last 30 minutes`
+- Rule `100110/100111` 시작 Count를 메모
+
+---
+
+# 4. 본편 대본
+
+## SC-00 — 시작 상태
+
+**예상 길이:** 40~60초  
+**화면:** DVWA `security.php` → Wazuh Dashboard → Argo CD
+
+### 화면 큐와 조작
+
+1. DVWA의 `Security level is currently: low`를 3초간 보여준다.
+2. Wazuh Dashboard 상단의 `100110`, `100111`, Push Health Count를 보여준다.
+3. Argo CD의 `Synced / Healthy`와 정상 DVWA Pod를 보여준다.
+
+### 그대로 읽을 대사
+
+> 지금부터 교육용 BANK 애플리케이션을 대상으로 한 공격과 SOC 자동 대응을 시연하겠습니다.
+> 현재 DVWA 보안 수준은 low이며, 공격이 가능한 실습 Baseline입니다.
+
+> Wazuh Dashboard에는 조기탐지 Rule 100110과 S3 침해확정 Rule 100111이 분리되어 있습니다.
+> Argo CD의 애플리케이션은 현재 Synced, Healthy 상태이며 이전 격리는 남아 있지 않습니다.
+
+> 이번 시연에서는 먼저 Credential 접근 징후를 조기에 탐지해 침해 Workload를 격리하고,
+> 뒤이어 실제 S3 Object 접근 성공이 수집되면 애플리케이션을 impossible로 자동 강화합니다.
+
+### 다음 장면 신호
+
+- DVWA `low`
+- Argo `Synced / Healthy`
+- 시작 Count를 화면에 남김
+
+하나라도 확인되지 않으면 녹화를 중단한다.
+
+---
+
+## SC-01 — 공격 실행
+
+**예상 길이:** 50~80초  
+**화면:** PowerShell 7 터미널
+
+### 화면 큐와 조작
+
+다음 명령을 미리 입력해 두고, 대사 뒤 Enter를 누른다.
+
+```powershell
+.\observability\scenarios\Invoke-CapitalOneBaseline.ps1 `
+  -AwsProfile 'terra-user' `
+  -SkipAlarmWait `
+  -ConfirmRun 'RUN CAPITAL ONE BASELINE'
+```
+
+출력에서 Credential·Cookie·Token·원문 Command가 보이지 않는지 확인한다.
+
+### 그대로 읽을 대사
+
+> 공격 Runner는 허용된 교육용 범위에서 한 번만 실행합니다. 첫 요청은 IMDS Role을
+> 조회하고, 두 번째 요청은 해당 Role의 Credential endpoint를 조회합니다.
+
+> 이어서 이미 획득한 짧은 수명의 임시 Credential로 고정된 가짜 S3 Object 읽기를
+> 시도합니다. 화면에는 Credential 원문을 노출하지 않고 단계와 성공 여부만 표시합니다.
+
+**이 문장을 읽은 뒤 Enter를 누른다.**
+
+> 지금 공격을 시작했습니다. 최초 WAF는 공격성 요청을 식별하지만 관찰 모드이므로
+> 요청을 차단하지 않고 COUNT와 ALLOW Evidence를 남깁니다.
+
+### 다음 장면 신호
+
+- Runner가 새 `TAKE_ID`를 출력
+- Baseline 실행이 오류 없이 종료
+- Wazuh `100110` Count가 시작값보다 1 증가
+
+---
+
+## SC-02 — Rule 100110 조기탐지
+
+**예상 길이:** 60~90초  
+**화면:** Wazuh Dashboard의 Panel `20`, `21`, `01`
+
+### 화면 큐와 조작
+
+1. `[CAPITAL-ONE] 20 Push 공격 단계`에서 두 행을 시간순으로 보여준다.
+2. `imds_role_discovery` 행을 먼저 가리킨다.
+3. `imds_credential_fetch` 행의 `rule.id=100110`을 가리킨다.
+4. `[CAPITAL-ONE] 01 Rule 100110 조기탐지` Count 증가를 보여준다.
+
+### 그대로 읽을 대사
+
+> Push 경로는 공격 단계를 두 개의 안전한 Event로 전달했습니다. 첫 번째
+> `imds_role_discovery`는 Role 이름 조회 단계이므로 자동 격리 Rule이 발생하지 않습니다.
+
+> 두 번째 `imds_credential_fetch`는 Credential endpoint를 대상으로 실행한 명령이 출력을
+> 반환한 단계입니다. 이 조건에서만 Rule 100110이 발생했습니다.
+
+> Rule 100110은 Credential 원문 탈취나 S3 접근 성공을 확정하는 Rule은 아닙니다. 하지만
+> 보호 Object 접근 직전의 고위험 징후이므로 Source Pod를 긴급 격리합니다.
+
+### 화면에 3초 이상 남길 값
+
+- `rule.id=100110`
+- `stage=imds_credential_fetch`
+- `result=succeeded`
+- 동일 행의 안전한 `take_id` 또는 Event 식별자
+
+---
+
+## SC-03 — 실제 Workload 격리
+
+**예상 길이:** 2~3분  
+**화면:** GitHub Actions → Argo CD
+
+### 화면 큐와 조작
+
+1. GitHub Actions의 `SOC Quarantine DVWA Pod` 성공 Run을 보여준다.
+2. Argo CD를 Refresh하고 `OrphanedResourceWarning`을 보여준다.
+3. Resource Tree에서 다음을 차례로 연다.
+   - 격리된 기존 Pod
+   - ReplicaSet 아래 새 정상 Pod
+   - `dvwa-quarantined-pod-deny-all` NetworkPolicy
+   - 완료된 Quarantine Job
+4. 격리 Pod의 label에서 `soc.unoh.click/state=quarantined`를 보여준다.
+5. 정상 서비스가 계속 응답하는 것을 `unoh.click`에서 확인한다.
+
+### 그대로 읽을 대사
+
+> Rule 100110 Alert는 Shuffle의 고정 자동 대응 경로를 거쳐 GitHub Workflow를 한 번
+> 실행했습니다. Workflow는 Alert에 포함된 Pod name과 UID를 검증한 뒤 정확히 그 Pod만
+> 격리합니다.
+
+> 여기 보이는 기존 Pod는 새로 만든 격리용 Pod가 아닙니다. 공격을 처리했던 원래 Pod에서
+> ReplicaSet 소유 관계를 제거하고 Service selector에서 분리한 뒤, 격리 label을 적용해
+> 살아 있는 증거로 보존한 것입니다.
+
+> deny-all NetworkPolicy가 이 Pod의 Ingress와 Egress를 차단합니다. ReplicaSet은 별도의
+> 정상 Pod를 생성하므로 사용자 서비스는 계속 제공됩니다.
+
+### 선택 촬영 — 실제 차단 증명
+
+Argo Web Terminal에서 격리 Pod의 Egress를 확인할 때만 실행한다.
+
+```sh
+curl --connect-timeout 3 --max-time 5 http://dvwa.dvwa.svc.cluster.local/login.php
+```
+
+예상 결과는 5초 이내 timeout이다. Terminal이 열리는 것 자체는 격리 실패가 아니다.
+Terminal은 Kubernetes 관리 경로이고, 판정 대상은 Pod의 실제 네트워크 통신이다.
+
+### 다음 장면 신호
+
+- 기존 Pod가 Orphaned + Running + quarantined
+- 새 정상 Pod Ready
+- deny-all NetworkPolicy 존재
+- `unoh.click` 정상 응답
+
+---
+
+## SC-04 — CloudTrail 자연 수집 대기와 빨리감기
+
+**예상 원본 길이:** 최대 약 10분  
+**최종 영상:** 60~120초  
+**화면:** Wazuh Dashboard
+
+### 정상 속도 시작 대사
+
+> 조기 격리는 이미 완료됐지만, 실제 S3 접근 성공 Evidence는 CloudTrail 예약 수집 경로를
+> 통해 들어옵니다. 이 경로는 최대 약 10분의 자연 지연이 발생할 수 있습니다.
+
+> 수집 주기를 강제로 당기거나 Event를 다시 주입하지 않겠습니다. 같은 TAKE와 시간 범위를
+> 유지한 채 Rule 100111이 도착할 때까지 기다리며, 이 구간만 빨리감기하겠습니다.
+
+### 빨리감기 시작 화면
+
+1. Dashboard 시간 범위 `Last 30 minutes`
+2. Rule `100110` Count 증가 상태
+3. Rule `100111` 시작 Count
+4. 화면 시계 또는 Dashboard의 현재 시각
+
+### 빨리감기 중 조작
+
+- 20~30초마다 Dashboard `Refresh`만 누른다.
+- 시간 범위와 Filter를 바꾸지 않는다.
+- Wazuh·Bridge를 재시작하지 않는다.
+- Workflow를 수동 실행하지 않는다.
+
+### 편집 자막
+
+```text
+8배속 — 실제 CloudTrail 자연 수집 대기 <실측 분:초>
+동일 TAKE / 동일 시간창 / Event 재주입 없음
+```
+
+### 배속 종료 신호
+
+`[CAPITAL-ONE] 02 Rule 100111 침해확정` Count가 시작값보다 1 증가하면 Refresh 후
+2초간 그대로 두고 정상 속도로 돌아온다.
+
+---
+
+## SC-05 — Rule 100111과 자동 impossible
+
+**예상 길이:** 2~4분  
+**화면:** Wazuh Panel `22`, `02` → GitHub Actions → Argo CD → DVWA
+
+### 화면 큐와 조작
+
+1. `[CAPITAL-ONE] 22 Rule 100111 근거`에서 `GetObject`, Rule ID, Level을 보여준다.
+2. `[CAPITAL-ONE] 02 Rule 100111 침해확정` Count 증가를 보여준다.
+3. GitHub Actions의 `SOC Harden DVWA Security Level` 성공 Run과 Commit을 보여준다.
+4. Argo CD에서 exact Revision, `Synced / Healthy`, 새 정상 Pod를 보여준다.
+5. DVWA `security.php`를 새로 고쳐 `impossible`을 보여준다.
+
+### 그대로 읽을 대사
+
+> Rule 100111이 도착했습니다. 이 Rule은 앞선 100110에 의존해 발생하는 상관 Rule이
+> 아닙니다. 승인된 Account, Role, Bucket과 Object에 대한 실제 `GetObject` 성공 Event를
+> CloudTrail 원문에서 직접 탐지합니다.
+
+> 앞선 Rule 100110과 같은 공격 흐름이라는 판단은 두 Alert의 발생 조건이 아니라,
+> Dashboard의 동일 시간창과 Event 식별자를 함께 본 결과입니다.
+
+> Rule 100111은 사전 승인된 고정 Workflow를 한 번 실행합니다. 변경 대상은 DVWA 기본
+> 보안 수준 하나이며, GitHub Commit과 Argo CD를 거쳐 low에서 impossible로 배포됩니다.
+
+### Pod Rollout으로 로그인 화면이 나온 경우 읽을 대사
+
+> 보안 수준 배포로 DVWA Pod가 교체되면서 기존 Pod-local 로그인 세션은 종료됐습니다.
+> 이는 대응 실패가 아니라 새 Runtime으로 교체된 결과입니다. 한 번 다시 로그인해 배포된
+> 보안 수준을 확인하겠습니다.
+
+준비된 시연 계정으로 한 번 로그인한다. Password는 녹화에서 마스킹한다. 로그인 뒤
+`security.php`로 이동해 다음 문장을 읽는다.
+
+> 현재 DVWA 보안 수준은 impossible입니다. 동일한 CloudTrail eventID가 다시 수집돼도
+> 추가 Commit과 Rollout은 실행되지 않습니다.
+
+### 다음 장면 신호
+
+- Rule `100111` Count +1
+- GitHub Workflow success
+- Argo exact Revision + `Synced / Healthy`
+- DVWA `Security level is currently: impossible`
+- 로그인 후 페이지 이동 시 다시 로그인 화면으로 튕기지 않음
+
+---
+
+## SC-06 — 발표자의 Incident Timeline 요약
+
+**예상 길이:** 90~150초  
+**화면:** `Capital One Incident Timeline v2`
+
+### 화면 큐
+
+다음 순서대로 마우스로 가리킨다.
+
+1. WAF `COUNT/ALLOW`
+2. `imds_role_discovery`
+3. `imds_credential_fetch`
+4. Rule `100110`
+5. 격리 결과
+6. CloudTrail `GetObject`
+7. Rule `100111`
+8. `low → impossible`
+
+### 그대로 읽을 대사
+
+> 전체 흐름을 한 번 정리하겠습니다. 최초 공격 요청은 WAF에서 SSRF 관련 요청으로
+> 식별됐지만 관찰 모드였기 때문에 애플리케이션까지 전달됐습니다.
+
+> DVWA는 Role 조회와 Credential endpoint 조회를 서로 다른 Event로 기록했고, 두 번째
+> 단계에서 Rule 100110이 발생해 침해 Pod를 자동 격리했습니다.
+
+> 이미 획득된 임시 Credential로 수행된 고정 S3 Object 읽기는 CloudTrail에 기록됐고,
+> Rule 100111이 실제 접근 성공을 확정했습니다. 이어서 DVWA는 impossible로 자동
+> 강화됐습니다.
+
+> 여기까지는 사전에 승인된 자동 대응입니다. 다음 단계에서는 발표자가 이 Timeline을
+> 근거로 최초 진입점인 WAF에 좁은 차단을 적용하고 같은 공격을 다시 실행합니다.
+
+---
+
+## SC-07 — 사람 승인 WAF 조치
+
+> **촬영 잠금:** 고정 Apply 명령, Rule ID, Rollback, Runtime Read-back PASS 전 사용 금지.
+
+### 준비된 대사
+
+> 자동 격리와 애플리케이션 강화 뒤, 동일 공격의 재진입을 막기 위한 추가 조치를
+> 적용하겠습니다. 전체 Managed Rule을 BLOCK으로 바꾸지 않고, 실제 공격에서 확인한
+> Label과 POST Method, 정확한 Path를 모두 만족하는 요청만 차단합니다.
+
+이 장면에는 다음 네 화면이 확정된 뒤 실제 조작을 추가한다.
+
+1. 고정 WAF Diff
+2. 사람 승인
+3. Apply 성공
+4. WAF Rule ID·Priority·Action Read-back
+
+---
+
+## SC-08 — 동일 Payload 재공격과 종료
+
+> **촬영 잠금:** `Invoke-CapitalOneWafReattack.ps1`의 실제 실행 인자와 Runtime PASS 전
+> 성공 대사 사용 금지.
+
+### 준비된 대사
+
+> 같은 공격 Payload를 다시 전송했습니다. 이번에는 사람이 적용한 고정 WAF Rule이
+> 요청을 BLOCK했고 응답은 403입니다.
+
+> HTTP 상태만으로 차단을 판정하지 않습니다. 같은 CloudFront Request ID의 WAF
+> terminating Rule, ALB와 DVWA downstream 0, 신규 Rule 100110과 100111이 0인 것을 함께
+> 확인합니다.
+
+> 정상 로그인과 홈 요청은 계속 성공하며, 별도 Push Health Event도 Wazuh에 도착했습니다.
+> 따라서 신규 Alert 0은 수집 장애가 아니라 WAF 선차단의 결과입니다.
+
+### 최종 대사
+
+> 이번 시연에서는 Credential 접근 징후를 조기에 탐지해 침해 Workload를 자동 격리하고,
+> 실제 S3 Object 접근 성공을 별도 Rule로 확정해 애플리케이션을 impossible로 자동
+> 강화했습니다.
+
+> 자동화는 사전에 승인된 반복 대응을 수행했고, 사람은 전체 Timeline을 근거로 추가 방어의
+> 위치와 범위를 결정했습니다. 같은 공격은 Edge에서 차단됐고 정상 기능과 수집 경로는
+> 유지됐습니다.
+
+---
+
+## 5. 촬영 중 즉시 중단할 조건
+
+- 새 TAKE 시작 시 DVWA가 `low`가 아님
+- Rule `100110`이 Role 조회 단계에서 발생함
+- `100110`이 같은 Event에서 중복 발생함
+- 격리된 기존 Pod가 보존되지 않거나 새 정상 Pod가 Ready가 아님
+- 격리 Pod의 실제 Ingress 또는 Egress가 성공함
+- 서로 다른 TAKE의 `100110/100111`을 하나의 사건으로 설명해야 함
+- Rule `100111` 원본 `eventID`를 확인할 수 없음
+- 자동 대응에 사람이 Workflow를 직접 실행해야 했음
+- DVWA가 `impossible`로 배포되지 않음
+- Secret·Credential·Cookie·Token이 화면에 노출됨
+
+실패한 TAKE를 편집으로 성공본처럼 만들지 않는다. Reset 후 새 TAKE로 다시 촬영한다.
+
+---
+
+## 6. 촬영 직후 기록
+
+```text
+FINAL_TAKE_ID=
+ATTACK_START_UTC=
+RULE_100110_ALERT_UTC=
+QUARANTINE_COMPLETE_UTC=
+CLOUDTRAIL_EVENT_TIME_UTC=
+RULE_100111_ALERT_UTC=
+ACTUAL_CLOUDTRAIL_WAIT=
+HARDENING_COMMIT_SHA=
+ARGO_REVISION=
+WAF_RULE_ID=
+REATTACK_ID=
+```
+
+이 값은 공개 영상 자막과 원본 Evidence를 연결하기 위한 값이다. Credential, Cookie,
+Token, Webhook, PAT, 전체 Account·Bucket 식별자는 기록하지 않는다.

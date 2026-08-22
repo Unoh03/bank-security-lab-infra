@@ -1,5 +1,8 @@
 # Capital One 기반 SOC 시연 녹화 대본 v2
 
+> **발표자가 그대로 읽는 화면 큐·완성 대사:**
+> [`CAPITAL-ONE-SOC-DEMO-PRESENTER-SCRIPT.md`](./CAPITAL-ONE-SOC-DEMO-PRESENTER-SCRIPT.md)
+>
 > **촬영 가능 조건:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)의
 > 시연 시작조건을 실제 Runtime으로 모두 통과한 뒤
 >
