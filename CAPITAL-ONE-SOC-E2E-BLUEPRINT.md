@@ -1,9 +1,9 @@
 # Capital One SOC E2E Blueprint
 
 > **상태:** CURRENT TARGET INTERFACE — 2026-08-20 재작성, E2E Runtime 미완료
-> **상위 정본:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)
+> **상위 정본:** [`시연_계획.md`](./시연_계획.md)
 > **대응 의미:** [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](./CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md)
-> **촬영:** [`CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md`](./CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md)
+> **촬영:** [`촬영_기술_계약.md`](./촬영_기술_계약.md)
 
 이 문서는 CURRENT PLAN을 구현할 때 Hop 사이에서 반드시 지켜야 하는 Interface·Schema·
 Cardinality·실패 계약만 정의한다. 과거 Rule `100103 → Shuffle → Containment`

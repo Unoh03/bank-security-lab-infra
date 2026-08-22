@@ -2,8 +2,8 @@
 
 > **상태:** CURRENT DECISION — 2026-08-20 설계로 재정렬
 > **대응 의미 정본:** 이 문서
-> **구축·검증 Gate:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)
-> **최종 촬영:** [`CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md`](./CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md)
+> **구축·검증 Gate:** [`시연_계획.md`](./시연_계획.md)
+> **최종 촬영:** [`촬영_기술_계약.md`](./촬영_기술_계약.md)
 
 이 문서는 공격·탐지·Containment·Investigation·Remediation·Recovery의 의미만
 정의한다. Source 존재나 과거 테스트 성공은 현재 Runtime 완료를 뜻하지 않는다.
@@ -235,6 +235,6 @@ Alert의 시간·Principal·Bucket/Key로 저장된 관련 로그를 좁혀 조�
 관제자가 Evidence와 Runbook을 보고 근본 대응을 승인했다.
 ```
 
-구축·Runtime 완료 판정과 촬영 순서는 `CAPITAL-ONE-SOC-DEMO-PLAN.md`의
+구축·Runtime 완료 판정과 촬영 순서는 `시연_계획.md`의
 `GT-00~GT-10 → GT-11A → Recording → GT-11B`를 따른다. `GT-08` 사용성 Test와
 `GT-11A` Rehearsal은 사람이 확인하는 Checkpoint이며 자동 PASS 처리하지 않는다.

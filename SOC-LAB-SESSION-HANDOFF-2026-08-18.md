@@ -8,14 +8,14 @@
 ## 현행 정본
 
 1. [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](./CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md)
-2. [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)
-3. [`CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md`](./CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md)
+2. [`시연_계획.md`](./시연_계획.md)
+3. [`촬영_기술_계약.md`](./촬영_기술_계약.md)
 4. [`CAPITAL-ONE-SOC-E2E-BLUEPRINT.md`](./CAPITAL-ONE-SOC-E2E-BLUEPRINT.md)
 5. [`SOC-LAB-OPERATOR-HANDOFF.md`](./SOC-LAB-OPERATOR-HANDOFF.md)
 
 ## 재개점
 
-`CAPITAL-ONE-SOC-DEMO-PLAN.md`의 `GT-00`부터 순서대로 진행한다. Rule `100103`은
+`시연_계획.md`의 `GT-00`부터 순서대로 진행한다. Rule `100103`은
 조기 경보로만 검증하고, 엄격한 S3 고신뢰 Rule이 `GT-03`을 통과한 뒤에만 최종
 Wazuh→Shuffle과 Containment를 연결한다.
 

@@ -9,9 +9,9 @@
 
 1. [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md)
    — Containment·Investigation·Remediation·Recovery의 의미
-2. [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](CAPITAL-ONE-SOC-DEMO-PLAN.md)
+2. [`시연_계획.md`](시연_계획.md)
    — 전체 Gate, 완료 조건, 현재 우선순위
-3. [`CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md`](CAPITAL-ONE-SOC-DEMO-RECORDING-SCRIPT.md)
+3. [`촬영_기술_계약.md`](촬영_기술_계약.md)
    — 촬영 범위, 화면, 조작, 내레이션, 필수 Evidence
 4. [`CAPITAL-ONE-SOC-E2E-BLUEPRINT.md`](CAPITAL-ONE-SOC-E2E-BLUEPRINT.md)
    — Hop별 Interface·상태·Evidence 계약
@@ -25,7 +25,7 @@
 
 ## 2. 현재 재개점
 
-`CAPITAL-ONE-SOC-DEMO-PLAN.md`의 `GT-00`부터 순서대로 재개한다.
+`시연_계획.md`의 `GT-00`부터 순서대로 재개한다.
 
 - 공격·가짜 Object·TAKE·공개 마스킹 계약 고정
 - 통제 공격 3회 반복성과 Credential 비저장 확인

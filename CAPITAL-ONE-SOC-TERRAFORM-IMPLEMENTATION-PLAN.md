@@ -4,7 +4,7 @@
 > **기준 시점:** 2026-08-18
 > **현재 단계:** 2026-08-20 시연 재설계 전 Snapshot. 이 문서만 보고 Apply하지 않음
 > **번호 구분:** 이 문서의 `T0~T6`는 Terraform 구현 단계다. 상위 계획의 `Gate 0~8`은 시연 Evidence 단계이며 같은 번호끼리 같은 작업이 아니다.
-> **상위 계획:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)
+> **상위 계획:** [`시연_계획.md`](./시연_계획.md)
 > **대응 의미 정본:** [`CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md`](./CAPITAL-ONE-INCIDENT-RESPONSE-SCENARIO.md)
 > **저지연 전달 정본:** [`observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md`](./observability/wazuh/WAZUH-PUSH-TRANSPORT-DESIGN.md)
 > **기존 관측성 현황:** [`OBSERVABILITY-CURRENT-STATUS.md`](./OBSERVABILITY-CURRENT-STATUS.md)
@@ -15,7 +15,7 @@
 
 > [!WARNING]
 > 이 문서의 과거 `Rule 100103 → 즉시 Containment` 순서와 Gate 번호는 현행 시연
-> 계약이 아니다. Rule `100103`은 조기 경보이고, `CAPITAL-ONE-SOC-DEMO-PLAN.md`의
+> 계약이 아니다. Rule `100103`은 조기 경보이고, `시연_계획.md`의
 > `GT-03`을 통과한 엄격한 S3 Rule만 자동 격리 Trigger다. 이 문서는 CURRENT PLAN이
 > 요청하는 Terraform·IAM·IMDS 세부사항을 검토할 때만 참고한다.
 
@@ -386,7 +386,7 @@ Wazuh Server·Rule·Dashboard를 관리하지 않는다. 실제 Local Wazuh 입�
 CloudTrail·WAF·Primary ALB·DVWA·CloudFront 5/5가 완료됐다. CloudFront는 Terraform의
 Foundation·Daily Delivery와 Terraform 밖의 로컬 Reader·Wazuh 영구 설정을 함께 Runtime
 검증했다. 공격 단계별 로그와
-현재 Wazuh 가시성은 상위 [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](./CAPITAL-ONE-SOC-DEMO-PLAN.md)에서
+현재 Wazuh 가시성은 상위 [`시연_계획.md`](./시연_계획.md)에서
 추적한다.
 
 첫 Daily Preview는 기존 Preflight가 모든 Log Group을 서울·30일로 가정해

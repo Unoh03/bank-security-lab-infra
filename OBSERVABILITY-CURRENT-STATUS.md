@@ -9,7 +9,7 @@
 
 > [!IMPORTANT]
 > 아래 장문은 2026-08-13 관측성 Snapshot을 보존한 기록이다. 현재 시연 순서와 완료
-> 판정은 `CAPITAL-ONE-SOC-DEMO-PLAN.md`만 따른다. Rule `100103`은 조기 경보이며
+> 판정은 `시연_계획.md`만 따른다. Rule `100103`은 조기 경보이며
 > 자동 격리 Trigger가 아니다. 다음 활성 작업은 `GT-00 → GT-01 → GT-02 → GT-03`이고,
 > 고신뢰 S3 Rule이 `GT-03`을 통과하기 전에는 최종 Shuffle Write를 연결하지 않는다.
 

@@ -1,7 +1,7 @@
 # Shuffle Cloud SOC Workflow 설정 기준
 
 > **상태:** CURRENT TARGET — 고신뢰 S3 Alert 기반 E2E·Containment Runtime 미완료
-> **상위 Gate:** [`CAPITAL-ONE-SOC-DEMO-PLAN.md`](../../CAPITAL-ONE-SOC-DEMO-PLAN.md)
+> **상위 Gate:** [`시연_계획.md`](../../시연_계획.md)
 > **Interface:** [`CAPITAL-ONE-SOC-E2E-BLUEPRINT.md`](../../CAPITAL-ONE-SOC-E2E-BLUEPRINT.md)
 
 과거 Rule `100103 → repeat_back_to_me` 경로는 Webhook 인증과 전달 Scaffold를 검증한
