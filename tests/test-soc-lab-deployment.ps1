@@ -19,6 +19,11 @@ if ((Assert-SocGitHubRunCollection -Run @($run) -TakeId $takeId -Operation conta
     -NotBeforeUtc $created -ExpectedRunId 123).id -ne 123) {
     throw 'The exact GitHub run was not selected.'
 }
+$apiRun = $run | ConvertTo-Json -Depth 5 | ConvertFrom-Json
+if ((Assert-SocGitHubRunCollection -Run @($apiRun) -TakeId $takeId -Operation contain `
+    -NotBeforeUtc $created -ExpectedRunId 123).id -ne 123) {
+    throw 'A GitHub API UTC DateTime was shifted to local time during run selection.'
+}
 $wrongRunIdRejected = $false
 try {
     [void](Assert-SocGitHubRunCollection -Run @($run) -TakeId $takeId `
@@ -70,7 +75,8 @@ if (-not $wrongResetModeRejected) { throw 'A quarantine-only Artifact with a low
 
 function New-TestPod([string]$Uid) {
     [pscustomobject]@{
-        metadata=[pscustomobject]@{uid=$Uid;deletionTimestamp=$null}
+        # Kubernetes omits deletionTimestamp entirely for ordinary live Pods.
+        metadata=[pscustomobject]@{uid=$Uid}
         status=[pscustomobject]@{conditions=@([pscustomobject]@{type='Ready';status='True'})}
     }
 }

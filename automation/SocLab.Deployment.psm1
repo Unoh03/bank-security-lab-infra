@@ -57,7 +57,10 @@ function Assert-SocGitHubRunCollection {
         "SOC reset $TakeId"
     }
     $matches = @($Run | Where-Object {
-        $created = [datetimeoffset]::Parse([string]$_.created_at)
+        # ConvertFrom-Json materializes GitHub's ISO timestamp as a UTC DateTime.
+        # Casting that object preserves the UTC instant; stringifying it first
+        # drops the Kind marker and makes Parse reinterpret it as local time.
+        $created = [datetimeoffset]$_.created_at
         [string]$_.display_title -ceq $title -and
         [string]$_.event -ceq 'workflow_dispatch' -and
         [string]$_.head_branch -ceq $script:Branch -and
@@ -367,7 +370,8 @@ function Assert-SocArgoRuntimeDocument {
         throw 'The DVWA Deployment has not completed the exact security-level rollout.'
     }
     $readyPods = @($pods | Where-Object {
-        -not $_.metadata.deletionTimestamp -and
+        ($null -eq $_.metadata.PSObject.Properties['deletionTimestamp'] -or
+         [string]::IsNullOrWhiteSpace([string]$_.metadata.deletionTimestamp)) -and
         @($_.status.conditions | Where-Object {
             [string]$_.type -ceq 'Ready' -and [string]$_.status -ceq 'True'
         }).Count -eq 1
