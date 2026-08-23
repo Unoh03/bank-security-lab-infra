@@ -5,7 +5,7 @@
 -->
 <wodle name="aws-s3">
   <disabled>no</disabled>
-  <interval>10m</interval>
+  <interval>5m</interval>
   <run_on_start>yes</run_on_start>
   <skip_on_error>yes</skip_on_error>
   <bucket type="cloudtrail">
